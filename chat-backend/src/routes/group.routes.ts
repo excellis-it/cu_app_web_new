@@ -2,6 +2,12 @@ import { Router } from "express";
 import serverResponse from "../helpers/serverResponse";
 import authMiddleware from "../middleware/authMiddleware";
 import { AddNewGroupMessage, AddUserToGroup, CreateNewGroup, DeleteGroupMessage, GetGroups, GetSingleGroupDetails, GetSingleGroupMessages, updateGroup, RemoveUserFromGroup, ReportGroup, ReportMessage, testMessage, deliverySeen, infoMessage, checkActiveCall, GetGroupsActivity, GetSingleGroupCallDetails, GetOrCreateDirectChat, AddGroupAction, CreateGuestMeeting, GetGuestMeetingByPin, GetAllGuestMeeting, UpdateGuestMeeting, AddGuestMeetingMessage, GetAllGuestMeetingMessage } from "../controller/group/msgController";
+import {
+  completeRecordingUpload,
+  getRecordingStatus,
+  initRecordingUpload,
+  uploadRecordingChunk,
+} from "../controller/group/recordingController";
 import multer from "multer";
 import { upload } from "../helpers/upload";
 import adminMiddleware from "../middleware/adminMiddleware";
@@ -242,6 +248,70 @@ groupRouter.get("/deliveried", authMiddleware, async (req: any, res: any) => {
         serverResponse(true, "Message send successfully", await deliverySeen(req.body, req.user), res);
     } catch (error: any) {
         serverResponse(false, "Error adding report", error.message, res);
+    }
+});
+
+// ========================
+// Call recording endpoints
+// ========================
+groupRouter.post("/recordings/init", authMiddleware, async (req: any, res: any) => {
+    try {
+        // eslint-disable-next-line no-console
+        console.log("[routes] POST /groups/recordings/init", {
+            roomId: req?.body?.roomId,
+            recordingId: req?.body?.recordingId,
+            userId: req?.user?._id?.toString?.(),
+        });
+        serverResponse(true, "Recording upload initialized successfully", await initRecordingUpload(req.body, req.user), res);
+    } catch (error: any) {
+        serverResponse(false, "Error initializing recording upload", error.message, res);
+    }
+});
+
+groupRouter.post("/recordings/chunk", authMiddleware, uploadFile.single("chunk"), async (req: any, res: any) => {
+    try {
+        // eslint-disable-next-line no-console
+        console.log("[routes] POST /groups/recordings/chunk", {
+            roomId: req?.body?.roomId,
+            recordingId: req?.body?.recordingId,
+            uploadSessionId: req?.body?.uploadSessionId,
+            chunkIndex: req?.body?.chunkIndex,
+            userId: req?.user?._id?.toString?.(),
+            chunkSize: req?.file?.buffer?.length || 0,
+        });
+        serverResponse(true, "Recording chunk uploaded successfully", await uploadRecordingChunk(req.body, req.user, req.file), res);
+    } catch (error: any) {
+        serverResponse(false, "Error uploading recording chunk", error.message, res);
+    }
+});
+
+groupRouter.post("/recordings/complete", authMiddleware, async (req: any, res: any) => {
+    try {
+        // eslint-disable-next-line no-console
+        console.log("[routes] POST /groups/recordings/complete", {
+            roomId: req?.body?.roomId,
+            recordingId: req?.body?.recordingId,
+            totalChunks: req?.body?.totalChunks,
+            durationSec: req?.body?.durationSec,
+            userId: req?.user?._id?.toString?.(),
+        });
+        serverResponse(true, "Recording upload completed successfully", await completeRecordingUpload(req.body, req.user), res);
+    } catch (error: any) {
+        serverResponse(false, "Error completing recording upload", error.message, res);
+    }
+});
+
+groupRouter.get("/recordings/status", authMiddleware, async (req: any, res: any) => {
+    try {
+        // eslint-disable-next-line no-console
+        console.log("[routes] GET /groups/recordings/status", {
+            roomId: req?.query?.roomId,
+            recordingId: req?.query?.recordingId,
+            userId: req?.user?._id?.toString?.(),
+        });
+        serverResponse(true, "Recording status fetched successfully", await getRecordingStatus(req.query, req.user), res);
+    } catch (error: any) {
+        serverResponse(false, "Error fetching recording status", error.message, res);
     }
 });
 

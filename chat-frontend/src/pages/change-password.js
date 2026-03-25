@@ -52,7 +52,7 @@ const forgetPassword = () => {
                   </div>
                   <div className="col-md-6">
                     <div className="login_fomr">
-                      <img src="extalk.png" />
+                      <img src="cu-logo-2.svg" />
                       <h2>Reset Your Password</h2>
                       <form className="mt-3" onSubmit={changePassword}>
                         <div>

@@ -16,12 +16,13 @@ export function AppProvider({ children }) {
   const [forgotPassSlug, setforgotPassSlug] = useState()
 
   const [siteSettings, setSiteSettings] = useState({
-    siteLogo: 'extalk.png',
+    siteLogo: 'cu-logo-2.svg',
     siteName: 'ExTalk',
-    primaryColor: '#f37e20',
-    secondaryColor: '#35a200',
-    accentColor: '#ff6b6b',
-    backgroundColor: '#ffffff'
+    // Match CU-Web palette
+    primaryColor: '#1da678',
+    secondaryColor: '#145c4b',
+    accentColor: '#1da678',
+    backgroundColor: '#FEF5F0'
   });
 
   // Apply colors as CSS variables whenever siteSettings changes
@@ -37,6 +38,14 @@ export function AppProvider({ children }) {
 
   useEffect(() => {
     const initApp = async () => {
+      const normalizeSiteLogo = (logo) => {
+        if (!logo) return logo;
+        if (typeof logo !== 'string') return logo;
+        // If backend still stores the old logo filename, map it automatically.
+        if (logo.toLowerCase().includes('extalk.png')) return 'cu-logo-2.svg';
+        return logo;
+      };
+
       let token = null;
       const user = localStorage.getItem('user');
       if (user) {
@@ -60,7 +69,7 @@ export function AppProvider({ children }) {
             const data = response.data.data;
             setSiteSettings(prev => ({
               ...prev,
-              siteLogo: data.siteLogo || prev.siteLogo,
+              siteLogo: normalizeSiteLogo(data.siteLogo) || prev.siteLogo,
               siteName: data.siteName || prev.siteName,
               siteDescription: data.siteDescription || '',
               siteMainImage: data.siteMainImage || '',

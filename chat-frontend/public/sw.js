@@ -22,8 +22,8 @@ self.addEventListener("push", (event) => {
       const title = data.title || "🔔 New Notification";
       const options = {
         body: data.body || "You have a new message",
-        icon: "/extalk.png",
-        badge: "/extalk.png",
+        icon: "/cu-logo-2.svg",
+        badge: "/cu-logo-2.svg",
         tag: data.tag || "chat-notification",
         requireInteraction: data.requireInteraction || false,
         silent: false, // Set to false so we can play custom sound

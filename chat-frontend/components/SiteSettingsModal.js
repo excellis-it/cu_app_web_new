@@ -57,7 +57,14 @@ const SiteSettingsModal = ({ show, onHide }) => {
             // Use defaults if data is empty (first run)
             const siteName = data.siteName || 'ExTalk';
             const siteDescription = data.siteDescription || 'Premium Secure Communication Platform';
-            const siteLogo = data.siteLogo || 'extalk.png';
+            const normalizeSiteLogo = (logo) => {
+                if (!logo) return logo;
+                if (typeof logo !== 'string') return logo;
+                if (logo.toLowerCase().includes('extalk.png')) return 'cu-logo-2.svg';
+                return logo;
+            };
+
+            const siteLogo = normalizeSiteLogo(data.siteLogo) || 'cu-logo-2.svg';
             const siteMainImage = data.siteMainImage || 'login-bg.png'; // Assuming a default
 
             setSettings({
@@ -134,11 +141,18 @@ const SiteSettingsModal = ({ show, onHide }) => {
                     newLogo = settings.siteLogo;
                 }
 
+                const normalizeSiteLogo = (logo) => {
+                    if (!logo) return logo;
+                    if (typeof logo !== 'string') return logo;
+                    if (logo.toLowerCase().includes('extalk.png')) return 'cu-logo-2.svg';
+                    return logo;
+                };
+
                 setSiteSettings(prev => ({
                     ...prev,
                     siteName: updatedData.siteName || prev.siteName || settings.siteName,
                     siteDescription: updatedData.siteDescription || prev.siteDescription || settings.siteDescription,
-                    siteLogo: newLogo || prev.siteLogo,
+                    siteLogo: normalizeSiteLogo(newLogo) || prev.siteLogo,
                     siteMainImage: updatedData.siteMainImage || prev.siteMainImage,
                     primaryColor: updatedData.primaryColor || settings.primaryColor,
                     secondaryColor: updatedData.secondaryColor || settings.secondaryColor,

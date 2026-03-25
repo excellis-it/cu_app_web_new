@@ -32,6 +32,17 @@ const MegaMessage = ({
   const handleClose = () => {
     setAnchorEl(null);
   };
+
+  // Backend returns `/uploads/...` but frontend may run on a different port.
+  // Prefix uploads URLs with NEXT_PUBLIC_PROXY when needed.
+  const proxyBase = process.env.NEXT_PUBLIC_PROXY || "";
+  const resolveUploadsUrl = (url) => {
+    if (!url || typeof url !== "string") return url;
+    if (url.startsWith("/uploads/") && proxyBase) {
+      return `${String(proxyBase).replace(/\/+$/, "")}${url}`;
+    }
+    return url;
+  };
   const [anchorEl1, setAnchorEl1] = useState();
   const open1 = Boolean(anchorEl1);
   const handleClick1 = (event) => {
@@ -244,7 +255,7 @@ const MegaMessage = ({
                         <video
                           className={styles.replyOfMyFilebody}
                           height="100px"
-                          src={message.replyOf.msg}
+                            src={resolveUploadsUrl(message.replyOf.msg)}
                         // controls
                         // playsInline
                         // preload="metadata"
@@ -277,7 +288,7 @@ const MegaMessage = ({
                   controls
                   playsInline
                   preload="auto"
-                  src={message.message}
+                  src={resolveUploadsUrl(message.message)}
                   width="100%"
                   style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
                 >
@@ -454,7 +465,7 @@ const MegaMessage = ({
                           <video
                             className={styles.replyOfMyFilebody}
                             height="100px"
-                            src={message.replyOf.msg}
+                            src={resolveUploadsUrl(message.replyOf.msg)}
                           // controls
                           // playsInline
                           // preload="metadata"
@@ -494,7 +505,7 @@ const MegaMessage = ({
                     controls
                     playsInline
                     preload="auto"
-                    src={message.message}
+                    src={resolveUploadsUrl(message.message)}
                     width="100%"
                     style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
                   >
@@ -644,7 +655,7 @@ const MegaMessage = ({
                           <video
                             className={styles.replyOfMyFilebody}
                             height="100px"
-                            src={message.replyOf.msg}
+                            src={resolveUploadsUrl(message.replyOf.msg)}
                           // controls
                           // playsInline
                           // preload="metadata"
@@ -677,7 +688,7 @@ const MegaMessage = ({
                     controls
                     playsInline
                     preload="auto"
-                    src={message.message}
+                    src={resolveUploadsUrl(message.message)}
                     width="100%"
                     style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
                   >

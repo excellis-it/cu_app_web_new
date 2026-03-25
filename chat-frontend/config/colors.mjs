@@ -5,14 +5,15 @@
 
 export const colors = {
   // Primary Colors
-  primary: '#f37e20',        // Main orange color
-  primaryDark: '#d66a1a',    // Darker shade of primary
-  primaryLight: '#ff8f40',   // Lighter shade of primary
+  // Match CU-Web palette
+  primary: '#1da678',        // Primary green
+  primaryDark: '#145c4b',    // Darker shade of primary
+  primaryLight: '#35a200',   // Lighter shade of primary
   
   // Secondary Colors
-  secondary: '#ad1e23',      // Red accent color
-  secondaryDark: '#8a181c',  // Darker shade of secondary
-  secondaryLight: '#c42a2f', // Lighter shade of secondary
+  secondary: '#145c4b',      // Use green as secondary
+  secondaryDark: '#0f4a3a',  // Darker shade of secondary
+  secondaryLight: '#25767b', // Lighter shade of secondary
   
   // Background Colors
   backgroundDark: '#ffffff', // Dark background
@@ -34,7 +35,7 @@ export const colors = {
   info: '#3085d6',             // Blue for info
   
   // Gradient
-  gradient: 'linear-gradient(268deg, #f37e20 38%, #ad1e23 93.09%)',
+  gradient: 'linear-gradient(268deg, #1da678 38%, #145c4b 93.09%)',
   
   // Utility Colors
   white: '#ffffff',

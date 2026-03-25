@@ -9,6 +9,7 @@ const activeChats: any = {};
 import sendWebPush from '../helpers/webpush'
 import Group from "../db/schemas/group.schema";
 import videoCall from "../db/schemas/videocall.schema";
+import CallRecording from "../db/schemas/callrecording.schema";
 import GuestMeeting from "../db/schemas/guest-meeting.schema";
 import mongoose from "mongoose";
 import GuestMeetingMessage from "../db/schemas/guest-meeting-message.schema";
@@ -69,6 +70,7 @@ let consumers: any = {};  // Store consumers per user
 let rooms: any = {}; // store rooms
 const socketUserMap = new Map();
 const socketRoomMap = new Map();
+let ioInstance: Server | null = null;
 // Shared across all connections - each connection handler previously had its own socketList,
 // so callee could not see caller's info when building FE-user-join
 const socketList: {
@@ -114,6 +116,8 @@ export default function initializeSocket() {
 
     return null;
   }
+
+  ioInstance = io;
 
   io.on("connection", (socket) => {
     console.log("[SOCKET] new connection", socket.id);
@@ -887,6 +891,161 @@ export default function initializeSocket() {
       });
     });
 
+    // ================================
+    // Call recording control (Phase 1)
+    // ================================
+    socket.on("BE-start-recording", async ({ roomId }: any) => {
+      const userId = socketUserMap.get(socket.id);
+      if (!roomId || !userId) {
+        socket.emit("FE-recording-error", {
+          roomId,
+          message: "Missing room or user context for recording start.",
+        });
+        return;
+      }
+
+      try {
+        console.log("[BE-start-recording] received", {
+          roomId,
+          userId: userId?.toString?.() || userId,
+          socketId: socket.id,
+        });
+
+        // Only group admins can record
+        const group = await Group.findById(roomId, { admins: 1 }).lean();
+        const isAdmin = Boolean(group?.admins?.some((adminId: any) => adminId?.toString?.() === userId?.toString?.()));
+        if (!isAdmin) {
+          console.warn("[BE-start-recording] not admin", {
+            roomId,
+            userId: userId?.toString?.() || userId,
+          });
+          socket.emit("FE-recording-error", { roomId, message: "Only group admins can start recording." });
+          return;
+        }
+
+        const activeCall = await videoCall.findOne({ groupId: roomId, status: "active" }, { _id: 1 }).lean();
+        if (!activeCall?._id) {
+          console.warn("[BE-start-recording] no active call", { roomId });
+          socket.emit("FE-recording-error", { roomId, message: "No active call found for this room." });
+          return;
+        }
+
+        console.log("[BE-start-recording] activeCall", {
+          roomId,
+          activeCallId: activeCall._id?.toString?.() || "",
+        });
+
+        const existing = await CallRecording.findOne(
+          {
+            groupId: roomId,
+            callId: activeCall._id,
+            status: { $in: ["recording", "uploading", "processing"] },
+          },
+          { _id: 1 },
+        ).lean();
+
+        if (existing?._id) {
+          socket.emit("FE-recording-error", { roomId, message: "A recording is already in progress for this call." });
+          return;
+        }
+
+        const newRecording = await CallRecording.create({
+          groupId: roomId,
+          callId: activeCall._id,
+          startedBy: userId.toString(),
+          status: "recording",
+          mimeType: null,
+          durationSec: 0,
+          sizeBytes: 0,
+          uploadSessionId: null,
+          totalChunks: 0,
+          receivedChunks: [],
+          rawFilePath: null,
+          rawObjectKey: null,
+          playbackUrl: null,
+          errorMessage: null,
+        });
+
+        console.log("[BE-start-recording] created", {
+          roomId,
+          recordingId: newRecording._id?.toString?.() || "",
+          startedBy: newRecording.startedBy?.toString?.() || "",
+        });
+
+        io.to(roomId).emit("FE-recording-started", {
+          roomId,
+          recordingId: newRecording._id,
+          startedBy: userId.toString(),
+          startedAt: newRecording.createdAt,
+          status: newRecording.status,
+        });
+      } catch (error: any) {
+        console.error("BE-start-recording error:", error);
+        socket.emit("FE-recording-error", { roomId, message: error?.message || "Failed to start recording." });
+      }
+    });
+
+    socket.on("BE-stop-recording", async ({ roomId, recordingId }: any) => {
+      const userId = socketUserMap.get(socket.id);
+      if (!roomId || !recordingId || !userId) {
+        socket.emit("FE-recording-error", {
+          roomId,
+          message: "Missing room, recording id, or user context for recording stop.",
+        });
+        return;
+      }
+
+      try {
+        console.log("[BE-stop-recording] received", {
+          roomId,
+          recordingId: recordingId?.toString?.() || recordingId,
+          userId: userId?.toString?.() || userId,
+          socketId: socket.id,
+        });
+
+        const group = await Group.findById(roomId, { admins: 1 }).lean();
+        const isAdmin = Boolean(group?.admins?.some((adminId: any) => adminId?.toString?.() === userId?.toString?.()));
+        if (!isAdmin) {
+          console.warn("[BE-stop-recording] not admin", { roomId, userId: userId?.toString?.() || userId });
+          socket.emit("FE-recording-error", { roomId, message: "Only group admins can stop recording." });
+          return;
+        }
+
+        const updatedRecording = await CallRecording.findOneAndUpdate(
+          { _id: recordingId, groupId: roomId, status: "recording" },
+          { $set: { status: "uploading" } },
+          { new: true },
+        ).lean();
+
+        if (!updatedRecording?._id) {
+          console.warn("[BE-stop-recording] no active recording to update", {
+            roomId,
+            recordingId: recordingId?.toString?.() || recordingId,
+          });
+          socket.emit("FE-recording-error", { roomId, message: "No active recording found to stop." });
+          return;
+        }
+
+        console.log("[BE-stop-recording] updated", {
+          roomId,
+          recordingId: updatedRecording._id?.toString?.() || "",
+          startedBy: updatedRecording.startedBy?.toString?.() || "",
+        });
+
+        io.to(roomId).emit("FE-recording-stopped", {
+          roomId,
+          recordingId: updatedRecording._id,
+          startedBy: updatedRecording.startedBy?.toString?.() || null,
+          stoppedBy: userId.toString(),
+          stoppedAt: new Date(),
+          status: updatedRecording.status,
+        });
+      } catch (error: any) {
+        console.error("BE-stop-recording error:", error);
+        socket.emit("FE-recording-error", { roomId, message: error?.message || "Failed to stop recording." });
+      }
+    });
+
     socket.on("call_disconnect", async (data: { roomId: string; userId: string }) => {
       const { roomId, userId } = data;
       // Clear the connectedUser tracking when user explicitly disconnects
@@ -1554,5 +1713,24 @@ export default function initializeSocket() {
 
 
   });
+}
+
+export function emitMessageToUsers(senderId: string, receiverIds: string[], data: any) {
+  if (!ioInstance) return;
+
+  // Sender should also receive it.
+  if (senderId) {
+    ioInstance.to(senderId).emit("message", { data });
+  }
+
+  receiverIds.forEach((rid) => {
+    if (!rid) return;
+    ioInstance?.to(rid).emit("message", { data });
+  });
+}
+
+export function emitMessageToRoom(roomId: string, data: any) {
+  if (!ioInstance) return;
+  ioInstance.in(roomId).emit("message", { data });
 }
 

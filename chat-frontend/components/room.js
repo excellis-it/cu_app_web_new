@@ -37,7 +37,22 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
   const [waitingCalls, setWaitingCalls] = useState([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
 
+  // Phase 1 call recording (admin controlled)
+  const [isRecording, setIsRecording] = useState(false);
+  // Used to prevent duplicate clicks during network upload/processing.
+  // Must be false while the MediaRecorder is actively capturing, otherwise Stop stays disabled.
+  const [recordingBusy, setRecordingBusy] = useState(false);
+  const [activeRecordingId, setActiveRecordingId] = useState(null);
+
   const isAudioOnlyCall = callType === "audio";
+
+  const groupAdmins =
+    chatAreaProps?.groupDataDetails?.admins ||
+    chatAreaProps?.selected?.admins ||
+    [];
+  const isGroupAdmin = Array.isArray(groupAdmins)
+    ? groupAdmins.some((adminId) => String(adminId) === String(currentUser))
+    : false;
 
   // Mediasoup-specific refs/state (web SFU path)
   // Mediasoup SFU is now always enabled for web calls.
@@ -59,6 +74,13 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
   const hasReceivedInitialUsers = useRef(false);
   const socketHandlersRegisteredRef = useRef(false);
   const pendingConsumePeerIdsRef = useRef(new Set());
+
+  // MediaRecorder / mixing refs (browser-side recorder)
+  const mediaRecorderRef = useRef(null);
+  const recordedChunksRef = useRef([]);
+  const recordingStartTimeRef = useRef(null);
+  const recordingCanvasRef = useRef(null);
+  const recordingDrawTimerRef = useRef(null);
 
   const boxRef = useRef(null);
   const [dragging, setDragging] = useState(false);
@@ -591,6 +613,74 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
           hasReceivedInitialUsers.current = true;
         }
       });
+
+        socketRef.current.on("FE-recording-started", (payload) => {
+          try {
+            const startedRecordingId = payload?.recordingId;
+            const startedBy = payload?.startedBy;
+
+            console.log("[room.js][REC] FE-recording-started", {
+              payload,
+              currentUser,
+              isGroupAdmin,
+            });
+
+            setActiveRecordingId(startedRecordingId || null);
+            setIsRecording(true);
+            // Recording is active now; allow Stop button immediately.
+            setRecordingBusy(false);
+
+            // Only the admin who started the recording should start MediaRecorder.
+            if (startedBy && String(startedBy) === String(currentUser)) {
+              // Avoid starting two MediaRecorders if FE event arrives twice.
+              const existing = mediaRecorderRef.current;
+              if (existing && existing.state === "recording") {
+                console.warn("[room.js][REC] start ignored (recorder already recording)", {
+                  startedRecordingId,
+                });
+                return;
+              }
+              startLocalRecorder(startedRecordingId);
+            }
+          } catch (e) {
+            console.error("[room.js] FE-recording-started handler error", e);
+          }
+        });
+
+        socketRef.current.on("FE-recording-stopped", (payload) => {
+          try {
+            const stoppedRecordingId = payload?.recordingId;
+            const stoppedBy = payload?.stoppedBy;
+            const startedBy = payload?.startedBy || stoppedBy;
+
+            console.log("[room.js][REC] FE-recording-stopped", {
+              payload,
+              currentUser,
+              startedBy,
+              stoppedBy,
+              willStopLocal:
+                Boolean(startedBy) && String(startedBy) === String(currentUser),
+            });
+
+            setIsRecording(false);
+            setRecordingBusy(false);
+            setActiveRecordingId(null);
+
+            // MediaRecorder runs only on the client that started recording.
+            if (startedBy && String(startedBy) === String(currentUser)) {
+              console.log("[room.js][REC] calling stopLocalRecorder");
+              stopLocalRecorder();
+            }
+          } catch (e) {
+            console.error("[room.js] FE-recording-stopped handler error", e);
+          }
+        });
+
+        socketRef.current.on("FE-recording-error", (payload) => {
+          const message = payload?.message || "Recording error";
+          toast.error(message, { position: "top-right", autoClose: 3500 });
+          setRecordingBusy(false);
+        });
 
         socketRef.current.on("FE-user-leave", ({ userId, userName, fullName }) => {
         if (!userName) {
@@ -1516,6 +1606,496 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
     setDragging(false);
   };
 
+  const requestStartRecording = () => {
+    if (!socketRef?.current) {
+      toast.error("Socket is not ready.");
+      return;
+    }
+    if (recordingBusy) return;
+    console.log("[room.js][REC] requestStartRecording", {
+      roomId,
+      currentUser,
+      isGroupAdmin,
+      recordingBusy,
+    });
+    setRecordingBusy(true);
+    socketRef.current.emit("BE-start-recording", { roomId });
+  };
+
+  const requestStopRecording = (recordingIdToStop) => {
+    if (!socketRef?.current) {
+      toast.error("Socket is not ready.");
+      return;
+    }
+    if (!recordingIdToStop) {
+      toast.error("No active recording to stop.");
+      return;
+    }
+    if (recordingBusy) return;
+    console.log("[room.js][REC] requestStopRecording", {
+      roomId,
+      recordingIdToStop,
+      activeRecordingId,
+      currentUser,
+      isGroupAdmin,
+      recordingBusy,
+    });
+    setRecordingBusy(true);
+    socketRef.current.emit("BE-stop-recording", { roomId, recordingId: recordingIdToStop });
+  };
+
+  function pickPrimaryVideoStream() {
+    // Phase 1 policy (video call): deterministically pick the first stream
+    // that has a video track (remote first, then local).
+    if (!isAudioOnlyCall) {
+      for (const stream of Object.values(remoteStreamsRef.current || {})) {
+        if (stream && stream.getVideoTracks && stream.getVideoTracks().length > 0) {
+          return stream;
+        }
+      }
+    }
+    return userStream.current || null;
+  }
+
+  async function uploadRecordedBlob(blob, recordingId, durationSec) {
+    if (!blob || !blob.size || !recordingId) {
+      console.warn("[room.js][REC] uploadRecordedBlob skipped (missing blob/size/recordingId)", {
+        blobSize: blob?.size,
+        blobType: blob?.type,
+        recordingId,
+      });
+      return;
+    }
+
+    const proxyBase = process.env.NEXT_PUBLIC_PROXY || process.env.NEXT_PUBLIC_API_URL || "";
+    const apiBase = proxyBase ? String(proxyBase).replace(/\/+$/, "") : "";
+
+    try {
+      console.log("[room.js][REC] uploadRecordedBlob start", {
+        recordingId,
+        blobSize: blob.size,
+        blobType: blob.type,
+        durationSec,
+        apiBase,
+      });
+
+      const mimeType = blob.type || "video/webm";
+
+      const initUrl = apiBase ? `${apiBase}/api/v1/groups/recordings/init` : "/api/v1/groups/recordings/init";
+      const chunkUrl = apiBase ? `${apiBase}/api/v1/groups/recordings/chunk` : "/api/v1/groups/recordings/chunk";
+      const completeUrl = apiBase ? `${apiBase}/api/v1/groups/recordings/complete` : "/api/v1/groups/recordings/complete";
+
+      const initRes = await fetch(initUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          // authMiddleware also accepts cookies, but this helps if cookies aren't sent.
+          "access-token": globalUser?.data?.token || "",
+        },
+        body: JSON.stringify({
+          roomId,
+          recordingId,
+          mimeType,
+        }),
+      });
+
+      const initRaw = await initRes.text();
+      let initJson = null;
+      try {
+        initJson = initRaw ? JSON.parse(initRaw) : null;
+      } catch (e) {
+        console.error("[room.js][REC] /recordings/init non-json response", {
+          url: initUrl,
+          status: initRes.status,
+          bodyPreview: initRaw?.slice(0, 300),
+        });
+      }
+      console.log("[room.js][REC] /recordings/init", {
+        status: initRes.status,
+        ok: initRes.ok,
+        data: initJson?.data
+          ? { uploadSessionId: initJson.data.uploadSessionId }
+          : initJson,
+      });
+      if (!initRes.ok || !initJson?.success) {
+        throw new Error(initJson?.message || "Failed to initialize recording upload.");
+      }
+
+      const uploadSessionId = initJson?.data?.uploadSessionId;
+      if (!uploadSessionId) throw new Error("Missing uploadSessionId from server.");
+
+      const chunkSize = 5 * 1024 * 1024; // 5MB chunks
+      const totalChunks = Math.ceil(blob.size / chunkSize);
+      console.log("[room.js][REC] totalChunks", { totalChunks, chunkSize });
+
+      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+        const start = chunkIndex * chunkSize;
+        const end = Math.min(start + chunkSize, blob.size);
+        const chunkBlob = blob.slice(start, end);
+
+        const formData = new FormData();
+        formData.append("roomId", roomId);
+        formData.append("recordingId", recordingId);
+        formData.append("uploadSessionId", uploadSessionId);
+        formData.append("chunkIndex", `${chunkIndex}`);
+        formData.append("chunk", chunkBlob, `chunk-${chunkIndex}.webm`);
+
+        const chunkRes = await fetch(chunkUrl, {
+          method: "POST",
+          headers: {
+            "access-token": globalUser?.data?.token || "",
+          },
+          body: formData,
+        });
+
+        const chunkRaw = await chunkRes.text();
+        let chunkJson = null;
+        try {
+          chunkJson = chunkRaw ? JSON.parse(chunkRaw) : null;
+        } catch (e) {
+          console.error("[room.js][REC] /recordings/chunk non-json response", {
+            url: chunkUrl,
+            status: chunkRes.status,
+            chunkIndex,
+            bodyPreview: chunkRaw?.slice(0, 300),
+          });
+        }
+        if (chunkIndex < 3 || chunkIndex === totalChunks - 1) {
+          console.log("[room.js][REC] chunk upload", {
+            chunkIndex,
+            status: chunkRes.status,
+            ok: chunkRes.ok,
+            receivedChunks: chunkJson?.data?.receivedChunks,
+            serverSuccess: chunkJson?.success,
+            serverError: chunkJson?.error,
+          });
+        }
+        if (!chunkRes.ok || !chunkJson?.success) {
+          if (!chunkJson) {
+            throw new Error(
+              `Chunk upload failed at index ${chunkIndex}. Server did not return valid JSON (status ${chunkRes.status}). Body preview: ${chunkRaw?.slice(0, 300)}`,
+            );
+          }
+          throw new Error(
+            chunkJson?.error
+              ? `${chunkJson?.message || "Chunk upload failed"}: ${String(chunkJson?.error)}`
+              : chunkJson?.message || `Chunk upload failed at index ${chunkIndex}.`,
+          );
+        }
+      }
+
+      const completeRes = await fetch(completeUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "access-token": globalUser?.data?.token || "",
+        },
+        body: JSON.stringify({
+          roomId,
+          recordingId,
+          uploadSessionId,
+          totalChunks,
+          durationSec: durationSec || 0,
+        }),
+      });
+
+      const completeRaw = await completeRes.text();
+      let completeJson = null;
+      try {
+        completeJson = completeRaw ? JSON.parse(completeRaw) : null;
+      } catch (e) {
+        console.error("[room.js][REC] /recordings/complete non-json response", {
+          url: completeUrl,
+          status: completeRes.status,
+          bodyPreview: completeRaw?.slice(0, 300),
+        });
+      }
+      console.log("[room.js][REC] /recordings/complete", {
+        status: completeRes.status,
+        ok: completeRes.ok,
+        data: completeJson?.data,
+        message: completeJson?.message,
+      });
+      if (!completeRes.ok || !completeJson?.success) {
+        throw new Error(completeJson?.message || "Failed to complete recording upload.");
+      }
+    } catch (e) {
+      console.error("[room.js] uploadRecordedBlob failed", e);
+      toast.error(e?.message || "Failed to upload recording.");
+      throw e;
+    }
+  }
+
+  function startLocalRecorder(startingRecordingId) {
+    if (!startingRecordingId) {
+      toast.error("Recording id missing.");
+      return;
+    }
+    if (!window.MediaRecorder) {
+      toast.error("MediaRecorder is not supported in this browser.");
+      return;
+    }
+
+    console.log("[room.js][REC] startLocalRecorder", {
+      startingRecordingId,
+      roomId,
+      callType,
+      isAudioOnlyCall,
+    });
+
+    const primaryVideoStream = pickPrimaryVideoStream();
+
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+      toast.error("AudioContext not supported in this browser.");
+      return;
+    }
+
+    // Build a mixed-audio destination from all current participant audio tracks.
+    const audioContext = new AudioContextClass();
+    const destination = audioContext.createMediaStreamDestination();
+
+    const addAudioTrackToMix = (track) => {
+      if (!track) return;
+      const source = audioContext.createMediaStreamSource(new MediaStream([track]));
+      const gainNode = audioContext.createGain();
+      gainNode.gain.value = 1.0;
+      source.connect(gainNode).connect(destination);
+    };
+
+    // Local audio
+    if (userStream.current) {
+      const localAudioTracks = userStream.current.getAudioTracks();
+      if (localAudioTracks && localAudioTracks.length > 0) {
+        addAudioTrackToMix(localAudioTracks[0]);
+      }
+    }
+
+    // Remote audio
+    for (const stream of Object.values(remoteStreamsRef.current || {})) {
+      if (!stream || !stream.getAudioTracks) continue;
+      const tracks = stream.getAudioTracks();
+      if (tracks && tracks.length > 0) addAudioTrackToMix(tracks[0]);
+    }
+
+    // Choose mime type
+    // - Video call: prefer video/webm (vp9/vp8) with opus audio
+    // - Audio call: prefer audio/webm with opus (no video tracks)
+    let mimeType = undefined;
+    if (isAudioOnlyCall) {
+      const preferredAudio = "audio/webm;codecs=opus";
+      mimeType = MediaRecorder.isTypeSupported(preferredAudio) ? preferredAudio : "audio/webm";
+    } else {
+      mimeType = "video/webm;codecs=vp9,opus";
+      if (!MediaRecorder.isTypeSupported(mimeType))
+        mimeType = "video/webm;codecs=vp8,opus";
+      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = "video/webm";
+    }
+
+    const chosenMimeType = mimeType;
+    console.log("[room.js][REC] chosenMimeType", {
+      chosenMimeType,
+      isAudioOnlyCall,
+    });
+
+    // Build the final composed stream (video tile for video calls, audio-only for audio calls)
+    let composedStream;
+    let drawTimer = null;
+    let canvas = null;
+  let videoEls = [];
+
+    if (!isAudioOnlyCall) {
+      // Phase 2: record a single "mosaic" video by drawing all participant tiles
+      // into one canvas (grid layout).
+      // Include remote MediaStreams even if their tracks aren't populated yet.
+      // mediasoup attaches tracks asynchronously; video elements can render once tracks appear.
+      const remoteEntries = Object.entries(remoteStreamsRef.current || {})
+        .filter(([, s]) => Boolean(s) && typeof s.getVideoTracks === "function")
+        .sort(([aKey], [bKey]) => String(aKey).localeCompare(String(bKey)));
+
+      const remoteVideoStreams = remoteEntries.map(([, s]) => s);
+      const localVideoStreams =
+        userStream.current && userStream.current.getVideoTracks && userStream.current.getVideoTracks().length > 0
+          ? [userStream.current]
+          : [];
+
+      const gridStreams =
+        remoteVideoStreams.length > 0
+          ? remoteVideoStreams
+          : localVideoStreams.length > 0
+            ? localVideoStreams
+            : primaryVideoStream
+              ? [primaryVideoStream]
+              : [];
+
+      console.log("[room.js][REC] mosaic streams", {
+        remoteVideoCount: remoteVideoStreams.length,
+        localVideoCount: localVideoStreams.length,
+        gridStreamsCount: gridStreams.length,
+      });
+
+      if (gridStreams.length === 0) {
+        toast.error("No video streams available for recording mosaic.");
+        audioContext.close().catch(() => {});
+        return;
+      }
+
+      canvas = document.createElement("canvas");
+      canvas.width = 1280;
+      canvas.height = 720;
+      recordingCanvasRef.current = canvas;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        toast.error("Canvas context unavailable.");
+        audioContext.close().catch(() => {});
+        return;
+      }
+
+      videoEls = gridStreams.map((stream) => {
+        const el = document.createElement("video");
+        el.srcObject = stream;
+        el.muted = true;
+        el.playsInline = true;
+        el.autoplay = true;
+        const playPromise = el.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch(() => {});
+        }
+        return el;
+      });
+
+      const w = canvas.width;
+      const h = canvas.height;
+      const n = videoEls.length;
+      const cols = Math.ceil(Math.sqrt(n));
+      const rows = Math.ceil(n / cols);
+      const tileW = Math.floor(w / cols);
+      const tileH = Math.floor(h / rows);
+
+      drawTimer = window.setInterval(() => {
+        try {
+          // Background
+          ctx.fillStyle = "black";
+          ctx.fillRect(0, 0, w, h);
+
+          for (let i = 0; i < videoEls.length; i += 1) {
+            const video = videoEls[i];
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            const x = col * tileW;
+            const y = row * tileH;
+            ctx.drawImage(video, x, y, tileW, tileH);
+          }
+        } catch (e) {
+          // Drawing failures can happen while the stream is negotiating; ignore.
+        }
+      }, 100);
+
+      recordingDrawTimerRef.current = drawTimer;
+      const canvasStream = canvas.captureStream(30);
+      composedStream = new MediaStream([
+        ...canvasStream.getVideoTracks(),
+        ...destination.stream.getAudioTracks(),
+      ]);
+    } else {
+      composedStream = destination.stream;
+    }
+
+    if (!composedStream) {
+      toast.error("Failed to build a media stream for recording.");
+      audioContext.close().catch(() => {});
+      return;
+    }
+
+    console.log("[room.js][REC] composedStream tracks", {
+      videoTracks: composedStream.getVideoTracks().length,
+      audioTracks: composedStream.getAudioTracks().length,
+    });
+
+    if (composedStream.getAudioTracks().length === 0 && isAudioOnlyCall) {
+      toast.error("No audio tracks found for recording.");
+      audioContext.close().catch(() => {});
+      return;
+    }
+
+    const recordedChunks = [];
+    recordedChunksRef.current = recordedChunks;
+
+    const recorder = new MediaRecorder(composedStream, { mimeType: chosenMimeType });
+    mediaRecorderRef.current = recorder;
+    recordingStartTimeRef.current = Date.now();
+
+    let ondataLogged = false;
+    recorder.ondataavailable = (event) => {
+      try {
+        if (event.data && event.data.size > 0) recordedChunksRef.current.push(event.data);
+        if (!ondataLogged && event.data && event.data.size > 0) {
+          ondataLogged = true;
+          console.log("[room.js][REC] first ondataavailable", {
+            size: event.data.size,
+            mimeType: chosenMimeType,
+          });
+        }
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    recorder.onstop = async () => {
+      try {
+        console.log("[room.js][REC] recorder stopped, chunks:", recordedChunksRef.current?.length || 0);
+        // Stop drawing
+        if (recordingDrawTimerRef.current) {
+          window.clearInterval(recordingDrawTimerRef.current);
+          recordingDrawTimerRef.current = null;
+        }
+
+        const elapsedSec = Math.round(((Date.now() - recordingStartTimeRef.current) || 0) / 1000);
+
+        const finalBlob = new Blob(recordedChunksRef.current || [], {
+          type: chosenMimeType,
+        });
+
+        console.log("[room.js][REC] finalBlob ready", {
+          blobSize: finalBlob.size,
+          blobType: finalBlob.type,
+        });
+
+        const durationForServer = Number.isFinite(elapsedSec) ? elapsedSec : 0;
+
+        setRecordingBusy(true);
+        await uploadRecordedBlob(finalBlob, startingRecordingId, durationForServer);
+      } catch (e) {
+        // uploadRecordedBlob already toasts errors
+        console.error("[room.js][REC] recorder.onstop error", e);
+      } finally {
+        try {
+          await audioContext.close();
+        } catch (_) {}
+        setRecordingBusy(false);
+      }
+    };
+
+    recorder.start(2000); // Collect chunks every 2 seconds
+  }
+
+  function stopLocalRecorder() {
+    try {
+      const recorder = mediaRecorderRef.current;
+      console.log("[room.js][REC] stopLocalRecorder called", {
+        recorderState: recorder?.state,
+      });
+      if (recorder && recorder.state === "recording") {
+        console.log("[room.js][REC] stopping recorder now");
+        recorder.stop();
+      }
+    } catch (e) {
+      console.error("[room.js] stopLocalRecorder failed", e);
+      toast.error("Failed to stop recorder.");
+    }
+  }
+
   // Chat implementation: Toggle sidebar
   const clickChat = () => {
     setShowChat(!showChat);
@@ -1557,6 +2137,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
                 }}
               >
                 {callType.toUpperCase()} CALL
+                {isRecording ? <span style={{ color: "#ef4444", fontSize: 12 }}> | REC</span> : null}
                 <span style={{ fontSize: 12, color: "#e5e7eb" }}>
                   Participants (media): {1 + remotePeers.length}
                 </span>
@@ -1596,6 +2177,38 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
                 }}
               >
                 -
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (isRecording) {
+                    if (!activeRecordingId) {
+                      toast.error("No active recording to stop.");
+                      return;
+                    }
+                    requestStopRecording(activeRecordingId);
+                  } else {
+                    requestStartRecording();
+                  }
+                }}
+                disabled={recordingBusy}
+                style={{
+                  backgroundColor: isRecording ? "#ef4444" : "white",
+                  width: "auto",
+                  height: "25px",
+                  borderRadius: "5px",
+                  color: isRecording ? "white" : "black",
+                  marginRight: "8px",
+                  lineHeight: "0px",
+                  padding: "0 10px",
+                  fontSize: 12,
+                  border: isRecording ? "none" : "1px solid #e5e7eb",
+                  cursor: recordingBusy ? "not-allowed" : "pointer",
+                  opacity: isGroupAdmin ? 1 : 0.6,
+                }}
+                title={isGroupAdmin ? "Record/Stop (admin only)" : "Record/Stop (admin only)"}
+              >
+                {isRecording ? "Stop" : "Record"}
               </button>
             </div>
             <div style={{ display: 'flex', width: '100%', height: 'calc(100% - 50px)', position: 'relative' }}>
@@ -1669,7 +2282,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
                 <ChatSidebarContainer show={showChat}>
                   <ChatSidebarHeader>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <i className="fas fa-comments" style={{ color: '#f37e20' }} />
+                      <i className="fas fa-comments" style={{ color: 'var(--primary-color)' }} />
                       <span style={{ fontWeight: 600, fontSize: '1rem', color: '#334155' }}>In-call Messages</span>
                     </div>
                     <IconButton onClick={() => setShowChat(false)} size="small">

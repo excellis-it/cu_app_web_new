@@ -194,8 +194,8 @@ const Login = () => {
                 <div className="row align-items-center justify-content-center">
                   <div className="col-md-6">
                     <div className="login_fomr">
-                      <img src="extalk.png" />
-                      <h2 style={{ color: "#f37e20" }}>Welcome</h2>
+                      <img src="cu-logo-2.svg" />
+                      <h2 style={{ color: "#1da678" }}>Welcome</h2>
                       <p className="text-dark">Sign in to Continue</p>
                       <form className="mt-3" onSubmit={handleSubmit}>
                         <div className="mb-4">

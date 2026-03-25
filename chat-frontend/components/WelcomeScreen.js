@@ -631,7 +631,7 @@ pin: ${meeting?.pin || ''}
     // if (showActivity) {
     //     return (
     //         <Box className="chat_cu_logo" sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', p: 4, textAlign: 'center' }}>
-    //             <img src="extalk.png" alt="cu-logo" style={{ width: '180px', marginBottom: '20px' }} />
+    //             <img src="cu-logo-2.svg" alt="cu-logo" style={{ width: '180px', marginBottom: '20px' }} />
     //             <Typography variant="h4" sx={{ color: '#f37e20', fontWeight: 900, mb: 1 }}>Chats</Typography>
     //             <Typography variant="body2" color="text.secondary">Select a conversation to start messaging</Typography>
     //         </Box>
@@ -641,7 +641,7 @@ pin: ${meeting?.pin || ''}
     // if (callHistoryActivity) {
     //     return (
     //         <Box className="chat_cu_logo" sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', p: 4, textAlign: 'center' }}>
-    //             <img src="extalk.png" alt="cu-logo" style={{ width: '180px', marginBottom: '20px' }} />
+    //             <img src="cu-logo-2.svg" alt="cu-logo" style={{ width: '180px', marginBottom: '20px' }} />
     //             <Typography variant="h4" sx={{ color: '#f37e20', fontWeight: 900, mb: 1 }}>Call History</Typography>
     //             <Typography variant="body2" color="text.secondary">Review your recent voice and video calls</Typography>
     //         </Box>
@@ -717,7 +717,7 @@ pin: ${meeting?.pin || ''}
 
     return (
         <Box className="chat_cu_logo" sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', p: 4, textAlign: 'center' }}>
-            <img src="extalk.png" alt="cu-logo" style={{ width: '220px', marginBottom: '30px' }} />
+            <img src="cu-logo-2.svg" alt="cu-logo" style={{ width: '220px', marginBottom: '30px' }} />
             <Typography variant="h3" sx={{ color: '#f37e20', fontWeight: 900, mb: 1 }}>Welcome to ExTalk</Typography>
             <Typography variant="body1" color="text.secondary">Collaborate and communicate with your team effortlessly</Typography>
         </Box>

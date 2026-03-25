@@ -47,7 +47,7 @@ const forgetPassword = () => {
                   
                   <div className="col-md-6">
                     <div className="login_fomr">
-                      <img src="extalk.png" />
+                      <img src="cu-logo-2.svg" />
                       <h2 style={{ color: "#f37e20" }}>Enter your registered Email</h2>
                       <form className="mt-3" onSubmit={sendOtp}>
                         <div className="relative">

@@ -88,7 +88,7 @@ const BottomBar = ({
 
       <Center>
         {(sessionStorage.getItem("isGuestMeeting") === "true") && (
-          <ActionButton onClick={clickChat} title="Chat" style={{ cursor: 'pointer', borderRadius: '15px', background: '#f37e20' }}>
+          <ActionButton onClick={clickChat} title="Chat" style={{ cursor: 'pointer', borderRadius: '15px', background: 'var(--primary-color)' }}>
             <ChatIcon style={{ fontSize: 'calc(16px + 1vmin)' }} />
             {/* Chat */}
           </ActionButton>
@@ -174,7 +174,7 @@ const ActionButton = styled.div`
   }
 
   .sharing {
-    color: #f37e20;
+    color: var(--primary-color);
   }
 `;
 
@@ -188,7 +188,7 @@ const DeviceButton = styled.div`
   display: flex;
   align-items: center;
   gap: 5px;
-  background-color: ${(props) => (props.$active ? '#f37e20' : '#f37e20')};
+  background-color: ${(props) => (props.$active ? 'var(--primary-color)' : 'var(--primary-color)')};
   color: ${(props) => (props.$active ? 'black' : 'black')};
 
 
@@ -208,13 +208,13 @@ const StopButton = styled.div`
   height: 30px;
   font-size: 0.9375rem;
   line-height: 30px;
-  background-color: #f37e20;
+  background-color: var(--primary-color);
   border-radius: 15px;
   text-align: center;
   cursor: pointer;
 
  &:hover {
-    background-color: #f37e20;
+    background-color: var(--primary-color);
     cursor: pointer;
   }
 `;

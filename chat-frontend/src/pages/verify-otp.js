@@ -38,7 +38,7 @@ const forgetPassword = () => {
                 <div className="row align-items-center">
                   <div className="col-md-6">
                     <div className="login_fomr">
-                      <img src="extalk.png" />
+                      <img src="cu-logo-2.svg" />
                       <h2>Verify otp</h2>
                       <form className="mt-3" onSubmit={verifyOtp}>
 
