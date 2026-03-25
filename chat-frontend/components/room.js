@@ -1,0 +1,2078 @@
+import React, { useState, useEffect, useRef } from "react";
+import { IconButton } from "@mui/material";
+import CloseIcon from "@mui/icons-material/Close";
+import styled, { keyframes } from "styled-components";
+import VideoCard from "./VideoCard";
+import BottomBar from "./BottomBar";
+import ChatArea from "./ChatArea";
+import { useRouter } from 'next/router';
+import { toast } from "react-toastify";
+import ReconnectModal from "./reconnectionModalComponant";
+import { useAppContext } from "../appContext/appContext";
+import { Device } from "mediasoup-client";
+import { createDummyMediaStream } from "../utils/createDummyMediaStream";
+import * as callService from "../utils/callService";
+
+const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent, isGuestMeeting, chatAreaProps }) => {
+
+  const { globalUser, setGlobalUser } = useAppContext();
+  const currentUser = sessionStorage.getItem("user");
+  const currentUserFullName = sessionStorage.getItem("fullName");
+  const [userVideoAudio, setUserVideoAudio] = useState({
+    localUser: { video: true, audio: true },
+  });
+  const [constraints, setConstraints] = useState({ audio: true, video: true });
+  const [videoDevices, setVideoDevices] = useState([]);
+  const [screenShare, setScreenShare] = useState(false);
+  const [screenShareLoading, setScreenShareLoading] = useState(false);
+  const [currentScreenSharer, setCurrentScreenSharer] = useState(null); // Track who is sharing
+  const [showVideoDevices, setShowVideoDevices] = useState(false);
+  const [showModal, setShowModal] = useState(true);
+  const [isFloating, setIsFloating] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+  const [stream, setStream] = useState(null);
+  const [showReconnectModal, setShowReconnectModal] = useState(false);
+  const [hasRealDevices, setHasRealDevices] = useState(false);
+  const [hasRealVideo, setHasRealVideo] = useState(false);
+  const [waitingCalls, setWaitingCalls] = useState([]);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  const isAudioOnlyCall = callType === "audio";
+
+  // Mediasoup-specific refs/state (web SFU path)
+  // Mediasoup SFU is now always enabled for web calls.
+  const useMediasoup = true;
+  const deviceRef = useRef(null);
+  const sendTransportRef = useRef(null);
+  const recvTransportRef = useRef(null);
+  const audioProducerRef = useRef(null);
+  const videoProducerRef = useRef(null);
+  const remoteStreamsRef = useRef({}); // userId -> MediaStream
+  const [remotePeers, setRemotePeers] = useState([]); // [{ userId, stream }]
+
+  const userVideoRef = useRef();
+  const screenTrackRef = useRef();
+  const wasVideoProducerPausedBeforeShareRef = useRef(false);
+  const userStream = useRef();
+  const roomId = room_id;
+  const router = useRouter();
+  const hasReceivedInitialUsers = useRef(false);
+  const socketHandlersRegisteredRef = useRef(false);
+  const pendingConsumePeerIdsRef = useRef(new Set());
+
+  const boxRef = useRef(null);
+  const [dragging, setDragging] = useState(false);
+  const [position, setPosition] = useState({
+    x: 0,
+    y: 0
+  });
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  useEffect(() => {
+    const handleOffline = (e) => {
+      toast.error("You are offline!", {
+        position: "top-right",
+        autoClose: 5000,
+        hideProgressBar: false,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+        progress: undefined,
+      });
+    };
+
+    const handleOnline = async (e) => {
+      toast.success("You are back online!", {
+        position: "top-right",
+        autoClose: 5000,
+        hideProgressBar: false,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+        progress: undefined,
+      });
+      setShowReconnectModal(true);
+    };
+
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
+
+    return () => {
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (dragging) {
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+    } else {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    }
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [dragging, offset]);
+
+  // Use shared dummy stream helper
+  function getDummyStream() {
+    return createDummyMediaStream();
+  }
+
+  // Fallback: fetch and consume producers for a newly joined peer (in case MS-new-producer was missed)
+  const fetchAndConsumeProducersForNewPeer = async (rId, myUserId, newPeerUserId, retryCount = 0) => {
+    const socket = socketRef.current;
+    // Use refs first; fall back to socket-stored (survives Room remounts)
+    const device = deviceRef.current || socket?.mediasoupDevice;
+    const recvTransport = recvTransportRef.current || socket?.mediasoupRecvTransport;
+    if (!socket || !device || !recvTransport) {
+      console.warn("[room.js] fetchAndConsumeProducers: mediasoup not ready", {
+        hasSocket: !!socket,
+        hasDeviceRef: !!deviceRef.current,
+        hasDeviceOnSocket: !!socket?.mediasoupDevice,
+        hasRecvRef: !!recvTransportRef.current,
+        hasRecvOnSocket: !!socket?.mediasoupRecvTransport,
+        retryCount,
+      });
+      if (retryCount < 15) {
+        console.log("[room.js] fetchAndConsumeProducers: retrying in 1s", {
+          attempt: retryCount + 1,
+          max: 15,
+        });
+        setTimeout(() => fetchAndConsumeProducersForNewPeer(rId, myUserId, newPeerUserId, retryCount + 1), 1000);
+      }
+      return;
+    }
+    const stream = remoteStreamsRef.current[newPeerUserId];
+    if (!stream || stream.getTracks().length > 0) return; // already have tracks
+    try {
+      const roomIdStr = String(rId);
+      console.log("[room.js] fetchAndConsumeProducers: calling MS-get-producers", {
+        roomId: roomIdStr,
+        myUserId,
+        newPeerUserId,
+      });
+      const existing = await callService.getProducers(socket, { roomId: roomIdStr, userId: myUserId });
+      const forPeer = existing.filter((p) => String(p.userId) === String(newPeerUserId));
+      console.log("[room.js] fetchAndConsumeProducers", {
+        newPeerUserId,
+        totalProducers: existing.length,
+        forThisPeer: forPeer.length,
+      });
+      if (forPeer.length === 0) return;
+      for (const p of forPeer) {
+        try {
+          console.log("[room.js] fetchAndConsumeProducers: consuming producer", {
+            producerId: p.producerId,
+            kind: p.kind,
+          });
+          const consumeInfo = await callService.consume(socket, {
+            roomId: rId,
+            userId: myUserId,
+            producerId: p.producerId,
+            rtpCapabilities: device.rtpCapabilities,
+          });
+          const consumer = await recvTransport.consume({
+            id: consumeInfo.id,
+            producerId: consumeInfo.producerId,
+            kind: consumeInfo.kind,
+            rtpParameters: consumeInfo.rtpParameters,
+          });
+          const kind = consumeInfo.kind || p.kind;
+          let existingStream = remoteStreamsRef.current[newPeerUserId];
+          if (!existingStream) existingStream = new MediaStream();
+          else {
+            if (kind === "video") existingStream.getVideoTracks().forEach((t) => existingStream.removeTrack(t));
+            else if (kind === "audio") existingStream.getAudioTracks().forEach((t) => existingStream.removeTrack(t));
+          }
+          existingStream.addTrack(consumer.track);
+          const newStream = new MediaStream(existingStream.getTracks());
+          remoteStreamsRef.current[newPeerUserId] = newStream;
+          setRemotePeers(Object.entries(remoteStreamsRef.current).map(([uid, s]) => ({ userId: uid, stream: s })));
+          console.log("[room.js] fetchAndConsumeProducers: consumed producer for", newPeerUserId);
+        } catch (err) {
+          console.error("[room.js] Error consuming producer in fallback:", err);
+        }
+      }
+    } catch (err) {
+      console.error("[room.js] fetchAndConsumeProducers failed:", err);
+    }
+  };
+
+  useEffect(() => {
+    window.userStream = userStream.current; // or use a React Context
+  }, [userStream.current]);
+
+  // Debug: log whenever remotePeers changes so we can see who is being rendered
+  useEffect(() => {
+    console.log("[room.js] remotePeers updated:", remotePeers.map(p => ({
+      userId: p.userId,
+      hasAudio: !!p.stream?.getAudioTracks()?.length,
+      hasVideo: !!p.stream?.getVideoTracks()?.length,
+    })));
+  }, [remotePeers]);
+
+  // Local audio level detector to indicate when user is speaking
+  useEffect(() => {
+    if (!stream) return;
+
+    const audioTrack = stream.getAudioTracks()[0];
+    if (!audioTrack) return;
+
+    let audioContext;
+    let source;
+    let analyser;
+    let rafId;
+
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+
+      audioContext = new AC();
+      const stream = new MediaStream([audioTrack]);
+      source = audioContext.createMediaStreamSource(stream);
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+      const tick = () => {
+        analyser.getByteTimeDomainData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          const v = dataArray[i] - 128;
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / dataArray.length);
+        // Slightly lower threshold so normal speech is detected
+        setIsSpeaking(rms > 4);
+        rafId = requestAnimationFrame(tick);
+      };
+
+      rafId = requestAnimationFrame(tick);
+    } catch (e) {
+      console.warn("Audio level meter init failed:", e);
+    }
+
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      try { source && source.disconnect(); } catch { }
+      try { analyser && analyser.disconnect(); } catch { }
+      try { audioContext && audioContext.close(); } catch { }
+    };
+  }, [stream]);
+
+
+
+  const initializeMedia = async () => {
+    try {
+      console.log("[room.js] initializeMedia start", {
+        useMediasoup,
+        socketReady: !!socketRef.current,
+        roomId,
+        currentUser,
+      });
+      // Reset the flag when initializing media (happens on mount/rejoin)
+      // This ensures we properly detect initial sync when rejoining
+      hasReceivedInitialUsers.current = false;
+
+      let localStreamRef;
+      let deviceCheckPassed = false;
+      let videoCheckPassed = false;
+      // Declare tracks outside so they are always in scope
+      let audioTrack = null;
+      let videoTrack = null;
+
+      try {
+        // If a pre-call stream was provided by the start_call popup, reuse it
+        // so we don't request camera/mic again and risk failures.
+        if (typeof window !== "undefined" && window.exTalkPreCallStream) {
+          localStreamRef = window.exTalkPreCallStream;
+          window.exTalkPreCallStream = null;
+          audioTrack = localStreamRef.getAudioTracks()[0] || null;
+          videoTrack = localStreamRef.getVideoTracks()[0] || null;
+          deviceCheckPassed = !!(audioTrack || videoTrack);
+          videoCheckPassed = !!videoTrack;
+          console.log("[room.js] Reusing pre-call media stream", {
+            streamId: localStreamRef.id,
+            hasAudio: !!audioTrack,
+            hasVideo: !!videoTrack,
+          });
+        } else if (!navigator || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+          console.warn("mediaDevices.enumerateDevices not available; skipping device check and using dummy stream.");
+          // Leave deviceCheckPassed = false so we hit the dummy-stream fallback below.
+        } else {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const hasAudio = devices.some((device) => device.kind === "audioinput");
+          const hasVideo = devices.some((device) => device.kind === "videoinput");
+
+          setVideoDevices(devices.filter((device) => device.kind === "videoinput"));
+
+          // First, try to get audio if available
+          if (hasAudio) {
+            try {
+              const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+              audioTrack = audioStream.getAudioTracks()[0];
+              console.log("[room.js] Successfully captured audio track");
+            } catch (audioErr) {
+              console.warn("Audio capture failed:", audioErr);
+              if (audioErr.name === "NotAllowedError") {
+                toast.error("Microphone permission denied. Please allow access to microphone.");
+              }
+            }
+          }
+
+          // Always try to get video on video calls, regardless of enumerateDevices(),
+          // and fall back gracefully if it fails or there is no physical camera.
+          if (!isAudioOnlyCall) {
+            try {
+              const videoStream = await navigator.mediaDevices.getUserMedia({
+                audio: false,
+                video: {
+                  width: { ideal: 1280 },
+                  height: { ideal: 720 },
+                  frameRate: { ideal: 30, max: 30 }
+                }
+              });
+              videoTrack = videoStream.getVideoTracks()[0];
+              console.log("[room.js] Successfully captured video track");
+            } catch (videoErr) {
+              console.warn("Video capture failed:", videoErr);
+              if (videoErr.name === "NotAllowedError") {
+                toast.error("Camera permission denied. Please allow access to camera.");
+              }
+            }
+          }
+        }
+
+        // Build the local stream based on what we got
+        const tracks = [];
+
+        // Create dummy stream once (we'll extract tracks from it as needed)
+        let dummyStream = null;
+        const getDummy = () => {
+          if (!dummyStream) {
+            dummyStream = getDummyStream();
+          }
+          return dummyStream;
+        };
+
+        // Add real audio track if we got it, otherwise create silent dummy
+        if (audioTrack) {
+          tracks.push(audioTrack);
+          deviceCheckPassed = true;
+          console.log("[room.js] Using real audio track");
+        } else {
+          // Only use dummy audio if we absolutely couldn't get real audio
+          const dummy = getDummy();
+          const dummyAudioTrack = dummy.getAudioTracks()[0];
+          tracks.push(dummyAudioTrack);
+          console.log("[room.js] Using dummy audio track (no microphone available)");
+        }
+
+        // Add real video track if we got it, otherwise create dummy video track.
+        // For audio-only calls we skip adding any video track so nothing is broadcast.
+        if (!isAudioOnlyCall) {
+          if (videoTrack) {
+            tracks.push(videoTrack);
+            deviceCheckPassed = true;
+            videoCheckPassed = true;
+            console.log("[room.js] Using real video track");
+          } else {
+            // Always add a dummy video track for screen sharing support
+            const dummy = getDummy();
+            const dummyVideoTrack = dummy.getVideoTracks()[0];
+            tracks.push(dummyVideoTrack);
+            console.log("[room.js] Using dummy video track (no camera)", {
+              trackId: dummyVideoTrack?.id,
+              enabled: dummyVideoTrack?.enabled,
+              readyState: dummyVideoTrack?.readyState
+            });
+          }
+        }
+
+        localStreamRef = new MediaStream(tracks);
+
+        console.log("[room.js] ✅ Local stream created successfully:", {
+          streamId: localStreamRef.id,
+          audioTracks: localStreamRef.getAudioTracks().length,
+          videoTracks: localStreamRef.getVideoTracks().length,
+          audioEnabled: localStreamRef.getAudioTracks()[0]?.enabled,
+          audioLabel: localStreamRef.getAudioTracks()[0]?.label,
+          audioReadyState: localStreamRef.getAudioTracks()[0]?.readyState,
+          videoEnabled: localStreamRef.getVideoTracks()[0]?.enabled,
+          videoLabel: localStreamRef.getVideoTracks()[0]?.label,
+          videoReadyState: localStreamRef.getVideoTracks()[0]?.readyState,
+          hasRealDevices: deviceCheckPassed
+        });
+
+
+
+        setHasRealDevices(deviceCheckPassed);
+        setHasRealVideo(!isAudioOnlyCall && videoCheckPassed);
+        setUserVideoAudio(prev => ({
+          ...prev,
+          // Set video/audio to true if tracks exist in stream (including dummy tracks)
+          localUser: {
+            video: localStreamRef.getVideoTracks().length > 0,
+            audio: localStreamRef.getAudioTracks().length > 0
+          }
+        }));
+
+      } catch (err) {
+        console.error("getUserMedia / enumerateDevices failed:", err);
+        if (err.name === "NotReadableError") {
+          toast.error("Camera or microphone is already in use.");
+        } else if (err.name === "NotAllowedError") {
+          toast.error("Permission denied. Please allow access to camera and microphone.");
+        } else {
+          console.warn("Media access failed, using dummy stream");
+        }
+      }
+
+      if (!deviceCheckPassed) {
+        if (isAudioOnlyCall) {
+          // For audio-only calls with no real devices, create a dummy stream
+          // that only contains an (almost silent) audio track.
+          const dummy = getDummyStream();
+          const dummyAudio = dummy.getAudioTracks()[0];
+          localStreamRef = new MediaStream(dummyAudio ? [dummyAudio] : []);
+        } else {
+          localStreamRef = getDummyStream();
+        }
+        setHasRealDevices(false);
+        setHasRealVideo(false);
+        setUserVideoAudio(prev => ({
+          ...prev,
+          // Even dummy stream has video/audio tracks that should be shown
+          localUser: {
+            video: localStreamRef.getVideoTracks().length > 0,
+            audio: localStreamRef.getAudioTracks().length > 0
+          }
+        }));
+
+        console.log("[room.js] Using fallback dummy stream with tracks:", {
+          videoTracks: localStreamRef.getVideoTracks().length,
+          audioTracks: localStreamRef.getAudioTracks().length
+        });
+      }
+
+      setStream(localStreamRef);
+      userStream.current = localStreamRef;
+
+      if (userVideoRef.current) {
+        userVideoRef.current.srcObject = localStreamRef;
+        try {
+          if (userVideoRef.current.readyState >= 2) {
+            const playPromise = userVideoRef.current.play();
+            if (playPromise && typeof playPromise.catch === "function") {
+              playPromise.catch((err) => {
+                if (err?.name === "AbortError") {
+                  return; // ignore interrupted play requests
+                }
+                console.warn("Video play failed:", err);
+              });
+            }
+          }
+        } catch (playError) {
+          console.warn("Video play failed:", playError);
+        }
+      }
+
+      // Debug: Log local stream tracks
+      if (localStreamRef) {
+        if (localStreamRef.getVideoTracks().length > 0) {
+          console.log("[room.js] Local video track readyState:", localStreamRef.getVideoTracks()[0].readyState);
+        }
+      }
+
+      // Ensure socket event handlers are registered BEFORE we join the room,
+      // so we don't miss FE-user-join and other events emitted from BE-join-room.
+      if (!socketHandlersRegisteredRef.current && socketRef.current) {
+        socketHandlersRegisteredRef.current = true;
+
+        // Socket event handlers (presence / UX only; media is handled by mediasoup)
+        socketRef.current.on("FE-user-join", (users) => {
+        console.log("[room.js] FE-user-join received:", {
+          rawUsers: users,
+          currentUser,
+        });
+        // If receiving multiple users, it's the initial sync (when joining/rejoining)
+        // If receiving a single user, it's a new user actually joining
+        // Note: Backend sends all users including yourself, so if length > 1, it's initial sync
+        const isInitialSync = users.length > 1;
+
+        // Count how many non-self users we're processing
+        const otherUsers = users.filter(({ info }) => info && info.userName !== currentUser);
+        const isProcessingMultipleOtherUsers = otherUsers.length > 1;
+
+        // Mark that we've received the initial user list BEFORE processing users
+        // This ensures we don't show toasts during initial sync
+        if (isInitialSync || isProcessingMultipleOtherUsers) {
+          hasReceivedInitialUsers.current = true;
+        }
+
+        users.forEach(({ userId, info }) => {
+          if (!info) {
+            console.log("[room.js] FE-user-join: skipping user with missing info", { userId });
+            return;
+          }
+          const { userName, video, audio, name, fullName, senderName } = info;
+          // Treat participants as "remote" based on socket id, not username.
+          // Use String() to avoid type mismatches (e.g. undefined vs "undefined").
+          const myId = socketRef.current?.id;
+          if (!myId || String(userId) === String(myId)) {
+            return;
+          }
+          if (!userName) {
+            console.log("[room.js] FE-user-join: skipping user with missing userName", { userId, info });
+            return;
+          }
+          {
+            console.log("[room.js] registering remote user from FE-user-join", {
+              userId,
+              userName,
+              video,
+              audio,
+            });
+            const displayName = senderName || name || fullName || userName;
+            setUserVideoAudio((prev) => ({
+              ...prev,
+              [userName]: {
+                video,
+                audio,
+                senderName,
+                name: displayName,
+                fullName: displayName,
+                socketId: userId,
+              },
+            }));
+
+              // Ensure we have a remote MediaStream entry for this user so that
+              // a tile is shown even before mediasoup finishes attaching tracks.
+              if (!remoteStreamsRef.current[userName]) {
+                remoteStreamsRef.current[userName] = new MediaStream();
+                pendingConsumePeerIdsRef.current.add(userName);
+                setRemotePeers(
+                  Object.entries(remoteStreamsRef.current).map(([uid, stream]) => ({
+                    userId: uid,
+                    stream,
+                  }))
+                );
+                // Fallback: call immediately (will retry every 1s if mediasoup not ready yet)
+                fetchAndConsumeProducersForNewPeer(roomId, currentUser, userName);
+              }
+
+            const shouldShowToast =
+              !isInitialSync &&
+              !isProcessingMultipleOtherUsers &&
+              hasReceivedInitialUsers.current;
+
+            if (shouldShowToast) {
+              toast.success(`${fullName || userName} joined the call`, {
+                position: "top-right",
+                autoClose: 3000,
+                hideProgressBar: false,
+                closeOnClick: true,
+                pauseOnHover: true,
+                draggable: true,
+              });
+            }
+          }
+        });
+
+        // Mark that we've received initial users if it was a single user (edge case)
+        // This handles the case where we receive a single user before any initial sync
+        if (!isInitialSync && !isProcessingMultipleOtherUsers && !hasReceivedInitialUsers.current) {
+          hasReceivedInitialUsers.current = true;
+        }
+      });
+
+        socketRef.current.on("FE-user-leave", ({ userId, userName, fullName }) => {
+        if (!userName) {
+          console.warn("[room.js] FE-user-leave: skipping, no userName in payload", { userId });
+          return;
+        }
+        const info = userVideoAudio[userName] || {};
+        const displayName =
+          info.senderName || info.name || fullName || info.fullName || userName;
+        toast.info(`${displayName} left the call`, {
+          position: "top-right",
+          autoClose: 3000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true,
+        });
+
+        setUserVideoAudio((prevUserVideoAudio) => {
+          const { [userName]: _, ...rest } = prevUserVideoAudio;
+          return rest;
+        });
+
+        // Remove any mediasoup-rendered stream for this user
+        if (remoteStreamsRef.current[userName]) {
+          delete remoteStreamsRef.current[userName];
+          setRemotePeers(
+            Object.entries(remoteStreamsRef.current).map(([uid, stream]) => ({
+              userId: uid,
+              stream,
+            }))
+          );
+        }
+      });
+
+        socketRef.current.on("FE-toggle-camera", ({ userId, switchTarget }) => {
+        const targetUserName = Object.keys(userVideoAudio).find(
+          (name) => name === userId || userVideoAudio[name]?.socketId === userId
+        );
+        if (!targetUserName) return;
+
+        setUserVideoAudio((prev) => ({
+          ...prev,
+          [targetUserName]: {
+            ...prev[targetUserName],
+            video:
+              switchTarget === "video"
+                ? !prev[targetUserName]?.video
+                : prev[targetUserName]?.video,
+            audio:
+              switchTarget === "audio"
+                ? !prev[targetUserName]?.audio
+                : prev[targetUserName]?.audio,
+          },
+        }));
+      });
+
+        socketRef.current.on("FE-toggle-screen-share", ({ userId, isScreenShare, userName }) => {
+        const peerIdx = findPeer(userId);
+        if (peerIdx) {
+          setUserVideoAudio((prev) => ({
+            ...prev,
+            [peerIdx.userName]: {
+              ...prev[peerIdx.userName],
+              isScreenShare: isScreenShare
+            },
+          }));
+
+          // Track who is currently sharing
+          if (isScreenShare) {
+            setCurrentScreenSharer({ userId, userName: peerIdx.userName });
+          } else {
+            // Clear if this user stopped sharing
+            setCurrentScreenSharer(prev =>
+              prev?.userId === userId ? null : prev
+            );
+          }
+        }
+      });
+
+        socketRef.current.on("FE-user-disconnected", (data) => {
+        const disconnectedUserId = data?.userSocketId;
+        if (!disconnectedUserId) return;
+
+        // Show toast notification when user disconnects
+        const displayName =
+          data?.fullName || data?.userName || "A participant";
+        toast.warning(`${displayName} disconnected from the call`, {
+          position: "top-right",
+          autoClose: 3000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true,
+        });
+
+        const userNameToRemove = data?.userName;
+
+        if (userNameToRemove) {
+          setUserVideoAudio((prevUserVideoAudio) => {
+            const { [userNameToRemove]: _, ...rest } = prevUserVideoAudio;
+            if (!rest.localUser && prevUserVideoAudio.localUser) {
+              rest.localUser = prevUserVideoAudio.localUser;
+            }
+            return rest;
+          });
+
+          if (remoteStreamsRef.current[userNameToRemove]) {
+            delete remoteStreamsRef.current[userNameToRemove];
+            setRemotePeers(
+              Object.entries(remoteStreamsRef.current).map(([uid, stream]) => ({
+                userId: uid,
+                stream,
+              }))
+            );
+          }
+        }
+      });
+
+        socketRef.current.on("FE-guest-disconnected", (data) => {
+        const disconnectedUserId = data?.userSocketId;
+        if (!disconnectedUserId) return;
+
+        const userNameToRemove = data?.userName;
+
+        if (userNameToRemove) {
+          // Show toast notification when guest disconnects
+          const displayName =
+            data?.senderName || data?.name || data?.fullName || userNameToRemove || "Guest";
+          toast.warning(`${displayName} disconnected from the call`, {
+            position: "top-right",
+            autoClose: 3000,
+            hideProgressBar: false,
+            closeOnClick: true,
+            pauseOnHover: true,
+            draggable: true,
+          });
+
+          setUserVideoAudio((prevUserVideoAudio) => {
+            const { [userNameToRemove]: _, ...rest } = prevUserVideoAudio;
+            if (!rest.localUser && prevUserVideoAudio.localUser) {
+              rest.localUser = prevUserVideoAudio.localUser;
+            }
+            return rest;
+          });
+
+          if (remoteStreamsRef.current[userNameToRemove]) {
+            delete remoteStreamsRef.current[userNameToRemove];
+            setRemotePeers(
+              Object.entries(remoteStreamsRef.current).map(([uid, stream]) => ({
+                userId: uid,
+                stream,
+              }))
+            );
+          }
+        }
+      });
+
+        socketRef.current.on("waiting_call", (data) => {
+        setWaitingCalls(prev => {
+          // Avoid duplicates based on roomId or socketId
+          if (prev.find(c => c.roomId === data.roomId)) return prev;
+          return [...prev, data];
+        });
+        const callerDisplay = data.isDirect ? data.callerName : data.groupName;
+        toast.info(`${callerDisplay} is calling (${data.callType})... Call is waiting.`);
+      });
+
+        // Clear waiting calls when a call ends
+        socketRef.current.on("FE-call-ended", (data) => {
+        if (data?.roomId) {
+          setWaitingCalls(prev => prev.filter(c => c.roomId !== data.roomId));
+        }
+      });
+
+        // Clear waiting calls when user leaves
+        socketRef.current.on("FE-leave", (data) => {
+        if (data?.roomId) {
+          setWaitingCalls(prev => prev.filter(c => c.roomId !== data.roomId));
+        }
+      });
+      }
+
+      // Join room with device capability info via callService
+      try {
+        const ack = await callService.joinRoom(socketRef.current, {
+          joinEvent,
+          payload: {
+            roomId,
+            userName: currentUser,
+            fullName: currentUserFullName
+              ? currentUserFullName
+              : globalUser?.data?.user?.name,
+            callType,
+            hasRealDevices,
+            video: localStreamRef.getVideoTracks().length > 0,
+            audio: localStreamRef.getAudioTracks().length > 0,
+          },
+        });
+        if (ack?.error) {
+          console.error("Error joining room:", ack.error);
+          toast.error(ack.error);
+        } else {
+          console.log("Joined room successfully:", ack);
+        }
+      } catch (err) {
+        console.error("Error joining room:", err);
+        toast.error("Failed to join room. Please try again.");
+      }
+      // Initialize mediasoup SFU for this room.
+      console.log("[room.js] calling initializeMediasoup", {
+        roomId,
+        currentUser,
+      });
+      await initializeMediasoup(roomId, currentUser);
+
+    } catch (error) {
+      console.error("Error initializing media:", error);
+      toast.error("Failed to initialize media. Please refresh and try again.");
+    }
+  };
+
+  // ======================= Mediasoup initialization (web SFU) =======================
+  const initializeMediasoup = async (roomId, userId) => {
+    try {
+      const socket = socketRef.current;
+      if (!socket) {
+        console.warn("[room.js] initializeMediasoup called without socket");
+        return;
+      }
+
+      console.log("[room.js] initializeMediasoup start", {
+        roomId,
+        userId,
+        socketId: socket.id,
+      });
+
+      // 1) Get RTP capabilities
+      let rtpCaps;
+      try {
+        rtpCaps = await callService.getRtpCapabilities(socket, { roomId });
+        console.log("[room.js] got rtpCaps", rtpCaps);
+      } catch (e) {
+        console.error("[room.js] getRtpCapabilities failed", e);
+        throw e;
+      }
+
+      // 2) Create Device
+      const device = new Device();
+      console.log("[room.js] Device created, loading with routerRtpCapabilities");
+      await device.load({ routerRtpCapabilities: rtpCaps });
+      deviceRef.current = device;
+      socket.mediasoupDevice = device; // Persist on socket for fetchAndConsumeProducers (survives remounts)
+      console.log("[room.js] Device loaded and stored", {
+        canProduceAudio: device.canProduce("audio"),
+        canProduceVideo: device.canProduce("video"),
+      });
+
+      // 3) Create send transport
+      let sendInfo;
+      try {
+        sendInfo = await callService.createTransport(socket, {
+          roomId,
+          userId,
+          direction: "send",
+        });
+        console.log("[room.js] send transport info", sendInfo);
+      } catch (e) {
+        console.error("[room.js] createTransport(send) failed", e);
+        throw e;
+      }
+
+      const sendTransport = device.createSendTransport({
+        id: sendInfo.id,
+        iceParameters: sendInfo.iceParameters,
+        iceCandidates: sendInfo.iceCandidates,
+        dtlsParameters: sendInfo.dtlsParameters,
+      });
+
+      sendTransport.on("connect", ({ dtlsParameters }, callback, errback) => {
+        callService
+          .connectTransport(socket, {
+            roomId,
+            userId,
+            transportId: sendTransport.id,
+            dtlsParameters,
+          })
+          .then(() => {
+            console.log("[room.js] sendTransport connected");
+            callback();
+          })
+          .catch((error) => {
+            console.error("[room.js] sendTransport connect failed", error);
+            errback(error);
+          });
+      });
+
+      sendTransport.on("produce", ({ kind, rtpParameters }, callback, errback) => {
+        console.log("[room.js] sendTransport produce requested", { kind });
+        socket.emit(
+          "MS-produce",
+          { roomId, userId, transportId: sendTransport.id, kind, rtpParameters },
+          (res) => {
+            if (res && res.ok && res.id) callback({ id: res.id });
+            else errback(new Error(res?.error || "produce-failed"));
+          }
+        );
+      });
+
+      sendTransportRef.current = sendTransport;
+
+      // 4) Create recv transport
+      let recvInfo;
+      try {
+        recvInfo = await callService.createTransport(socket, {
+          roomId,
+          userId,
+          direction: "recv",
+        });
+        console.log("[room.js] recv transport info", recvInfo);
+      } catch (e) {
+        console.error("[room.js] createTransport(recv) failed", e);
+        throw e;
+      }
+
+      const recvTransport = device.createRecvTransport({
+        id: recvInfo.id,
+        iceParameters: recvInfo.iceParameters,
+        iceCandidates: recvInfo.iceCandidates,
+        dtlsParameters: recvInfo.dtlsParameters,
+      });
+
+      recvTransport.on("connect", ({ dtlsParameters }, callback, errback) => {
+        callService
+          .connectTransport(socket, {
+            roomId,
+            userId,
+            transportId: recvTransport.id,
+            dtlsParameters,
+          })
+          .then(() => {
+            console.log("[room.js] recvTransport connected");
+            callback();
+          })
+          .catch((error) => {
+            console.error("[room.js] recvTransport connect failed", error);
+            errback(error);
+          });
+      });
+
+      recvTransportRef.current = recvTransport;
+      socket.mediasoupRecvTransport = recvTransport; // Persist on socket for fetchAndConsumeProducers (survives remounts)
+
+      // 5) Produce local tracks
+      const local = userStream.current;
+      if (local) {
+        const audioTrack = local.getAudioTracks()[0];
+        const videoTrack = local.getVideoTracks()[0];
+        console.log("[room.js] local tracks before produce", {
+          hasAudio: !!audioTrack,
+          hasVideo: !!videoTrack,
+        });
+        if (audioTrack) {
+          audioProducerRef.current = await sendTransport.produce({
+            track: audioTrack,
+          });
+          console.log("[room.js] audio producer created", {
+            id: audioProducerRef.current.id,
+          });
+        }
+        // For pure audio calls, do not create a video producer so that
+        // no video track is broadcast to other participants.
+        if (videoTrack && !isAudioOnlyCall) {
+          const videoEncodings = [
+            {
+              maxBitrate: 300_000,
+              scalabilityMode: "L1T2",
+            },
+            {
+              maxBitrate: 1_200_000,
+              scalabilityMode: "L1T3",
+            },
+          ];
+
+          videoProducerRef.current = await sendTransport.produce({
+            track: videoTrack,
+            encodings: videoEncodings,
+          });
+          console.log("[room.js] video producer created", {
+            id: videoProducerRef.current.id,
+          });
+        }
+      }
+
+      // 6) Consume already-existing producers in this room (users who joined before us)
+      try {
+        const existing = await callService.getProducers(socket, {
+          roomId,
+          userId,
+        });
+        console.log("[room.js] existing producers", existing);
+
+        for (const p of existing) {
+          try {
+            const consumeInfo = await callService.consume(socket, {
+              roomId,
+              userId,
+              producerId: p.producerId,
+              rtpCapabilities: device.rtpCapabilities,
+            });
+            console.log("[room.js] consume existing producer response", consumeInfo);
+
+            const consumer = await recvTransport.consume({
+              id: consumeInfo.id,
+              producerId: consumeInfo.producerId,
+              kind: consumeInfo.kind,
+              rtpParameters: consumeInfo.rtpParameters,
+            });
+
+            // Merge audio/video tracks per remote user
+            const kind = consumeInfo.kind || p.kind;
+            let existingStream = remoteStreamsRef.current[p.userId];
+            if (!existingStream) {
+              existingStream = new MediaStream();
+            } else {
+              if (kind === "video") {
+                existingStream.getVideoTracks().forEach((t) => existingStream.removeTrack(t));
+              } else if (kind === "audio") {
+                existingStream.getAudioTracks().forEach((t) => existingStream.removeTrack(t));
+              }
+            }
+            existingStream.addTrack(consumer.track);
+            // Create a new MediaStream reference so VideoCard's useEffect re-runs and shows the video
+            const newStream = new MediaStream(existingStream.getTracks());
+            remoteStreamsRef.current[p.userId] = newStream;
+            setRemotePeers(
+              Object.entries(remoteStreamsRef.current).map(([uid, stream]) => ({
+                userId: uid,
+                stream,
+              }))
+            );
+            console.log("[room.js] remotePeers after consuming existing", {
+              keys: Object.keys(remoteStreamsRef.current),
+            });
+          } catch (err) {
+            console.error("Error consuming existing producer:", err);
+          }
+        }
+      } catch (err) {
+        console.error("MS-get-producers failed:", err);
+      }
+
+      // 7) Listen for new remote producers
+      socket.on("MS-new-producer", async ({ producerId, userId: remoteUserId, kind }) => {
+        try {
+          console.log("[room.js] MS-new-producer received", {
+            producerId,
+            remoteUserId,
+            kind,
+          });
+          // Request consumer for this producer
+          const consumeInfo = await callService.consume(socket, {
+            roomId,
+            userId,
+            producerId,
+            rtpCapabilities: device.rtpCapabilities,
+          });
+
+          const consumer = await recvTransport.consume({
+            id: consumeInfo.id,
+            producerId: consumeInfo.producerId,
+            kind: consumeInfo.kind,
+            rtpParameters: consumeInfo.rtpParameters,
+          });
+
+          const trackKind = consumeInfo.kind || kind;
+          let existingStream = remoteStreamsRef.current[remoteUserId];
+          if (!existingStream) {
+            existingStream = new MediaStream();
+          } else {
+            if (trackKind === "video") {
+              existingStream.getVideoTracks().forEach((t) => existingStream.removeTrack(t));
+            } else if (trackKind === "audio") {
+              existingStream.getAudioTracks().forEach((t) => existingStream.removeTrack(t));
+            }
+          }
+          existingStream.addTrack(consumer.track);
+          // Create a new MediaStream reference so VideoCard's useEffect re-runs and shows the video
+          const newStream = new MediaStream(existingStream.getTracks());
+          remoteStreamsRef.current[remoteUserId] = newStream;
+          setRemotePeers(
+            Object.entries(remoteStreamsRef.current).map(([uid, stream]) => ({
+              userId: uid,
+              stream,
+            }))
+          );
+          console.log("[room.js] remotePeers after MS-new-producer", {
+            keys: Object.keys(remoteStreamsRef.current),
+          });
+        } catch (err) {
+          console.error("Error consuming remote producer:", err);
+        }
+      });
+
+      // 8) Consume any remote peers that joined before we were ready (fixes timing race)
+      for (const [peerId, s] of Object.entries(remoteStreamsRef.current)) {
+        if (s.getTracks().length === 0) {
+          console.log("[room.js] mediasoup ready: consuming pending peer", peerId);
+          fetchAndConsumeProducersForNewPeer(roomId, userId, peerId);
+        }
+      }
+    } catch (err) {
+      console.error("initializeMediasoup failed:", err);
+      toast.error("Failed to initialize high-quality media. Falling back to basic call.");
+    }
+  };
+
+  useEffect(() => {
+    initializeMedia();
+
+    socketRef.current.on("reconnect_error", (err) => {
+      console.error("Socket reconnect error:", err);
+    });
+
+    window.addEventListener("popstate", goToBack);
+
+    return () => {
+      socketRef.current.off("FE-user-join");
+      socketRef.current.off("FE-user-leave");
+      socketRef.current.off("FE-toggle-camera");
+      socketRef.current.off("FE-user-disconnected");
+      socketRef.current.off("FE-guest-disconnected");
+      socketRef.current.off("waiting_call");
+      socketRef.current.off("FE-call-ended");
+      socketRef.current.off("FE-leave");
+      socketRef.current.off("MS-new-producer");
+      window.removeEventListener("popstate", goToBack);
+      // Reset the flag when leaving the room
+      hasReceivedInitialUsers.current = false;
+
+      // Cleanup local stream tracks to prevent resource leaks
+      if (userStream.current) {
+        userStream.current.getTracks().forEach((track) => {
+          track.stop();
+        });
+        userStream.current = null;
+      }
+      // Cleanup mediasoup transports/producers
+      try {
+        audioProducerRef.current && audioProducerRef.current.close();
+      } catch { }
+      try {
+        videoProducerRef.current && videoProducerRef.current.close();
+      } catch { }
+      try {
+        sendTransportRef.current && sendTransportRef.current.close();
+      } catch { }
+      try {
+        recvTransportRef.current && recvTransportRef.current.close();
+      } catch { }
+      audioProducerRef.current = null;
+      videoProducerRef.current = null;
+      sendTransportRef.current = null;
+      recvTransportRef.current = null;
+    };
+  }, [socketRef.current]);
+
+  useEffect(() => {
+    if (showModal) {
+      setTimeout(() => {
+        if (userVideoRef.current && userStream.current) {
+          userVideoRef.current.srcObject = userStream.current;
+          userVideoRef.current.play().catch(() => { });
+        }
+      }, 700);
+    }
+  }, [showModal]);
+
+  useEffect(() => {
+    if (userVideoRef.current && userStream.current) {
+      if (!screenShare && !screenShareLoading) {
+        userVideoRef.current.srcObject = userStream.current;
+      }
+
+      const playPromise = userVideoRef.current.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          if (err.name !== 'AbortError') {
+            console.warn("Video play rejected:", err);
+          }
+        });
+      }
+    }
+  }, [isFloating, stream, screenShare, screenShareLoading]);
+
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && userVideoRef.current) {
+        // Only set back to userStream if we are NOT screen sharing
+        if (!screenShare && !screenShareLoading && userStream.current) {
+          userVideoRef.current.srcObject = userStream.current;
+        }
+        userVideoRef.current.play().catch(() => { });
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [screenShare, screenShareLoading]);
+
+  function writeUserName(userName) {
+    if (userVideoAudio[userName] && !userVideoAudio[userName].video) {
+      return <UserName key={userName}>{userName}</UserName>;
+    }
+  }
+
+  // Helper to map signaling userId (socket.id) to our stored user entry
+  function findPeer(socketId) {
+    if (!socketId) return null;
+    const entry = Object.entries(userVideoAudio).find(
+      ([, info]) => info && info.socketId === socketId
+    );
+    if (!entry) return null;
+    const [userName, info] = entry;
+    return { userName, info };
+  }
+  //  className={`width-peer${peers.length > 8 ? "" : peers.length}`}
+
+
+  const goToBack = (e) => {
+    e.preventDefault();
+    setShowReconnectModal(false);
+    const activeCallId = sessionStorage.getItem("activeCallId");
+    socketRef.current.emit(leaveEvent || "BE-leave-room", { roomId: activeCallId, leaver: currentUser });
+    sessionStorage.removeItem("user");
+    sessionStorage.removeItem("callStatus");
+    sessionStorage.removeItem("userInActiveCall");
+    sessionStorage.removeItem("activeCallId");
+    sessionStorage.removeItem("isGuestMeeting");
+    setShowModal(false);
+    if (userStream.current) {
+      userStream.current.getTracks().forEach((track) => track.stop());
+      userStream.current = null;
+    }
+    if (window.userStream) {
+      window.userStream.getTracks().forEach(track => track.stop());
+      window.userStream = null;
+    }
+
+    // Re-register socket for normal messaging after leaving call
+    if (globalUser?.data?.user?._id) {
+      socketRef.current.emit("joinSelf", globalUser.data.user._id);
+    }
+
+    onSendData("close");
+  };
+
+  const toggleCameraAudio = (target) => {
+    if (!hasRealDevices) {
+      toast.info("No camera or microphone available on this device.");
+      return;
+    }
+
+    setUserVideoAudio((preList) => {
+      const newState = { ...preList.localUser };
+
+      // Use userStream.current (the original stream) instead of userVideoRef.current.srcObject
+      // because during screen share, userVideoRef contains the screen share stream
+      const stream = userStream.current;
+
+      if (!stream) return preList;
+
+      if (target === "video") {
+        const videoTracks = stream.getVideoTracks();
+        if (videoTracks.length > 0) {
+          newState.video = !newState.video;
+          videoTracks[0].enabled = newState.video;
+        }
+      } else {
+        const audioTracks = stream.getAudioTracks();
+        if (audioTracks.length > 0) {
+          newState.audio = !newState.audio;
+          audioTracks[0].enabled = newState.audio;
+        }
+      }
+
+      return { ...preList, localUser: newState };
+    });
+
+    // Also control mediasoup producers if enabled
+    if (useMediasoup) {
+      try {
+        if (target === "video" && videoProducerRef.current) {
+          if (videoProducerRef.current.paused) {
+            videoProducerRef.current.resume();
+          } else {
+            videoProducerRef.current.pause();
+          }
+        } else if (target === "audio" && audioProducerRef.current) {
+          if (audioProducerRef.current.paused) {
+            audioProducerRef.current.resume();
+          } else {
+            audioProducerRef.current.pause();
+          }
+        }
+      } catch (e) {
+        console.warn("Error toggling mediasoup producer", e);
+      }
+    }
+
+    socketRef.current.emit("BE-toggle-camera-audio", { roomId, switchTarget: target });
+  };
+
+  const clickScreenSharing = () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      toast.info("Screen sharing is not supported by your browser.");
+      return;
+    }
+
+    if (!screenShare) {
+      // Check if someone else is already sharing
+      if (currentScreenSharer) {
+        toast.warning(`Screen is already sharing. Please wait for them to stop.`);
+        return;
+      }
+
+      setScreenShareLoading(true); // Start loading
+      navigator.mediaDevices.getDisplayMedia({
+        cursor: true,
+        video: {
+          displaySurface: 'monitor' // Prefer full monitor to avoid window recursion
+        }
+      }).then(async (stream) => {
+        const screenTrack = stream.getTracks()[0];
+
+        const originalVideoTrack = userStream.current?.getVideoTracks()[0];
+
+        // Update local preview
+        if (userVideoRef.current) {
+          userVideoRef.current.srcObject = stream;
+          userVideoRef.current.play().catch(() => { });
+        }
+
+        // Replace track in mediasoup video producer (SFU path)
+        if (useMediasoup && videoProducerRef.current && screenTrack) {
+          try {
+            wasVideoProducerPausedBeforeShareRef.current = !!videoProducerRef.current.paused;
+            await videoProducerRef.current.replaceTrack({ track: screenTrack });
+            // If user had video paused, sharing should still be visible remotely.
+            if (videoProducerRef.current.paused) {
+              await videoProducerRef.current.resume();
+            }
+            console.log("[room.js] screen share track replaced on producer");
+          } catch (err) {
+            console.error("Failed to replace track on video producer for screen share:", err);
+          }
+        }
+
+        screenTrack.onended = () => {
+          // Stop all tracks in the screen share stream to remove browser UI
+          stream.getTracks().forEach(track => track.stop());
+
+          const originalVideoTrack = userStream.current?.getVideoTracks()[0];
+
+          // Restore local preview
+          if (userVideoRef.current && userStream.current) {
+            userVideoRef.current.srcObject = userStream.current;
+            // Force video element to re-render properly
+            userVideoRef.current.play().catch(() => { });
+          }
+
+          // Restore original track on mediasoup producer
+          if (useMediasoup && videoProducerRef.current && originalVideoTrack) {
+            videoProducerRef.current
+              .replaceTrack({ track: originalVideoTrack })
+              .then(async () => {
+                // Restore previous paused state after screen sharing ends.
+                if (wasVideoProducerPausedBeforeShareRef.current && !videoProducerRef.current.paused) {
+                  await videoProducerRef.current.pause();
+                }
+                wasVideoProducerPausedBeforeShareRef.current = false;
+                console.log("[room.js] original video track restored after screen share");
+              })
+              .catch((err) => {
+                console.warn("Failed to restore original track on video producer:", err);
+              });
+          }
+          setScreenShare(false);
+          setScreenShareLoading(false);
+          setCurrentScreenSharer(null); // Clear current sharer
+          socketRef.current.emit("BE-toggle-screen-share", { roomId, isScreenShare: false });
+        };
+
+        if (userVideoRef.current) {
+          // Set stream and ensure proper playback
+          userVideoRef.current.srcObject = stream;
+          userVideoRef.current.play().catch((err) => {
+            console.warn("Screen share video play warning:", err);
+          });
+        }
+        screenTrackRef.current = screenTrack;
+
+        // Small delay to ensure stream is ready before hiding loader
+        setTimeout(() => {
+          setScreenShare(true);
+          setScreenShareLoading(false);
+          // Set self as current sharer
+          setCurrentScreenSharer({ userId: socketRef.current.id, userName: 'You' });
+          socketRef.current.emit("BE-toggle-screen-share", { roomId, isScreenShare: true });
+        }, 500);
+      }).catch((err) => {
+        console.error("Screen sharing failed:", err);
+        setScreenShareLoading(false); // Stop loading on error
+        if (err.name === 'NotAllowedError') {
+          toast.info("Screen sharing permission denied.");
+        } else {
+          toast.error("Screen sharing failed. Please try again.");
+        }
+      });
+    } else {
+      if (screenTrackRef.current) {
+        screenTrackRef.current.onended();
+      }
+    }
+  };
+
+  const expandScreen = (e) => {
+    // Target the parent container (VideoBox) to preserve CSS transforms like mirroring
+    const elem = e.target.closest('div') || e.target;
+    if (elem.requestFullscreen) elem.requestFullscreen();
+    else if (elem.mozRequestFullScreen) elem.mozRequestFullScreen();
+    else if (elem.webkitRequestFullscreen) elem.webkitRequestFullscreen();
+    else if (elem.msRequestFullscreen) elem.msRequestFullscreen();
+  };
+
+  const clickBackground = () => {
+    if (showVideoDevices) setShowVideoDevices(false);
+  };
+
+  const clickCameraDevice = (event) => {
+    if (!hasRealDevices) {
+      toast.info("No camera devices available on this device.");
+      return;
+    }
+
+    const deviceId = event?.target?.dataset?.value;
+    if (!deviceId) return;
+
+    const enabledAudio =
+      userStream.current?.getAudioTracks()[0]?.enabled ?? true;
+
+    navigator.mediaDevices
+      .getUserMedia({ video: { deviceId }, audio: enabledAudio })
+      .then(async (newStream) => {
+        const newTrack = newStream.getTracks().find((t) => t.kind === "video");
+        if (!newTrack || !userStream.current) return;
+
+        const oldTrack = userStream.current
+          .getTracks()
+          .find((t) => t.kind === "video");
+
+        if (oldTrack) {
+          userStream.current.removeTrack(oldTrack);
+        }
+        userStream.current.addTrack(newTrack);
+
+        // Update local preview if not screen sharing
+        if (!screenShare && userVideoRef.current) {
+          userVideoRef.current.srcObject = userStream.current;
+          userVideoRef.current.play().catch(() => {});
+        }
+
+        // Update mediasoup video producer track if available
+        if (videoProducerRef.current && useMediasoup) {
+          try {
+            await videoProducerRef.current.replaceTrack({ track: newTrack });
+          } catch (e) {
+            console.error(
+              "Failed to replace track on mediasoup video producer:",
+              e
+            );
+            toast.error("Failed to apply camera change to the call.");
+          }
+        }
+      })
+      .catch((err) => {
+        console.error("Camera device switch failed:", err);
+        toast.error("Failed to switch camera device.");
+      });
+  };
+
+  const handleMouseDown = (e) => {
+    if (!isFloating) {
+      setPosition({ x: 0, y: 0 });
+      setOffset({ x: 0, y: 0 });
+      setDragging(false);
+      e.stopPropagation();
+      return;
+    } else {
+      const rect = boxRef.current.getBoundingClientRect();
+      setOffset({
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+      });
+      setDragging(true);
+      e.stopPropagation();
+    }
+  };
+
+  const handleMouseMove = (e) => {
+    if (!dragging) return;
+    setPosition({
+      x: e.clientX - offset.x,
+      y: e.clientY - offset.y
+    });
+  };
+
+  const handleMouseUp = () => {
+    setDragging(false);
+  };
+
+  // Chat implementation: Toggle sidebar
+  const clickChat = () => {
+    setShowChat(!showChat);
+    // Also ensure we are not floating if we open chat
+    if (isFloating) setIsFloating(false);
+  };
+
+  return (
+    <>
+      {showModal && (
+        <div className={isFloating ? 'minimize' : 'maximize'}
+          onMouseDown={handleMouseDown}
+          ref={boxRef}
+          style={{
+            left: isFloating ? position.x : '0px',
+            top: isFloating ? position.y : '0px',
+            right: "auto",
+            bottom: "auto",
+
+
+
+
+          }}>
+          <ModalContent onClick={(e) => e.stopPropagation()} $isFloating={isFloating}>
+            <ReconnectModal
+              visible={showReconnectModal}
+              goToBack={goToBack}
+            />
+            <div className="modal-header">
+              <h5
+                className="modal-title"
+                style={{
+                  color: "white",
+                  marginRight: "auto",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  flexWrap: "wrap",
+                }}
+              >
+                {callType.toUpperCase()} CALL
+                <span style={{ fontSize: 12, color: "#e5e7eb" }}>
+                  Participants (media): {1 + remotePeers.length}
+                </span>
+                <span style={{ fontSize: 12, color: "#9ca3af" }}>
+                  Users in room (signaling):{" "}
+                  {1 +
+                    Object.keys(userVideoAudio || {}).filter(
+                      (k) => k && k !== "localUser"
+                    ).length}
+                </span>
+                <span style={{ fontSize: 11, color: "#6b7280" }}>
+                  RoomId: {String(roomId)}
+                </span>
+              </h5>
+              {waitingCalls.length > 0 && (
+                <PulsingAlert>
+                  <span>
+                    <i className="fas fa-phone-volume" style={{ marginRight: '8px' }}></i>
+                    Waiting: {waitingCalls.map(c => c.isDirect ? c.callerName : c.groupName).join(', ')}
+                  </span>
+                </PulsingAlert>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setIsFloating(!isFloating)}
+                style={{
+                  backgroundColor: "white",
+                  width: "25px",
+                  height: "25px",
+                  borderRadius: "5px",
+                  color: "black",
+                  marginRight: "8px",
+                  lineHeight: "0px",
+                  padding: "0",
+                  fontSize: "28px",
+                }}
+              >
+                -
+              </button>
+            </div>
+            <div style={{ display: 'flex', width: '100%', height: 'calc(100% - 50px)', position: 'relative' }}>
+              <VideoContainer $isFloating={isFloating} className={`width-peer${remotePeers.length > 8 ? "" : remotePeers.length}`} style={{ flex: 1, height: '100%' }}>
+                <VideoBox>
+                  {userVideoAudio["localUser"].video ? <Label>You</Label> : <UserName>You</UserName>}
+                  {/* Hide expand icon during screen share to prevent infinite loop */}
+                  {!screenShare && <FaIcon className="fas fa-expand" onClick={expandScreen} />}
+                  <MyVideo
+                    ref={userVideoRef}
+                    muted
+                    autoPlay
+                    playsInline
+                    controls={false}
+                    style={{
+                      transform: (screenShare || !hasRealVideo) ? "scaleX(1)" : "scaleX(-1)",
+                      cursor: screenShare ? "default" : "pointer",
+                      opacity: screenShareLoading ? 0.5 : 1
+                    }}
+                    onClick={!screenShare ? expandScreen : undefined}
+                  />
+                  {/* Screen share loading indicator */}
+                  {screenShareLoading && (
+                    <LoadingOverlay>
+                      <LoadingSpinner />
+                      <LoadingText>Starting Screen Share...</LoadingText>
+                    </LoadingOverlay>
+                  )}
+                  {!userVideoAudio["localUser"].audio && (
+                    <MuteIconContainer>
+                      🔇
+                    </MuteIconContainer>
+                  )}
+                  {isSpeaking && userVideoAudio["localUser"].audio && (
+                    <SpeakingDot />
+                  )}
+                </VideoBox>
+                {remotePeers.map((remote, index, arr) => {
+                const info = userVideoAudio[remote.userId] || {};
+                const displayName =
+                  info.senderName || info.name || info.fullName || remote.userId;
+                  const isMuted = info.audio === false;
+                  const isScreenSharing = info.isScreenShare;
+
+                  return (
+                    <VideoBox
+                      key={remote.userId}
+                      onClick={!isScreenSharing ? expandScreen : undefined}
+                      $isScreenShare={isScreenSharing}
+                      style={{
+                        cursor: isScreenSharing ? "default" : "pointer"
+                      }}
+                    >
+                      {writeUserName(displayName)}
+                      {/* Hide expand icon when screen sharing to prevent infinite loop */}
+                      {!isScreenSharing && <FaIcon className="fas fa-expand" />}
+                      <VideoCard
+                        stream={remote.stream}
+                        username={remote.userId}
+                        number={arr.length}
+                        fullName={displayName}
+                        isMuted={isMuted}
+                        isScreenShare={isScreenSharing}
+                        callType={callType}
+                      />
+                    </VideoBox>
+                  );
+                })}
+              </VideoContainer>
+              {showChat && (
+                <ChatSidebarContainer show={showChat}>
+                  <ChatSidebarHeader>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <i className="fas fa-comments" style={{ color: '#f37e20' }} />
+                      <span style={{ fontWeight: 600, fontSize: '1rem', color: '#334155' }}>In-call Messages</span>
+                    </div>
+                    <IconButton onClick={() => setShowChat(false)} size="small">
+                      <CloseIcon fontSize="small" />
+                    </IconButton>
+                  </ChatSidebarHeader>
+                  <ChatSidebarBody>
+                    <ChatArea
+                      {...chatAreaProps}
+                      isMeetingOverlay={true}
+                      forceChatView={true}
+                      onBack={() => setShowChat(false)}
+                    />
+                  </ChatSidebarBody>
+                </ChatSidebarContainer>
+              )}
+            </div>
+
+            <BottomBar
+              clickScreenSharing={clickScreenSharing}
+              clickCameraDevice={clickCameraDevice}
+              goToBack={goToBack}
+              toggleCameraAudio={toggleCameraAudio}
+              userVideoAudio={userVideoAudio["localUser"]}
+              screenShare={screenShare}
+              videoDevices={videoDevices}
+              showVideoDevices={showVideoDevices}
+              setShowVideoDevices={setShowVideoDevices}
+              callType={callType}
+              hasRealDevices={hasRealDevices}
+              currentScreenSharer={currentScreenSharer}
+              isGuestMeeting={isGuestMeeting}
+              clickChat={clickChat}
+            />
+
+          </ModalContent>
+        </div>
+      )}
+    </>
+  );
+};
+
+export default Room;
+
+// Styled Components
+const ModalOverlay = styled.div`
+  position: fixed;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+  width: 100%;
+  height: 100%;
+  right: 0;
+  bottom: 0;
+`;
+
+const ChatSidebarContainer = styled.div`
+  width: 350px;
+  height: calc(100% - 20px);
+  background: #ffffff;
+  border-left: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -2px 0 10px rgba(0,0,0,0.1);
+  animation: slideIn 0.3s ease-out;
+  flex-shrink: 0;
+  z-index: 100;
+
+  @keyframes slideIn {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+  }
+
+  @media (max-width: 768px) {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 100%;
+    z-index: 10000;
+  }
+`;
+
+const ChatSidebarHeader = styled.div`
+  padding: 12px 16px;
+  border-bottom: 1px solid #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #fff;
+`;
+
+const ChatSidebarBody = styled.div`
+  flex: 1;
+  overflow: hidden;
+  height: calc(100% - 48px);
+`;
+
+const ModalOverlay_minimize = styled.div`
+  position: fixed;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+  width: 270px;
+  height: 270px;
+  right: 0;
+  bottom: 0;
+`;
+
+const ModalContent = styled.div`
+  background: #1a1a1a;
+  padding: ${props => props?.$isFloating ? '20px' : '10px'};
+  border-radius: 12px;
+  box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.5);
+  width: 100%;
+  height: ${props => props?.$isFloating ? '100%' : '100vh'};
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  
+  ${props => !props?.$isFloating && `
+    .header-section {
+      flex-shrink: 0;
+    }
+    
+    .video-section {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .bottom-section {
+      flex-shrink: 0;
+      height: 50px;
+    }
+  `}
+`;
+// grid-template-columns: ${props => props?.isFloating ? '1fr' : 'repeat(auto-fit, minmax(200px, 1fr))'};
+const VideoContainer = styled.div`
+   ${props => !props?.$isFloating && `display: grid;`}
+  
+  gap: ${props => props?.$isFloating ? '8px' : '8px'};
+  height: ${props => props?.$isFloating ? 'calc(100% - 50px)' : 'calc(100% - 100px)'};
+  overflow: hidden;
+  padding: 0 5px;
+  min-height: 0;
+  align-content: center;
+  transition: all 0.3s ease-in-out;
+  overflow-y: auto;
+  
+  ${props => !props?.$isFloating && `
+    @media (max-width: 768px) {
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 6px;
+    }
+    
+    @media (max-width: 480px) {
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 4px;
+    }
+  `}
+`;
+
+const VideoBox = styled.div`
+  background: #2c2c2c;
+  border-radius: 8px;
+  padding: ${props => props?.$isFloating ? '8px' : '4px'};
+  position: relative;
+  width: 100%;
+  // aspect-ratio: ${props => props?.isFloating ? '4/3' : '16/9'};
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  
+  /* Main screen share takes full area */
+  ${props => props?.$isMainShare && `
+    width: 100%;
+    height: 100%;
+    background: #000;
+    padding: 0;
+  `}
+  
+  /* Make screen shares bigger by spanning 2 columns in grid */
+  ${props => props?.$isScreenShare && !props?.$isFloating && !props?.$isMainShare && `
+    grid-column: span 2;
+    @media (max-width: 768px) {
+      grid-column: span 1; /* Mobile: take full width */
+    }
+  `}
+  
+  ${props => !props?.$isFloating && !props?.$isMainShare && `
+    @media (max-width: 768px) {
+      padding: 3px;
+    }
+    
+    @media (max-width: 480px) {
+      padding: 2px;
+    }
+  `}
+`;
+
+const MyVideo = styled.video`
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 10px;
+`;
+
+const UserName = styled.div`
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 4px 8px;
+  color: white;
+  border-radius: 5px;
+  font-size: 12px;
+  z-index: 2;
+`;
+
+const Label = styled(UserName)`
+  background-color: #1abc9c;
+`;
+
+const FaIcon = styled.i`
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  font-size: 14px;
+  color: white;
+  cursor: pointer;
+  z-index: 2;
+`;
+
+const pulseAnimation = keyframes`
+  0% { background-color: #802d00ff; }
+  50% { background-color: #b13e00ff; }
+  100% { background-color: #963400ff; }
+`;
+
+const PulsingAlert = styled.div`
+  background-color: #E65100;
+  padding: 8px 12px;
+  border-radius: 5px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  margin-right: 10px;
+  color: #fff;
+  font-weight: bold;
+  cursor: pointer;
+  animation: ${pulseAnimation} 1.5s infinite;
+`;
+
+const MuteIconContainer = styled.div`
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background-color: rgba(211, 150, 156, 0.8);
+  color: white;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  z-index: 2;
+`;
+
+const SpeakingDot = styled.div`
+  position: absolute;
+  bottom: 8px;
+  right: 32px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background-color: #22c55e;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.9);
+`;
+
+// Google Meet-style Layout Components
+const ScreenShareLayout = styled.div`
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  width: 100%;
+  height: calc(100vh - 200px);
+  padding: ${props => props?.$isFloating ? '5px' : '10px'};
+  box-sizing: border-box;
+
+  ${props => props?.$isFloating && `
+    height: 100%;
+    padding: 5px;
+  `}
+
+  @media (max-width: 768px) {
+    flex-direction: column;
+    height: calc(100vh - 180px);
+  }
+`;
+
+const MainScreenShareArea = styled.div`
+  flex: 1;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+
+  @media (max-width: 768px) {
+    height: 60%;
+  }
+`;
+
+const ParticipantsSidebar = styled.div`
+  width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #1a1a1a;
+  border-radius: 8px;
+  padding: 8px;
+  
+  /* Custom scrollbar */
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  &::-webkit-scrollbar-track {
+    background: #2c2c2c;
+    border-radius: 3px;
+  }
+  
+  &::-webkit-scrollbar-thumb {
+    background: #666;
+    border-radius: 3px;
+  }
+  
+  &::-webkit-scrollbar-thumb:hover {
+    background: #888;
+  }
+
+  @media (max-width: 768px) {
+    width: 100%;
+    height: 40%;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    
+    & > * {
+      min-width: 120px;
+    }
+  }
+`;
+
+// Loading indicator components for screen share
+const LoadingOverlay = styled.div`
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  border-radius: 8px;
+`;
+
+const spinAnimation = keyframes`
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+`;
+
+const LoadingSpinner = styled.div`
+  border: 4px solid rgba(255, 255, 255, 0.3);
+  border-top: 4px solid #fff;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  animation: ${spinAnimation} 1s linear infinite;
+`;
+
+const LoadingText = styled.div`
+  color: #fff;
+  margin-top: 12px;
+  font-size: 14px;
+  font-weight: 500;
+`;

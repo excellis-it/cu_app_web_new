@@ -1,0 +1,16 @@
+{
+    "compilerOptions": {
+      "target": "es2022",
+      "module": "commonjs",
+      "outDir": "./dist",
+      "rootDir": "./src",
+      "strict": true,
+      "esModuleInterop": true,
+      "typeRoots": ["./node_modules/@types", "./src/types"],
+      "skipLibCheck": true,
+
+    },
+    "include": ["src/**/*"], // Include all source files, including views
+    "exclude": ["node_modules"]
+  }
+  

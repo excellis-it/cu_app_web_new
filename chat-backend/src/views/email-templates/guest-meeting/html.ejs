@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meeting Invitation</title>
+    <script type="text/javascript">
+        // This script runs when the email is opened and formats dates in the guest's local timezone
+        function formatMeetingTimes() {
+            try {
+                // Get the guest's browser timezone
+                const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+                // Get the date elements
+                const startTimeElement = document.getElementById('meeting-start-time');
+                const endTimeElement = document.getElementById('meeting-end-time');
+                const timezoneInfoElement = document.getElementById('timezone-info');
+
+                if (startTimeElement && endTimeElement) {
+                    // Parse the ISO date strings
+                    const startDate = new Date(startTimeElement.getAttribute('data-iso-time'));
+                    const endDate = new Date(endTimeElement.getAttribute('data-iso-time'));
+
+                    // Create formatter with guest's timezone
+                    const formatter = new Intl.DateTimeFormat('en-US', {
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        timeZoneName: 'short',
+                        timeZone: userTimeZone
+                    });
+
+                    // Format and display the times
+                    startTimeElement.textContent = formatter.format(startDate);
+                    endTimeElement.textContent = formatter.format(endDate);
+
+                    // Show timezone info
+                    if (timezoneInfoElement) {
+                        timezoneInfoElement.style.display = 'block';
+                    }
+                }
+            } catch (error) {
+                console.error('Error formatting meeting times:', error);
+                // Fallback: keep the default UTC times
+            }
+        }
+
+        // Run when the email loads
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', formatMeetingTimes);
+        } else {
+            formatMeetingTimes();
+        }
+    </script>
+</head>
+
+<body
+    style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f4;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f4; padding: 20px 0;">
+        <tr>
+            <td align="center">
+                <table width="600" cellpadding="0" cellspacing="0"
+                    style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+
+                    <!-- Header with gradient -->
+                    <tr>
+                        <td
+                            style="background: linear-gradient(135deg, #f37e20 0%, #ad1e23 100%); padding: 40px 30px; text-align: center;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 600;">
+                                📅 Meeting Invitation
+                            </h1>
+                        </td>
+                    </tr>
+
+                    <!-- Content -->
+                    <tr>
+                        <td style="padding: 40px 30px;">
+                            <p style="margin: 0 0 20px 0; font-size: 16px; color: #333333; line-height: 1.6;">
+                                Hello <strong>
+                                    <%= guestName %>
+                                </strong>,
+                            </p>
+
+                            <p style="margin: 0 0 30px 0; font-size: 16px; color: #333333; line-height: 1.6;">
+                                You have been invited to a meeting by <strong>
+                                    <%= hostName %>
+                                </strong>.
+                            </p>
+
+                            <!-- Meeting Details Card -->
+                            <table width="100%" cellpadding="0" cellspacing="0"
+                                style="background-color: #f8f9fa; border-radius: 8px; margin-bottom: 30px;">
+                                <tr>
+                                    <td style="padding: 25px;">
+                                        <h2
+                                            style="margin: 0 0 20px 0; color: #f37e20; font-size: 20px; font-weight: 600;">
+                                            <%= topic %>
+                                        </h2>
+
+                                        <% if (description) { %>
+                                            <div style="margin-bottom: 20px;">
+                                                <p
+                                                    style="margin: 0; color: #666666; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
+                                                    Description
+                                                </p>
+                                                <p
+                                                    style="margin: 5px 0 0 0; color: #333333; font-size: 15px; line-height: 1.5;">
+                                                    <%= description %>
+                                                </p>
+                                            </div>
+                                            <% } %>
+
+                                                <div style="margin-bottom: 15px;">
+                                                    <p
+                                                        style="margin: 0; color: #666666; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
+                                                        🗓️ Start Time
+                                                    </p>
+                                                    <% const formatter=new Intl.DateTimeFormat('en-US', {
+                                                        weekday: 'long' , year: 'numeric' , month: 'long' ,
+                                                        day: 'numeric' , hour: '2-digit' , minute: '2-digit' ,
+                                                        timeZoneName: 'short' , timeZone: 'UTC' }); %>
+                                                        <p id="meeting-start-time" data-iso-time="<%= startTime %>"
+                                                            style="margin: 5px 0 0 0; color: #333333; font-size: 15px;">
+                                                            <%= formatter.format(new Date(startTime)) %>
+                                                        </p>
+                                                </div>
+
+                                                <div style="margin-bottom: 15px;">
+                                                    <p
+                                                        style="margin: 0; color: #666666; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
+                                                        ⏰ End Time
+                                                    </p>
+                                                    <p id="meeting-end-time" data-iso-time="<%= endTime %>"
+                                                        style="margin: 5px 0 0 0; color: #333333; font-size: 15px;">
+                                                        <%= formatter.format(new Date(endTime)) %>
+                                                    </p>
+                                                </div>
+
+                                                <!-- Timezone Info (shown by JavaScript when times are localized) -->
+                                                <div id="timezone-info"
+                                                    style="display: none; margin-bottom: 15px; padding: 10px; background-color: #e8f5e9; border-left: 3px solid #4caf50; border-radius: 4px;">
+                                                    <p
+                                                        style="margin: 0; color: #2e7d32; font-size: 13px; font-weight: 500;">
+                                                        ✓ Times shown in your local timezone
+                                                    </p>
+                                                </div>
+
+                                                <div>
+                                                    <p
+                                                        style="margin: 0; color: #666666; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
+                                                        🔑 Meeting PIN
+                                                    </p>
+                                                    <p
+                                                        style="margin: 5px 0 0 0; color: #333333; font-size: 18px; font-weight: 700; letter-spacing: 2px; font-family: 'Courier New', monospace;">
+                                                        <%= pin %>
+                                                    </p>
+                                                </div>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <!-- Join Button -->
+                            <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom: 30px;">
+                                <tr>
+                                    <td align="center">
+                                        <a href="<%= meetingLink %>"
+                                            style="display: inline-block; padding: 16px 40px; background: linear-gradient(135deg, #f37e20 0%, #ad1e23 100%); color: #ffffff; text-decoration: none; border-radius: 6px; font-size: 16px; font-weight: 600; box-shadow: 0 4px 12px rgba(243, 126, 32, 0.3);">
+                                            🚀 Join Meeting
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <!-- Alternative Join Instructions -->
+                            <div
+                                style="background-color: #fffbf5; border-left: 4px solid #f37e20; padding: 15px; margin-bottom: 20px; border-radius: 4px;">
+                                <p style="margin: 0 0 10px 0; color: #666666; font-size: 13px; font-weight: 600;">
+                                    💡 Can't click the button?
+                                </p>
+                                <p style="margin: 0; color: #666666; font-size: 13px; line-height: 1.5;">
+                                    Copy and paste this link into your browser:<br>
+                                    <a href="<%= meetingLink %>" style="color: #f37e20; word-break: break-all;">
+                                        <%= meetingLink %>
+                                    </a>
+                                </p>
+                            </div>
+
+                            <p style="margin: 0; font-size: 14px; color: #666666; line-height: 1.6;">
+                                We look forward to your participation!
+                            </p>
+                        </td>
+                    </tr>
+
+                    <!-- Footer -->
+                    <tr>
+                        <td
+                            style="background-color: #f8f9fa; padding: 30px; text-align: center; border-top: 1px solid #e0e0e0;">
+                            <p style="margin: 0 0 10px 0; color: #999999; font-size: 13px;">
+                                <strong>ExTalk</strong> - Connect, Collaborate, Communicate
+                            </p>
+                            <p style="margin: 0; color: #999999; font-size: 12px;">
+                                This is an automated message. Please do not reply to this email.
+                            </p>
+                            <% if (hostEmail) { %>
+                                <p style="margin: 10px 0 0 0; color: #999999; font-size: 12px;">
+                                    For questions, contact: <a href="mailto:<%= hostEmail %>" style="color: #f37e20;">
+                                        <%= hostEmail %>
+                                    </a>
+                                </p>
+                                <% } %>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+
+</html>

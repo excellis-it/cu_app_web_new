@@ -1,0 +1,103 @@
+services:
+  mongo:
+    image: mongo:6
+    restart: always
+    environment:
+      - TZ=UTC
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - ExTalk-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10mb"
+        max-file: "3"
+
+  chat-backend:
+    build:
+      context: ./chat-backend
+      dockerfile: Dockerfile
+    image: extalk-chat-backend:latest
+    restart: unless-stopped
+    env_file:
+      - ./chat-backend/.env
+    environment:
+      - NODE_ENV=production
+      - PORT=10018
+      - TZ=UTC
+    ports:
+      - "10018:10018"
+    depends_on:
+      - mongo
+    networks:
+      - ExTalk-net
+    volumes:
+      - chat_uploads:/app/dist/public/uploads
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10mb"
+        max-file: "3"
+
+  chat-frontend:
+    build:
+      context: ./chat-frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_PROXY: http://69.62.84.25:10018
+        NEXT_PUBLIC_SOCKET_URL: https://extalkapi.excellisit.net/
+        NEXT_PUBLIC_WEB_PUSH_PUBLIC_KEY: BI3dMxciA-eHVZ7pjUrlHcK-ut_l2KMAZhzGjMpYFC8BbyOYTCr8wsOaj2MwegOk9U1BKkkNfAslxjKxoYxeKoE
+    image: extalk-chat-frontend:latest
+    restart: unless-stopped
+    env_file:
+      - ./chat-frontend/.env
+    environment:
+      - NODE_ENV=production
+      - PORT=10016
+      - TZ=UTC
+    ports:
+      - "10016:10016"
+    networks:
+      - ExTalk-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10mb"
+        max-file: "3"
+
+  chat-admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile
+      args:
+        NEXTAUTH_URL: http://69.62.84.25:10017
+        NEXT_PUBLIC_PROXY: https://extalkapi.excellisit.net/
+        NEXT_PUBLIC_BACKEND_URL: https://extalkapi.excellisit.net/
+    image: extalk-chat-admin:latest
+    restart: unless-stopped
+    env_file:
+      - ./admin/.env.local
+    environment:
+      - NODE_ENV=production
+      - PORT=10017
+      - TZ=UTC
+    ports:
+      - "10017:10017"
+    networks:
+      - ExTalk-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10mb"
+        max-file: "3"
+
+networks:
+  ExTalk-net:
+    driver: bridge
+
+volumes:
+  mongo_data:
+  chat_uploads:

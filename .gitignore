@@ -1,0 +1,44 @@
+.DS_Store
+Thumbs.db
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Coverage / testing
+coverage/
+*.lcov
+.nyc_output/
+
+# Build outputs
+dist/
+build/
+/.turbo/
+
+# Env files (keep .env.example if you have one)
+.env
+.env.*
+!.env.example
+
+# IDE/editor
+.vscode/
+.idea/
+.cursor/
+
+# OS generated files
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Misc
+.cache/
+*.tsbuildinfo
+

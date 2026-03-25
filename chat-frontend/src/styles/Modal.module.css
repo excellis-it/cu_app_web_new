@@ -1,0 +1,142 @@
+/* Modal.module.css */
+
+.modalContainer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: auto;
+  max-width: 500px;
+  width: 100%;
+  height: 100%;
+  z-index: 1000;
+  box-shadow: -2px 0 10px rgba(0, 0, 0, 0.3);
+}
+
+.modalContent {
+  background-color: #f2f2f2;
+  border-radius: 0px;
+  padding: 0px;
+  max-width: 500px;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.modalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.modalHeader h4 {
+  margin: 0;
+}
+
+.cancelButton {
+  background-color: #e74c3c;
+  color: #f2f2f2;
+  border: none;
+  padding: 10px 15px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.modalSection {
+  margin-bottom: 20px;
+}
+
+.formGroup {
+  margin-bottom: 20px;
+  background-color: #ffffff;
+}
+
+.formGroup label {
+  font-weight: bold;
+  margin-bottom: 8px;
+  color: #fff;
+}
+
+.imgmessagediv {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  margin-right: 10px;
+  background-color: #ffffff;
+  border: 1px solid #000000;
+}
+
+/* Personal Info Modal Styles */
+.personal_info_wrapper {
+  background-color: #ffffff;
+}
+
+.personal_info_img {
+  width: 130px;
+  height: 130px;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 4px solid #fff;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+}
+
+.user_badge {
+  display: inline-block;
+  padding: 4px 16px;
+  background-color: #ebf8ff;
+  color: #2b6cb0;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 8px;
+}
+
+.info_card {
+  display: flex;
+  align-items: center;
+  margin-bottom: 20px;
+  padding: 16px;
+  background-color: #f8fafc;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.info_card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.icon_wrapper {
+  width: 48px;
+  height: 48px;
+  background-color: #ffffff;
+  border-radius: 12px;
+  color: #f37e20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+  flex-shrink: 0;
+}
+
+.info_text {
+  margin-left: 16px;
+}
+
+.info_text label {
+  display: block;
+  font-size: 10px;
+  color: #94a3b8;
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.info_text span {
+  font-size: 15px;
+  color: #334155;
+  font-weight: 500;
+}

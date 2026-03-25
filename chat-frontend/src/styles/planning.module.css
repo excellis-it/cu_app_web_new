@@ -1,0 +1,3261 @@
+.body {
+  /* margin-top: -126px; */
+}
+
+.Header {
+  width: 100%;
+  height: 80px;
+  background-color: white;
+  display: flex;
+  justify-content: center;
+  padding: 0px 100px;
+  margin-bottom: 30px;
+  /* margin-top: 100px; */
+  overflow-y: scroll;
+}
+
+.alldiv1 {
+  position: absolute;
+  top: 0px;
+  width: 100%;
+  height: 360px;
+  background-color: #00000062;
+  border-radius: 18px 18px 0px 0px;
+}
+
+.Header article {
+  min-width: 130px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  font-size: 11px;
+  gap: 3px;
+  cursor: pointer;
+  /* border-bottom: 3px solid #b5255c; */
+}
+
+.Header article img {
+  height: 30px;
+  width: 30px;
+}
+
+.MainBody {
+  display: flex;
+  flex-direction: column;
+  padding: 0px;
+  width: 95%;
+}
+
+.imgdiv {
+  width: 100%;
+  position: relative;
+  height: 360px;
+  border-radius: 18px 18px 0px 0px;
+}
+
+.imgdiv img {
+  object-fit: cover;
+  width: 100%;
+  height: 360px;
+  z-index: -5;
+  border-radius: 18px 18px 0px 0px;
+}
+
+.changePhoto {
+  position: absolute;
+  color: white;
+  left: 20px;
+  top: 18px;
+  font-size: 13px;
+  background-color: #34343480;
+  padding: 5px;
+  cursor: pointer;
+}
+
+.whitecircle {
+  height: 100px;
+  width: 100px;
+  border-radius: 50%;
+  background-color: white;
+  z-index: 2;
+  border: 2px solid white;
+}
+
+.whitecircle img {
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+.graycircle {
+  height: 100px;
+  width: 100px;
+  border-radius: 50%;
+  background-color: #c6c6c6;
+  margin-left: -30px;
+  border: 2px solid white;
+}
+
+.graycircle img {
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+.daysLeft {
+  position: absolute;
+  top: 59%;
+  left: 50%;
+  transform: translateX(-50%);
+  color: white;
+  font-weight: 600;
+  font-size: 18px;
+}
+
+.circlediv {
+  position: absolute;
+  top: 25%;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+}
+
+.totaldate {
+  display: flex;
+  position: absolute;
+  top: 69%;
+  left: 50%;
+  transform: translateX(-50%);
+  color: white;
+  font-weight: 600;
+  font-size: 18px;
+}
+
+.totaldate article {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
+  width: 80px;
+  align-items: center;
+}
+
+.numbers {
+  font-size: 25px;
+}
+
+.values {
+  font-size: 16px;
+}
+
+.detaildiv {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background-color: white;
+  margin-bottom: 20px;
+  border-radius: 0px 0px 18px 18px;
+  padding: 50px;
+}
+
+.topdiv {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 30px;
+}
+
+.mainName {
+  display: flex;
+  flex-direction: column;
+}
+
+.mainName .Name {
+  font-size: 35px;
+  font-family: "Ledger";
+}
+
+.mainName .weddingdate {
+  font-size: 18px;
+  font-family: "Montserrat";
+}
+
+.editBtn {
+  padding: 2px 30px;
+  height: fit-content;
+  font-family: "Montserrat";
+  background: none;
+  border: 2px solid #0040b6;
+  font-size: 19px;
+  border-radius: 7px;
+}
+
+.Thirddiv {
+  display: flex;
+  justify-content: space-around;
+}
+
+.servicesDiv {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  font-size: 19px;
+  font-family: "Montserrat";
+}
+
+.servicesnumb {
+  font-weight: 600;
+  color: #323232;
+}
+
+.servicesoutof {
+  font-weight: 500;
+  color: #868686;
+}
+
+.servicesname {
+  font-weight: 400;
+}
+
+.fourtDiv {
+  margin-top: 30px;
+  display: flex;
+  flex-direction: column;
+  font-family: "Montserrat";
+  font-size: 23px;
+  margin-bottom: 40px;
+}
+
+.weddingThemespan {
+  color: #868686;
+  font-weight: 500;
+}
+
+.weddingTheme {
+  display: flex;
+  margin-top: 20px;
+  justify-content: space-between;
+  width: 90%;
+  font-weight: 600;
+  gap: 10px;
+}
+
+.weddingTheme span {
+  border-radius: 12px;
+  text-transform: uppercase;
+}
+
+.royal {
+  display: flex;
+  align-items: center;
+  padding: 10px 50px;
+  background-color: #fb8949;
+  color: white;
+}
+
+.Nature {
+  padding: 10px 50px;
+  background-color: #c0ea48;
+  color: white;
+}
+
+.Temple {
+  padding: 10px 50px;
+  background-color: #f55454;
+  color: white;
+}
+
+.Simple {
+  padding: 10px 50px;
+  background-color: #ffb4d8;
+  color: white;
+}
+
+.finaldiv {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.finaldiv img {
+  height: 20px;
+  width: 20px;
+  margin-top: -5px;
+}
+
+.quickInvites {
+  font-size: 14px;
+  text-decoration: underline;
+  color: #868686;
+  cursor: pointer;
+}
+
+.SecondDiv {
+  width: 90%;
+  padding: 20px;
+}
+
+.VendorManager {
+  display: flex;
+  flex-direction: column;
+}
+
+.VendorManagerspan {
+  font-size: 30px;
+  font-family: "Montserrat";
+  font-weight: 500;
+}
+
+.vendorBokkedSpan {
+  font-size: 14px;
+  color: #6a6a6a;
+}
+
+.CardDiv {
+  margin-top: 210px;
+  margin-bottom: 180px;
+  gap: 15px;
+  width: 55%;
+  position: relative;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.card {
+  height: 350px;
+  width: 350px;
+  background-color: #002ae6;
+  position: relative;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+@media (max-width: 1440px) {
+  .CardDiv {
+    width: 55%;
+  }
+}
+
+@media (max-width: 1230px) {
+  .CardDiv {
+    width: 65%;
+  }
+}
+
+@media (max-width: 1050px) {
+  .CardDiv {
+    width: 80%;
+  }
+}
+
+@media (max-width: 900px) {
+  .card {
+    height: 250px;
+    width: 250px;
+  }
+
+  .CardDiv {
+    width: 100%;
+    margin-top: 140px;
+  }
+}
+
+@media (max-width: 850px) {
+  .CardDiv {
+    width: 100%;
+  }
+}
+
+.card img {
+  position: absolute;
+  top: 24%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 80px;
+  height: 80px;
+}
+
+.add {
+  position: absolute;
+  color: #3a3a3a;
+  background-color: white;
+  padding: 3px 10px;
+  border-radius: 5px;
+  font-size: 15px;
+  top: 70%;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.middleDiv {
+  flex-direction: column;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 50px;
+  margin-bottom: 40px;
+}
+
+.middledivpan {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 15px;
+  color: #868686;
+}
+
+@media (max-width: 1000px) {
+  .Header {
+    justify-content: start;
+  }
+
+  .royal {
+    padding: 10px 30px;
+  }
+
+  .Nature {
+    padding: 10px 30px;
+  }
+
+  .Temple {
+    padding: 10px 30px;
+  }
+
+  .Simple {
+    padding: 10px 30px;
+  }
+}
+
+@media (max-width: 900px) {
+  .body {
+    padding-top: 63px;
+  }
+}
+
+@media (max-width: 800px) {
+  .royal {
+    padding: 10px 10px;
+  }
+
+  .Nature {
+    padding: 10px 10px;
+  }
+
+  .Temple {
+    padding: 10px 10px;
+  }
+
+  .Simple {
+    padding: 10px 10px;
+  }
+}
+
+@media (max-width: 700px) {
+  .Header {
+    padding: 0px 30px;
+  }
+
+  .royal {
+    padding: 10px 5px;
+    font-size: 17px;
+  }
+
+  .Nature {
+    font-size: 17px;
+    padding: 10px 5px;
+  }
+
+  .Temple {
+    font-size: 17px;
+    padding: 10px 5px;
+  }
+
+  .Simple {
+    font-size: 17px;
+    padding: 10px 5px;
+  }
+}
+
+@media (max-width: 700px) {
+  .Header .hidecontent {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .Header {
+    margin-bottom: 0px;
+  }
+
+  .MainBody {
+    width: 85%;
+  }
+
+  .imgdiv {
+    height: 400px;
+    border-radius: 0px;
+  }
+
+  .imgdiv img {
+    border-radius: 0px;
+  }
+
+  .changePhoto {
+    font-size: 16px;
+    font-family: "Ledger";
+    padding: 11px 20px;
+    border-radius: 18px;
+    background-color: #82818161;
+    color: #ffffff;
+  }
+
+  .totaldate {
+    font-size: 14px !important;
+    top: 73%;
+  }
+
+  .numbers {
+    font-size: 18px;
+  }
+
+  .values {
+    font-size: 16px;
+  }
+
+  .daysLeft {
+    font-size: 18px;
+    top: 63%;
+  }
+
+  .mainNamesdiv {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: absolute;
+    top: 20%;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  .mainNames {
+    font-size: 23px;
+    font-weight: 600;
+    color: white;
+    font-family: "Ledger";
+    letter-spacing: 2px;
+  }
+
+  .maindate {
+    font-size: 18px;
+    font-weight: 600;
+    color: white;
+    font-family: "Ledger";
+    letter-spacing: 2px;
+  }
+
+  .uploadPhoto {
+    position: absolute;
+    top: 43%;
+    left: 50%;
+    transform: translateX(-50%);
+    color: white;
+    font-size: 18px;
+    font-family: "Ledger";
+    font-weight: 600;
+    border: 2px solid white;
+    border-radius: 5px;
+    padding: 10px;
+  }
+
+  .VendorManagerspan {
+    font-size: 25px;
+  }
+
+  .vendorBokkedSpan {
+    font-size: 13px;
+  }
+
+  .card {
+    height: 150px;
+    width: 150px;
+  }
+
+  .card img {
+    height: 50px;
+    width: 50px;
+  }
+
+  .statusAndTaskdiv {
+    width: 75%;
+    background-color: white;
+    border-radius: 15px;
+    padding: 30px;
+    box-shadow: 8px 8px 13px 0px rgba(0, 0, 0, 0.25);
+  }
+
+  .statusdiv span {
+    font-size: 18px;
+    font-family: "Ledger";
+    padding-bottom: 10px;
+  }
+
+  .statusdiv {
+    display: grid;
+    margin-bottom: 20px;
+  }
+
+  .taskCompleted {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .taskCompletedspan {
+    font-size: 16px;
+    color: #868686;
+    margin-bottom: 20px;
+  }
+
+  .allservices {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    align-items: center;
+    background-color: #ff009924;
+    border-radius: 10px;
+    margin-bottom: 20px;
+    padding: 13px;
+    font-family: "Ledger";
+  }
+
+  .allservicesNumber {
+    font-size: 17px;
+    color: #ff004d;
+  }
+
+  .allservicesoutOf {
+    font-size: 14px;
+    color: #868686;
+  }
+
+  .allservicesName {
+    font-size: 14px;
+  }
+
+  .weddingThemeAndQuickInvitediv {
+    width: 75%;
+    background-color: white;
+    border-radius: 15px;
+    padding: 30px;
+    box-shadow: 8px 8px 13px 0px rgba(0, 0, 0, 0.25);
+    margin-top: 30px;
+    margin-bottom: 30px;
+  }
+
+  .weddingThemediv {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 20px;
+  }
+
+  .weddingThemespan {
+    font-size: 17px;
+    color: #868686;
+    margin-bottom: 20px;
+  }
+
+  .Alltheme {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    align-items: center;
+    gap: 20px;
+  }
+
+  .Alltheme span {
+    width: 180px;
+    text-align: center;
+    padding: 7px;
+    font-size: 18px;
+    color: white;
+    border-radius: 14px;
+    font-family: "Ledger";
+  }
+
+  .Allthemeroyal {
+    background-color: #fb8949;
+  }
+
+  .Allthemenature {
+    background-color: #c0ea48;
+  }
+
+  .Allthemetemple {
+    background-color: #f55454;
+  }
+
+  .Allthemesimple {
+    background-color: #aa78fc;
+  }
+
+  .quickInvitesdiv {
+    display: flex;
+    gap: 13px;
+    align-items: end;
+    margin-top: 10px;
+    cursor: pointer;
+  }
+
+  .quickInvitesdiv img {
+    height: 22px;
+    width: 22px;
+  }
+
+  .quickInvitesdiv span {
+    font-size: 15px;
+    color: #868686;
+    font-family: "Ledger";
+    text-decoration: underline;
+  }
+
+  .CardDiv {
+    margin-bottom: 80px;
+  }
+}
+
+.mysidediv {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.mainModaldiv {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  justify-content: center;
+  align-items: center;
+  font-family: "Ledger";
+}
+
+.mysideImage {
+  display: flex;
+  justify-content: space-around;
+  margin-bottom: 20px;
+  align-items: center;
+}
+
+.imgcircle {
+  height: 120px;
+  width: 120px;
+  /* background-color: #3a3a3a; */
+  border-radius: 50%;
+}
+
+.Iamname {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding: 0px 10px;
+  align-items: end;
+}
+
+.Nameinput {
+  display: flex;
+  flex-direction: column;
+  gap: 0px;
+  font-size: 18px;
+  width: 40%;
+  justify-content: space-between;
+  font-weight: 600;
+}
+
+.Times {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding: 0px 10px;
+}
+
+.times1 {
+  display: flex;
+  flex-direction: column;
+  width: 40%;
+  font-size: 18px;
+  font-weight: 600;
+  gap: 5px;
+}
+
+.allTime {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.saveBtn {
+  padding: 10px 20px;
+  font-size: 15px;
+  background-color: #0040b6;
+  border: none;
+  color: white;
+  border-radius: 5px;
+  margin-top: 20px;
+}
+
+.brideGroom {
+  display: flex;
+  justify-content: space-between;
+  /* padding: 10px 12px; */
+  margin-top: 10px;
+  border-radius: 50px;
+  border: 1px solid gray;
+}
+
+.brideGroom span {
+  width: 50%;
+  display: flex;
+  justify-content: center;
+  background-color: #86868630;
+  padding: 10px 20px;
+  font-size: 14px;
+  border-right: 1px solid gray;
+}
+
+.imgcrop {
+  z-index: 20;
+}
+
+.modalheader {
+  padding-top: 20px;
+  padding-bottom: 20px;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.619);
+  margin-bottom: 30px;
+}
+
+@media (max-width: 440px) {
+  .Nameinput {
+    font-size: 13px;
+  }
+
+  .times1 {
+    font-size: 13px;
+    width: 100%;
+  }
+
+  .Iamname {
+    padding: 0px;
+  }
+
+  .Times {
+    padding: 0px;
+    flex-direction: column;
+    gap: 15px;
+  }
+}
+
+/* Vendor Manager */
+.VendorManagerDiv {
+  display: flex;
+  flex-direction: column;
+  font-family: "Ledger";
+}
+
+.VendorManagerhead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 35px;
+}
+
+.VendorManagerspan1 {
+  font-size: 30px;
+}
+
+.VendorManagerseeAll {
+  padding: 5px 20px;
+  background-color: #0040b6;
+  color: white;
+  border: none;
+  border-radius: 50px;
+  font-size: 15px;
+}
+
+.VendorManagerBody {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  column-gap: 60px;
+  row-gap: 60px;
+}
+
+.VendorManagerCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  background-color: #fcc6f0;
+  border-radius: 14px;
+  padding: 10px 0px;
+  cursor: pointer;
+}
+
+.VendorManagerCard img {
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+}
+
+.VendorManagerCardspan {
+  font-size: 17px;
+}
+
+.VendorManagerCardFooter {
+  display: flex;
+  width: 100%;
+  padding: 5px 20px;
+  justify-content: space-between;
+  font-size: 17px;
+  align-items: center;
+}
+
+.backgrdDiv {
+  display: flex;
+  width: 100%;
+  position: relative;
+}
+
+.backBkgrd {
+  position: absolute;
+  background-color: rgba(0, 0, 0, 0.42);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: white;
+  font-size: 25px;
+  font-weight: 600;
+  display: flex;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  left: 0;
+}
+
+.backgrdDiv:hover .backBkgrd {
+  display: flex;
+}
+
+.PageHeadersvendor {
+  font-size: 25px;
+  margin-bottom: 20px;
+}
+
+@media (max-width: 1200px) {
+  .VendorManagerBody {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    column-gap: 40px;
+    row-gap: 40px;
+  }
+}
+
+@media (max-width: 800px) {
+  .VendorManagerBody {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 40px;
+    row-gap: 40px;
+  }
+}
+
+@media (max-width: 560px) {
+  .VendorManagerBody {
+    display: grid;
+    grid-template-columns: 1fr;
+    row-gap: 40px;
+    justify-content: center;
+  }
+
+  .VendorManagerDiv {
+    /* margin-top: 30px; */
+  }
+
+  .VendorManagerCard {
+    /* width: 80%; */
+  }
+}
+
+.checkListhead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid gray;
+  flex-direction: column;
+  margin-bottom: 20px;
+}
+
+.ChecklistBtndiv {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px;
+  margin-bottom: 25px;
+}
+
+.btnleftside {
+  display: flex;
+  gap: 20px;
+  font-size: 15px;
+}
+
+.searchInput {
+  display: flex;
+  align-items: center;
+}
+
+.searchInput input {
+  border: none;
+  background-color: #e8e1ec;
+  height: 40px;
+  border-radius: 50px 0px 0px 50px;
+  width: 110px;
+  padding: 5px 20px;
+}
+
+.searchInput button {
+  height: 100%;
+  background-color: #e8e1ec;
+  border: none;
+  border-radius: 0px 50px 50px 0px;
+  padding: 3px 10px;
+}
+
+.btnleftside select {
+  background-color: #e8e1ec;
+  padding: 5px 20px;
+  border: none;
+  border-radius: 8px;
+  color: #49454f;
+}
+
+.btnRightdiv {
+  display: flex;
+  gap: 10px;
+}
+
+.VendorManagerseeAll1 {
+  padding: 5px 20px;
+  background-color: #ffffff;
+  color: #0040b6;
+  border: 1px solid #0040b6;
+  border-radius: 50px;
+  font-size: 15px;
+}
+
+.VendorManagerBody1 {
+  display: flex;
+  gap: 50px;
+  width: 100%;
+}
+
+.bodyLeftSec {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  font-size: 15px;
+  width: 24%;
+}
+
+.mySearchDiv {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.mySearchDiv span {
+  font-size: 20px;
+  color: #333333;
+}
+
+.mySearchDiv article {
+  display: flex;
+  gap: 10px;
+  background-color: #e8e1ec;
+  width: fit-content;
+  padding: 10px;
+  border-radius: 50px;
+  cursor: pointer;
+}
+
+.mySearchDiv article span {
+  font-size: 15px;
+}
+
+.Statusdiv {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+
+.Statusdiv span {
+  font-size: 20px;
+  color: #333333;
+}
+
+.Statusdiv article {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  color: black !important;
+  padding: 5px 10px;
+  border-radius: 10px;
+}
+
+.statusselected {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  background-color: #ffe7e7;
+  border: 1px solid #b5255c;
+  color: black !important;
+  padding: 5px 10px;
+  border-radius: 10px;
+}
+
+.Statusdiv article span {
+  font-size: 15px;
+  color: black !important;
+}
+
+.monthlyandCat {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+}
+
+.monthlyandCatspan {
+  font-size: 20px;
+  color: #333333;
+  white-space: nowrap !important;
+}
+
+.monthlyandCatdiv {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.monthlyandCatdiv article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  cursor: pointer;
+  color: black !important;
+  padding: 5px 10px;
+  border-radius: 10px;
+}
+
+.monthlyandCatdiv1 {
+  flex: 1;
+  overflow: hidden;
+}
+
+.monthlyandCatdiv1 article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  cursor: pointer;
+  color: black !important;
+  padding: 2px 0px;
+  border-radius: 10px;
+  font-size: 18px;
+}
+
+.bodyRightSec {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+  width: 76%;
+}
+
+.rightsecbody {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  height: 100%;
+  background-color: #f2f2f2;
+}
+
+.monthName {
+  font-size: 25px;
+  font-weight: 600;
+}
+
+.listTable {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  border: 1px solid #b9b9b9;
+  border-radius: 12px;
+}
+
+.listdiv {
+  display: flex;
+  gap: 20px;
+  padding: 10px 30px;
+  border-bottom: 1px solid #b9b9b9;
+  justify-content: space-between;
+  align-items: center;
+}
+
+
+.listdiv article {
+  display: flex;
+  flex-direction: column;
+}
+
+.listdiv1 {
+  display: flex;
+  gap: 20px;
+  padding: 10px 30px;
+  border-bottom: 1px solid rgba(127, 131, 132, .15);
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  cursor: pointer;
+  color: #000000 !important;
+}
+
+.listdiv1:hover {
+  background: #fb894969;
+  color: #000000 !important;
+}
+
+.listdiv1 article {
+  display: flex;
+  align-items: center;
+  gap: 5%;
+  width: 50%;
+  justify-content: space-between;
+}
+
+.DownloadAndPrintdiv1 {
+  display: flex;
+  width: 20%;
+  font-size: 20px;
+  padding: 0px 8px;
+}
+
+.DownloadAndPrintdiv1 button {
+  background: none;
+}
+
+.DownloadAndPrintdiv1 input {
+  width: 80%;
+}
+
+.shortListSpan {
+  font-size: 22px;
+  color: #fff;
+}
+
+.vendnamemes {
+  font-size: 19px;
+  color: #fff;
+  width: 70%;
+  display: flex;
+  flex-direction: column;
+}
+
+.todoBtn {
+  display: flex;
+  gap: 10px;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: end;
+  color: #7f8384;
+  font-size: 13px;
+  text-align: right;
+}
+
+.todoBtn p {
+  height: 20px;
+  width: 20px;
+  background-color: #fff4e7;
+  border-radius: 50px;
+  line-height: 20px;
+  font-size: 11px;
+  color: #f37e20 !important;
+  text-align: center;
+  font-weight: 600 !important;
+}
+
+.todoBtn button img {
+  height: 20px;
+  width: 20px;
+}
+
+.todoBtn button {
+  padding: 6px;
+  background: none;
+  border: none;
+  border-radius: 50px;
+}
+
+.deleteCategorybtn {
+  padding: 6px;
+  background: none;
+  border: none;
+  border-radius: 50px;
+}
+
+.deleteCategorybtn img {
+  height: 20px;
+  width: 20px;
+}
+
+.todoBtn button:hover {
+  background-color: #6a6a6a30;
+}
+
+.shortlistDue {
+  font-size: 14px;
+  color: #6a6a6a;
+  margin-top: -4px;
+}
+
+.DownloadAndPrintdiv {
+  display: flex;
+  gap: 20px;
+}
+
+.DownloadAndPrint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 14px;
+  background: none;
+  border: none;
+}
+
+.messaegecounnt {
+  font-size: 15px;
+  background-color: #fedfdfd4;
+  padding: 5px 12px;
+  border-radius: 50px;
+  color: #0040b6;
+}
+
+@media (max-width: 880px) {
+  .checkListhead {
+    flex-direction: column;
+    align-items: start;
+    width: 100%;
+    gap: 20px;
+  }
+
+  .ChecklistBtndiv {
+    flex-direction: column;
+    gap: 20px;
+  }
+}
+
+@media (max-width: 900px) {
+  .checkListhead1 {
+    width: 100% !important;
+  }
+
+  .bodyRightSec {
+    width: 100%;
+  }
+
+  .VendorManagerspandiv {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .VendorManagerspanbtn {
+    display: flex;
+    gap: 10px;
+  }
+
+  .VendorManagerspanbtn button {
+    background: none;
+    border: none;
+  }
+
+  .DownloadAndPrintdiv {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    font-size: 20px;
+    padding: 0px 8px;
+  }
+
+  .DownloadAndPrintdiv select {
+    background: none;
+    border: none;
+    color: #b92856;
+  }
+
+  .checklistFilter {
+    display: flex;
+    width: 100%;
+    padding: 0px 10px;
+    overflow-y: scroll;
+    gap: 10px;
+  }
+
+  /* .checklistFilter span {
+    border: 1px solid gray;
+    padding: 10px;
+    width: 150px;
+    display: flex;
+    justify-content: center;
+    border-radius: 50px;
+    font-size: 16px;
+    color: #49454f;
+  } */
+  .checklistFilterspan {
+    border: 1px solid gray;
+    padding: 10px;
+    width: fit-content !important;
+    display: flex;
+    justify-content: center;
+    border-radius: 50px;
+    font-size: 16px;
+    color: #49454f;
+    white-space: nowrap;
+  }
+}
+
+.guestInfo {
+  display: flex;
+}
+
+.guestInfo img {
+  width: 50px;
+  height: 50px;
+}
+
+.GuestListBody {
+  width: 100%;
+  border: 1px solid #b9b9b9;
+  border-radius: 12px;
+}
+
+.GuestListBodyHead {
+  display: flex;
+  gap: 60px;
+  justify-content: center;
+  padding: 10px 20px;
+  font-size: 18px;
+  font-weight: 600;
+  color: #333333;
+  background-color: #ffe7e7;
+  border-radius: 12px 12px 0px 0px;
+}
+
+.guestlisttable {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 50px;
+  background-color: white;
+}
+
+.guestlisttablehead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 25px;
+  font-weight: 600;
+  font-size: 20px;
+  padding: 10px 20px;
+  padding-bottom: 10px;
+  border: 1px solid #000000;
+}
+
+.guestlisttablerows {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 20px;
+  align-items: center;
+  border-bottom: 1px solid #b9b9b9;
+}
+
+.rowsTable {
+  border-bottom: 1px solid black;
+  border-left: 1px solid black;
+  border-right: 1px solid black;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 85%;
+  font-size: 18px;
+}
+
+.checkbox1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.checkbox2 select {
+  background: none;
+  border: none;
+  font-size: 15px;
+}
+
+.checkbox2input {
+  background: none;
+  border: none !important;
+  font-size: 15px;
+}
+
+.attgroupdiv {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 20px;
+  border-bottom: 1px solid gray;
+  margin-bottom: 25px;
+}
+
+.attgroupdiv article {
+  display: flex;
+  width: 85%;
+  border: 1px solid #b9b9b9;
+  border-radius: 50px;
+}
+
+.attgroupdiv article span {
+  font-size: 18px;
+  padding: 10px;
+  width: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.afterShow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.afterShow button {
+  background-color: white;
+  border: 1px solid #b92856;
+  border-radius: 50px;
+  padding: 1px 10px;
+  color: #b92856;
+  font-size: 15px;
+  margin-top: 5px;
+}
+
+@media (max-width: 900px) {
+  .guestlisttable {
+    padding: 10px 10px;
+  }
+
+  .under900 {
+    border-bottom: 1px solid #b9b9b9;
+    padding-bottom: 10px;
+  }
+
+  .guestlisttablerows {
+    border: none;
+  }
+
+  .under900AMS {
+    display: flex;
+    padding: 0px 50px;
+  }
+}
+
+.ReportDiv {
+  display: flex;
+  flex-direction: column;
+  margin-top: 30px;
+}
+
+.ReporttopDiv {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.reporttoprightDiv {
+  width: 50%;
+  display: flex;
+  flex-direction: column;
+  padding: 50px;
+}
+
+.reportinvitesentbox {
+  background-color: #feadad6a;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 35px;
+  border-radius: 14px;
+}
+
+.reportinvitesentbox span {
+  font-size: 25px;
+}
+
+.reportinvitesentbox article {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.reportinvitesentbox article span {
+  font-size: 19px;
+  color: #1c1f37;
+}
+
+.reportgenderdiv {
+  margin-top: 30px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  background-color: #feadad6a;
+  padding: 20px 35px;
+  border-radius: 14px;
+}
+
+.reportgenderdiv span {
+  font-size: 24px;
+}
+
+.reportgenderdiv article {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.reportgenderdiv article span {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: 20px;
+  color: #1c1f37;
+}
+
+.reportgroupdiv {
+  margin-top: 30px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 3px;
+  border-radius: 14px;
+}
+
+.reportgroupdiv span {
+  font-size: 24px;
+}
+
+.reportgroupdiv article {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.reportgroupdiv article span {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: 20px;
+  color: #1c1f37;
+}
+
+.gendeerColors {
+  width: 16px;
+  height: 10px;
+  background-color: #000000;
+}
+
+.reportGroupdivtable {
+  margin-top: 10px;
+  padding: 15px 20px;
+  width: 100%;
+  border: 1px solid gray;
+  border-radius: 14px;
+}
+
+.graphdivspans {
+  display: grid;
+  margin-top: 20px;
+  grid-template-columns: 1fr 1fr;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.GraphDiv {
+  width: 50%;
+}
+
+@media (max-width: 900px) {
+  .ReporttopDiv {
+    flex-direction: column;
+  }
+
+  .GraphDiv {
+    width: 100%;
+  }
+
+  .reporttoprightDiv {
+    width: 100%;
+    padding: 0px;
+    margin-top: 20px;
+  }
+}
+
+.btnRightdivBP {
+  display: flex;
+  justify-content: right;
+  width: 100%;
+}
+
+.BudplanHead {
+  display: flex;
+  justify-content: space-between;
+  flex-direction: column;
+  align-items: center;
+  border-bottom: 1px solid gray;
+  margin-bottom: 20px;
+}
+
+.DownloadAndPrintdivBudplan {
+  display: flex;
+  gap: 20px;
+}
+
+.BudgetPlannerBody {
+  display: flex;
+  gap: 50px;
+  width: 100%;
+  margin-top: -20px;
+  justify-content: center;
+}
+
+.BudplannerPaymentSpan {
+  font-size: 30px;
+  font-weight: 600;
+}
+
+.BudplannerPayment {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.payemntOnesecchanged {
+  display: flex;
+  background-color: #b5255c;
+  padding: 20px;
+  border-radius: 15px;
+  justify-content: space-between;
+  align-items: center;
+  color: white !important;
+  cursor: pointer;
+}
+
+.payemntOnesec {
+  display: flex;
+  background-color: #ffe7e7;
+  padding: 20px;
+  border-radius: 15px;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+}
+
+.payemntOnesecspan {
+  display: flex;
+  flex-direction: column;
+}
+
+.payemntOnesecspanEvent {
+  font-size: 25px;
+}
+
+.payemntOnesecspanRup {
+  font-size: 19px;
+}
+
+.payemntOnesecBriefcase img {
+  height: 30px;
+  width: 30px;
+}
+
+.payemntOnesecBriefcase {
+  padding: 10px;
+  background-color: #cccccc2e;
+  border-radius: 50px;
+}
+
+.payemntOnesecplus {
+  display: flex;
+  background-color: #ffe7e7;
+  padding: 20px;
+  border-radius: 15px;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+}
+
+.payemntOnesecBriefcaseplus {
+  padding: 10px 20px;
+  background-color: #cccccc2e;
+  border-radius: 50px;
+  font-size: 25px;
+  font-weight: 600;
+  color: #bb6bd9;
+}
+
+.bodyLeftSecBudPlan {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  font-size: 15px;
+  width: 25%;
+}
+
+.bodyRightSecBudPlan {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+  width: 75%;
+}
+
+.BudgetPlannerpayemntDetailspan {
+  font-size: 25px;
+  font-weight: 600;
+}
+
+.BudgetPlannerpayemntBox {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #cccccc;
+  padding-top: 20px;
+  border-radius: 10px;
+  background-color: white;
+}
+
+.BudgetPlannerpayemntBoxTop {
+  display: flex;
+  align-items: center;
+  padding: 20px;
+}
+
+.BudgetPlannerpayemntBoxleft {
+  display: flex;
+  flex-direction: column;
+  width: 55%;
+  justify-content: space-between;
+  gap: 5px;
+  font-weight: 600;
+}
+
+.BudgetPlannerpayemntBoxleft article {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+}
+
+.BudgetPlannerpayemntBoxleft article span {
+  display: flex;
+  width: 50%;
+  font-size: 18px;
+}
+
+.budeditdelete {
+  color: #b5255c;
+}
+
+.bigBriefcase {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 80px;
+  width: 80px;
+  background-color: #e89a9a32;
+  border-radius: 50px;
+}
+
+.bigBriefcase img {
+  height: 50px;
+  width: 50px;
+}
+
+.BudgetPlannerpayemntBoxRight {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 45%;
+}
+
+.budPlanTable {
+  display: flex;
+  flex-direction: column;
+  font-size: 17px;
+}
+
+.budPlanTableHead {
+  display: flex;
+  padding: 10px 30px;
+  background-color: #ffe7e7;
+  color: #787777;
+  font-weight: 600;
+  border-bottom: 1px solid #cbcbcb;
+  border-top: 1px solid #cbcbcb;
+}
+
+.budPlanTableHeadValues {
+  width: 22%;
+  text-align: right;
+  display: flex;
+  align-items: end;
+  justify-content: end;
+}
+
+.budPlanTableHeadValues1 {
+  width: 22%;
+  text-align: right;
+}
+
+.budPlanTableHeadnames {
+  width: 34% !important;
+}
+
+.budPlanTableBody {
+  display: flex;
+  flex-direction: column;
+}
+
+.budPlanTableBodySec {
+  display: flex;
+  padding: 10px 30px;
+  background-color: white;
+  color: #545454;
+  border-bottom: 1px solid #cbcbcb;
+}
+
+.budPlanTableFoot {
+  display: flex;
+  padding: 10px 30px;
+  background-color: #ffe7e7;
+  color: #787777;
+  font-weight: 600;
+  border-radius: 0px 0px 10px 10px;
+  border-top: 1px solid #cbcbcb;
+}
+
+.budPlanTableBodySecAddnewExp {
+  color: #b5255c;
+  font-weight: 600;
+}
+
+.paymentPage {
+  display: flex;
+  flex-direction: column;
+}
+
+.paymentGraphDiv {
+  font-size: 22px;
+  font-weight: 600;
+  border-bottom: 1px solid #b9b9b9;
+}
+
+.estCostandFincost {
+  display: flex;
+  margin-top: 30px;
+  padding-bottom: 30px;
+  border-bottom: 1px solid #b9b9b9;
+  justify-content: center;
+  gap: 25px;
+}
+
+.estCostandFincostBox {
+  display: flex;
+  flex-direction: column;
+  background-color: #f1f1f1;
+  border: 1px solid #cbcbcb;
+  border-radius: 18px;
+  padding: 30px;
+  align-items: center;
+  min-width: 25%;
+  gap: 7px;
+}
+
+.estCostandFincostBoxhead {
+  font-size: 20px;
+}
+
+.estCostandFincostBoxRup {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.estCostandFincostBoxEditBud {
+  font-size: 18px;
+  font-weight: 600;
+  color: #b5255c;
+}
+
+.estCostandFincostPaidPend {
+  font-size: 18px;
+  display: flex;
+  justify-content: space-between;
+  gap: 13px;
+  font-weight: 600;
+}
+
+.paymentAllCats {
+  margin-top: 30px;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 20px;
+}
+
+.payemntOnesecspanEvent1 {
+  font-size: 22px;
+}
+
+.payemntOnesecspanRup1 {
+  font-size: 17px;
+}
+
+.paymentgraph {
+  width: 100%;
+  height: 400px;
+}
+
+@media (max-width: 900px) {
+  .paymentAllCats {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .estCostandFincost {
+    display: grid;
+  }
+
+  .BudplanHead {
+    width: 100%;
+  }
+
+  .BudPlanhead1 {
+    width: 100% !important;
+  }
+
+  .bodyRightSecBudPlan {
+    /* display: none; */
+    width: 100%;
+  }
+
+  .bodyLeftSecBudPlan {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .BudgetPlannerpayemntBoxRight {
+    display: none;
+  }
+
+  .BudgetPlannerpayemntBoxleft {
+    width: 100%;
+  }
+
+  .budPlanTable {
+    font-size: 14px !important;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 500px) {
+  .paymentAllCats {
+    grid-template-columns: 1fr;
+  }
+}
+
+.invitesBody {
+  margin-top: 30px;
+  padding: 0px 5%;
+}
+
+.imgAnddetailinvites {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.imgAnddetailinvites img {
+  width: 100%;
+  height: 380px;
+  object-fit: cover;
+}
+
+.inviteDetail {
+  position: absolute;
+  background-color: rgba(0, 0, 0, 0.35);
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  color: white;
+}
+
+.nameanddate {
+  position: absolute;
+  right: 50px;
+  top: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.invitesname {
+  font-size: 37px;
+}
+
+.invitesDate {
+  font-size: 17px;
+}
+
+.btninvitesdiv {
+  display: flex;
+  gap: 20px;
+  font-size: 20px;
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  align-items: center;
+  font-weight: 600;
+  width: 100%;
+  justify-content: center;
+}
+
+.btnUploadimageandvid {
+  background-color: white;
+  padding: 8px 15px;
+  color: #b92856;
+  border: 1px solid #b92856;
+  font-size: 17px;
+  font-weight: 600;
+  border-radius: 50px;
+}
+
+.inviteForm {
+  margin-top: 30px;
+  background-color: #ffe7e7;
+  display: flex;
+  flex-direction: column;
+  padding: 50px 70px;
+  border-radius: 8px;
+  border: 1px solid #808080;
+}
+
+.inviteEdit {
+  width: 100%;
+  display: flex;
+  justify-content: end;
+  font-size: 18px;
+  color: #b5255c;
+  text-decoration: underline;
+  font-weight: 600;
+}
+
+.invitesmainform {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.invitesmainformdiv {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+}
+
+.invitesmainformdiv article {
+  display: flex;
+  flex-direction: column;
+  width: 45%;
+  gap: 10px;
+  font-size: 18px;
+}
+
+.invitesmainformdiv div {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 18px;
+  width: 100%;
+}
+
+.inviteformBtn {
+  display: flex;
+  width: 100%;
+  margin-top: 40px;
+  justify-content: end;
+  gap: 20px;
+}
+
+.inviteformBtn button {
+  padding: 10px 20px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.inviteformBtnsave {
+  background: none;
+  color: #b5255c;
+  border: 1px solid #b5255c;
+  border-radius: 50px;
+}
+
+.inviteformBtnsaveSend {
+  background-color: #b5255c;
+  border: 1px solid #b5255c;
+  color: white;
+  border-radius: 50px;
+}
+
+.sharereminder {
+  font-size: 21px;
+  font-weight: 600;
+  color: #b5255c;
+  text-decoration: underline;
+  margin-top: 40px;
+}
+
+@media (max-width: 830px) {
+  .nameanddate {
+    top: 25%;
+    left: 0;
+    right: 0;
+  }
+
+  .inviteForm {
+    padding: 20px;
+  }
+
+  .invitesmainformdiv {
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .invitesmainformdiv article {
+    font-size: 15px;
+    width: 100%;
+  }
+
+  .invitesmainformdiv div {
+    font-size: 15px;
+  }
+
+  .btnUploadimageandvid {
+    font-size: 13px;
+  }
+
+  .inviteformBtn {
+    justify-content: center;
+  }
+
+  .invitesBody {
+    padding: 0px;
+  }
+}
+
+.VendorWishlistHead {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border-bottom: 1px solid gray;
+  flex-direction: column;
+  margin-bottom: 30px;
+}
+
+.tab {
+  display: flex;
+  width: 100%;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.tab span {
+  padding: 0px 20px;
+  padding-bottom: 20px;
+}
+
+.indexPageGuestlisdiv {
+  display: flex;
+  flex-direction: column;
+  width: 90%;
+  font-family: "Ledger";
+}
+
+.indexPageGuestlisdivSpan {
+  font-size: 30px;
+  font-family: "Monteserat";
+  margin-bottom: 30px;
+}
+
+.graphDivindex {
+  display: flex;
+  padding: 20px 50px;
+  background-color: rgb(251, 232, 232);
+  border-radius: 15px;
+}
+
+.viewGuestList {
+  width: 100%;
+  display: flex;
+  justify-content: end;
+  margin-top: 20px;
+}
+
+.viewGuestList pre {
+  font-size: 18px;
+  font-weight: 600;
+  color: #0040b6;
+  font-family: "Ledger";
+  cursor: pointer;
+}
+
+.indexBudgetPlannerDiv {
+  width: 90%;
+}
+
+.indexBudgetPlandet {
+  padding: 20px 50px;
+  width: 100%;
+  background-color: rgb(251, 232, 232);
+  border-radius: 15px;
+  margin-top: 30px;
+}
+
+@media (max-width: 960px) {
+  .graphDivindex {
+    flex-direction: column;
+    padding: 10px 10px;
+  }
+
+  .graphDivindex .GraphDiv {
+    width: 100%;
+    height: 300px;
+    margin-bottom: 60px;
+  }
+
+  .graphDivindex div {
+    width: 100%;
+  }
+
+  .indexBudgetPlandet {
+    padding: 10px 10px;
+  }
+
+  .indexBudgetPlandet .BudgetPlannerpayemntBoxleft {
+    width: 100%;
+    padding: 0px;
+  }
+
+  .indexBudgetPlandet .BudgetPlannerpayemntBoxleft article span {
+    width: 100%;
+    padding: 0px;
+  }
+}
+
+.budCosttextdiv {
+  width: 100%;
+  gap: 20px;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.budPlanTableHeadValues {
+  display: flex;
+  gap: 10px;
+}
+
+.budPlanTableHeadValues img {
+  height: 20px;
+  width: 20px;
+}
+
+.budPlanTableBodySecbtns {
+  display: flex;
+  align-items: center;
+  padding: 10px 30px;
+  background-color: white;
+  color: #545454;
+  border-bottom: 1px solid #cbcbcb;
+  justify-content: space-between;
+}
+
+.budPlanTableBodySecbtns button {
+  padding: 2px 30px;
+  background-color: white;
+  border: 1px solid #b5255c;
+  color: #b5255c;
+  font-weight: 600;
+  border-radius: 10px;
+}
+
+.BudplannerPayment {
+  height: 55vh !important;
+  overflow: scroll;
+}
+
+.invitesname1 {
+  font-size: 40px;
+  font-family: "Lavishly Yours";
+  font-weight: 400;
+}
+
+.nameanddate1 {
+  position: absolute;
+  right: 50px;
+  top: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  font-weight: 600;
+}
+
+.storydiv {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-top: 30px;
+}
+
+.storyFirstDiv {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 50%;
+}
+
+.storyFirstDivhead {
+  font-size: 55px;
+  font-family: "Lavishly Yours";
+  font-weight: 400;
+}
+
+.storyFirstDivbody {
+  width: 100%;
+  font-size: 15px;
+  text-align: justify;
+}
+
+.storySecDiv {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 25px;
+}
+
+.storySecDiv article {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 32%;
+}
+
+.storySecDivhead {
+  font-size: 55px;
+  font-family: "Lavishly Yours";
+  font-weight: 400;
+}
+
+.storySecDivbody {
+  width: 100%;
+  font-size: 15px;
+  text-align: justify;
+}
+
+.storyImgDiv img {
+  height: 200px;
+  width: 200px;
+}
+
+.storyImgDiv {
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #000000;
+}
+
+.eventList {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin-top: 40px;
+  background-image: url("/images/image 648.png");
+  padding: 40px 0px;
+}
+
+.inviteListCarddiv {
+  display: grid;
+  width: 80%;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 50px;
+  margin-top: 50px;
+}
+
+.inviteListcard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  padding-bottom: 25px;
+  border-bottom: 4px solid #ff2e6c;
+}
+
+.inviteListcardimg img {
+  height: 40px;
+  width: 40px;
+}
+
+.inviteListcardimg {
+  padding: 12px;
+  background-color: #ffffff;
+  border-radius: 50px;
+}
+
+.inviteListcardtitle {
+  font-family: "Ledger";
+  font-size: 23px;
+}
+
+.invitecardDate {
+  font-size: 15px;
+  text-align: justify;
+}
+
+.invitecardSeemore {
+  font-size: 15px;
+  color: #ff2e6c;
+  cursor: pointer;
+}
+
+.willyouAttend {
+  display: flex;
+  align-items: center;
+  margin-top: 30px;
+}
+
+.willyouAttendimg {
+  display: flex;
+  position: relative;
+  height: 330px;
+  width: 500px;
+}
+
+.willyouAttendimgspansdiv {
+  position: absolute;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  top: 50px;
+}
+
+.willyouAttendimgspan {
+  font-size: 35px;
+  font-family: "Lavishly Yours";
+  font-weight: 400;
+}
+
+.willyouAttendimgspanname {
+  font-size: 15px;
+}
+
+.willyouAttendform {
+  display: flex;
+  flex-direction: column;
+  background-color: white;
+  width: 50%;
+  z-index: 5;
+  padding: 50px;
+  gap: 20px;
+  border: 1px solid #ff2e6c;
+  max-width: 50%;
+  height: 440px;
+}
+
+.inviteformBtnsaveSend1 {
+  background-color: #b5255c;
+  border: 1px solid #b5255c;
+  color: white;
+  border-radius: 50px;
+  font-size: 18px;
+  width: fit-content;
+  padding: 2px 20px;
+}
+
+@media (max-width: 1000px) {
+  .willyouAttendimg {
+    width: 100%;
+  }
+
+  .willyouAttendimg img {
+    width: 100%;
+  }
+
+  .willyouAttend {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .willyouAttendform {
+    width: 100%;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 900px) {
+  .storySecDiv {
+    flex-direction: column;
+    gap: 50px;
+  }
+
+  .storyFirstDiv {
+    width: 80%;
+  }
+
+  .storySecDiv article {
+    width: 80%;
+  }
+
+  .inviteListCarddiv {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .storyFirstDivbody {
+    text-align: center;
+  }
+
+  .storySecDivbody {
+    text-align: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .inviteListCarddiv {
+    grid-template-columns: 1fr;
+  }
+
+  .nameanddate1 {
+    left: 50%;
+    transform: translateX(-50%);
+    top: 25%;
+    right: 0;
+    width: 100%;
+  }
+
+  .willyouAttendimg img {
+    object-fit: cover;
+  }
+
+  .willyouAttendform {
+    padding-bottom: 0px;
+    padding: 30px 18px;
+  }
+}
+
+.seemorehead {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+}
+
+.seemorebody {
+  margin-top: 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  /* padding: 0px 10px; */
+}
+
+.seemorebody article {
+  display: flex;
+  gap: 30px;
+  align-items: center;
+  font-size: 17px;
+}
+
+.seemorebody article img {
+  height: 23px;
+  width: 23px;
+}
+
+.seemorebodybold {
+  color: gray;
+  font-weight: 600;
+}
+
+.seemorebodylight {
+  font-weight: 400;
+  color: gray;
+}
+
+.seemoreX {
+  position: absolute;
+  right: 10px;
+  font-size: 30px;
+  font-family: "Courier New", Courier, monospace;
+  cursor: pointer;
+}
+
+.seemoreX img {
+  height: 20px;
+  width: 20px;
+}
+
+.invitesmainformdiv1 {
+  display: flex;
+  flex-direction: row !important;
+  width: 100%;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.imgmessagediv {
+  width: 40px;
+  height: 40px;
+  background-color: #ffffff;
+  border-radius: 50px !important;
+  color: #fff;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 15px;
+}
+
+.vendcont {
+  font-size: 15px;
+  color: #fff;
+}
+
+.messageoptions {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  font-size: 16px;
+  color: #fff;
+}
+
+.messageoptions article {
+  display: flex;
+  align-items: center;
+}
+
+.messagediv {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* gap: 10px; */
+}
+
+.messagedivhead {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  padding: 10px 30px;
+  background-color: #ffffff;
+  border-radius: 10px 10px 0px 0px;
+  align-items: center;
+  border: 1px solid #858596;
+}
+
+.messagedivheadleft {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+}
+
+.messagedivheadImg {
+  display: flex;
+  min-height: 50px;
+  min-width: 50px;
+  background-color: #ffffff;
+  border-radius: 50px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 18px;
+  color: white;
+  cursor: pointer;
+}
+
+.messageheadname {
+  display: flex;
+  flex-direction: column;
+  font-size: 19px;
+  color: #fff;
+  font-weight: 600;
+}
+
+.memberonline {
+  font-size: 16px;
+  color: #fff;
+  font-weight: 400;
+}
+
+.messagehead3dots {
+  font-size: 20px;
+  color: white;
+  display: flex;
+}
+
+.messagedivbody {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #b9b9b9;
+  margin-top: -1px;
+  height: 550px;
+  /* border-radius: 0px 0px 10px 10px; */
+  /* padding: 20px 30px; */
+  gap: 20px;
+  /* overflow-anchor: none; */
+  overflow: auto;
+  /* justify-content: end; */
+  position: relative;
+  height: 100%;
+}
+
+.yourmessagebloackmaindiv {
+  display: flex;
+  width: 100%;
+  /* overflow-anchor: auto; */
+}
+
+.yourmessage {
+  display: flex;
+  flex-direction: row;
+  width: 65%;
+}
+
+.yourmessageimgwrapper {
+  display: flex;
+  height: 40px;
+  width: 40px;
+  background-color: #ffffff;
+  /* border: 1px solid #000000; */
+  border-radius: 50px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 18px;
+  color: white;
+  margin-right: 10px;
+  overflow: hidden;
+}
+
+.yourmessageimg img {
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+}
+
+.yourmessageimgtext {
+  margin-bottom: 0;
+}
+
+.yourmessagename {
+  display: flex;
+  font-size: 16px;
+  font-weight: 600;
+  gap: 10px;
+}
+
+.yourmessagetime {
+  display: flex;
+  font-size: 12px;
+  align-items: end;
+  color: #808080;
+  font-weight: 400;
+  position: absolute;
+  bottom: 5px;
+  right: 15px;
+}
+
+.yourmessagebodymaindiv {
+  width: 89%;
+  position: relative;
+}
+
+.yourMessagebody {
+  display: flex;
+  flex-direction: column;
+  background-color: #ffffff;
+  max-width: 80%;
+  font-size: 16px;
+  color: #20446c;
+  padding: 2px 15px 5px 15px;
+  border-radius: 0px 20px 20px 20px;
+  line-break: anywhere;
+  position: relative;
+  width: -moz-fit-content;
+  width: fit-content;
+  min-width: 130px;
+  box-shadow: 0 0 10px rgb(0 0 0 / 11%);
+}
+
+.arrowdownmess1 {
+  position: absolute;
+  top: 0;
+  right: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.yourMessagebody:hover .arrowdownmess1 {
+  opacity: 1;
+}
+
+/* ========================== */
+.mymessagebloackmaindiv {
+  display: flex;
+  width: 100%;
+  justify-content: end;
+  /* overflow-anchor: auto; */
+}
+
+.mymessage {
+  display: flex;
+  flex-direction: row-reverse;
+  width: 65%;
+  align-items: start;
+}
+
+.mymessagenametime {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+
+  justify-content: end;
+  flex-direction: row-reverse;
+}
+
+.mymessageimgwrapper {
+  display: flex;
+  height: 40px;
+  width: 40px;
+  background-color: #929292a8;
+  border-radius: 50px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 18px;
+  color: white;
+  margin-left: 10px;
+  overflow: hidden;
+}
+
+.mymessageimgwrapper img {
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+}
+
+.mymessagename {
+  display: flex;
+  font-size: 18px;
+  font-weight: 600;
+  gap: 10px;
+  flex-direction: row-reverse;
+}
+
+.mymessagetime {
+  display: flex;
+  font-size: 14px;
+  align-items: end;
+  color: #808080;
+  font-weight: 400;
+  position: absolute;
+  bottom: 5px;
+  left: 10px;
+}
+
+.mymessagetimeself {
+  display: flex;
+  font-size: 12px;
+  align-items: end;
+  color: #000;
+  font-weight: 400;
+  bottom: 5px;
+  right: 15px;
+}
+
+.mymessagebodymaindiv {
+  width: 89%;
+  display: flex;
+  justify-content: end;
+  position: relative;
+  margin-bottom: 25px;
+}
+
+.myMessagebody {
+  display: flex;
+  flex-direction: column;
+  background-color: #ffd8b8;
+  /* max-width: 80%; */
+  min-width: 25%;
+  font-size: 16px;
+  color: #000;
+  padding: 7px 15px 7px 25px;
+  border-radius: 20px 20px 0px 20px;
+  line-break: anywhere;
+  position: relative;
+  /* padding-left: 30px; */
+}
+
+.arrowdownmess {
+  position: absolute;
+  left: 0;
+  top: 0;
+  cursor: pointer;
+  width: fit-content;
+  opacity: 0;
+}
+
+.myMessagebody:hover .arrowdownmess {
+  opacity: 1;
+}
+
+.myFilebody {
+  display: flex;
+  max-width: 100%;
+  min-width: 1%;
+  font-size: 18px;
+  color: white;
+  padding: 2px;
+  border-radius: 1px 0px 1px 1px;
+  width: 180px;
+}
+
+.replyOfMyFilebody {
+  display: flex;
+  max-height: 100px;
+  min-width: 1%;
+  font-size: 18px;
+  color: white;
+  padding: 2px;
+  border-radius: 1px 0px 1px 1px;
+  width: auto;
+}
+
+.yourFilebody {
+  display: flex;
+  background-color: #0040b6;
+  max-width: 100%;
+  min-width: 1%;
+  font-size: 18px;
+  color: white;
+  padding: 2px;
+  border-radius: 1px 0px 1px 1px;
+  margin-bottom: 25px;
+  width: 180px;
+  pointer-events: auto !important;
+  z-index: 1;
+}
+
+.listTable12 {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  border: 1px solid #b9b9b9;
+  border-radius: 12px;
+  height: 574px;
+  overflow: scroll;
+  height: 100%;
+}
+
+@media (max-width: 1400px) {
+  .yourmessage {
+    width: 75%;
+  }
+
+  .mymessage {
+    width: 75%;
+  }
+}
+
+@media (max-width: 1200px) {
+  .yourmessage {
+    width: 85%;
+  }
+
+  .mymessage {
+    width: 85%;
+  }
+}
+
+@media (max-width: 1000px) {
+  .yourmessage {
+    width: 95%;
+  }
+
+  .mymessage {
+    width: 95%;
+  }
+}
+
+@media (max-width: 700px) {
+  .yourmessage {
+    width: 100%;
+  }
+
+  .yourmessagename {
+    font-size: 14px;
+  }
+
+  .mymessage {
+    width: 100%;
+  }
+
+  .yourMessagebody {
+    max-width: 100%;
+    font-size: 13px;
+  }
+
+  .myMessagebody {
+    max-width: 100%;
+    font-size: 13px;
+  }
+
+  .yourFilebody {
+    max-width: 100%;
+  }
+
+  .myFilebody {
+    max-width: 100%;
+  }
+
+  .replyOfMyFilebody {
+    max-height: 100px;
+    width: auto;
+  }
+}
+
+.messagebackbutton {
+  padding: 10px;
+  font-size: 15px;
+  background-color: #ffb9ca;
+  color: gray;
+  border: none;
+  border-radius: 50px;
+  font-weight: 600;
+}
+
+@media (max-width: 1150px) {}
+
+.fileUploadContainer {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+}
+
+.fileLabel {
+  cursor: pointer;
+  position: relative;
+}
+
+.fileLabel i {
+  font-size: 24px;
+  /* Adjust the icon size as needed */
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: transparent;
+  pointer-events: none;
+  /* Allow clicks to pass through to the input */
+}
+
+/* Hide the "Choose File" and "No file chosen" text */
+.fileInput {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.selectedGroup {
+  background-color: #fb894969;
+  /* Highlighted background */
+  border-left: 4px solid #f37e20;
+  /* Blue indicator line */
+  transition: background-color 0.3s ease;
+  color: #000000 !important;
+}
+
+/* styles/planning.module.css or any global CSS file */
+.blinkingGreen {
+  display: flex;
+  gap: 10px;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: end;
+  color: green;
+  /* font-weight: 900; */
+  /* margin: 0; */
+  animation: blink-animation 1s steps(2, start) infinite;
+}
+
+.callTodoBtn {
+  display: flex;
+  gap: 3px;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: end;
+  /* color: green; */
+  /* font-weight: 900; */
+  /* margin: 0; */
+  /* animation: blink-animation 1s steps(2, start) infinite; */
+  color: #7f8384;
+  font-size: 13px;
+}
+
+@keyframes blink-animation {
+  to {
+    visibility: hidden;
+  }
+}
