@@ -169,7 +169,7 @@ const initializeFirebase = async (
 
   if (registrationTokens.length > 0) {
     try {
-      await messaging.sendEachForMulticast(message).then((response: any) => {
+      await messaging.sendEachForMulticast(message).then(async (response: any) => {
         console.log("Firebase Message sent successfully", {
           successCount: response.successCount,
           failureCount: response.failureCount,
