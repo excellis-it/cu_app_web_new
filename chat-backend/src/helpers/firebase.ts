@@ -175,15 +175,37 @@ const initializeFirebase = async (
           failureCount: response.failureCount,
         });
         if (response.failureCount > 0) {
+          const staleTokenErrors = new Set([
+            "messaging/registration-token-not-registered",
+            "messaging/invalid-registration-token",
+          ]);
+          const cleanupPromises: Promise<any>[] = [];
           response.responses.forEach((r: any, i: number) => {
             if (!r.success) {
+              const code = r.error?.code;
               console.warn(`Firebase FCM failure for token[${i}]:`, {
-                errorCode: r.error?.code,
+                errorCode: code,
                 errorMessage: r.error?.message,
                 token: registrationTokens[i]?.slice(0, 20) + "...",
               });
+              if (staleTokenErrors.has(code)) {
+                // Token is permanently invalid — remove it from the DB so it
+                // doesn't fail on every subsequent notification
+                const staleToken = registrationTokens[i];
+                cleanupPromises.push(
+                  USERS.updateOne(
+                    { firebaseToken: staleToken },
+                    { $unset: { firebaseToken: "" } }
+                  ).then(() => {
+                    console.log(`[FCM] Removed stale token from DB: ${staleToken?.slice(0, 20)}...`);
+                  }).catch((err: any) => {
+                    console.error("[FCM] Failed to remove stale token from DB:", err);
+                  })
+                );
+              }
             }
           });
+          if (cleanupPromises.length > 0) await Promise.all(cleanupPromises);
         }
       });
     } catch (error) {
