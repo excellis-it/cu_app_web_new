@@ -63,7 +63,11 @@ class ClassPush {
         try {
           const userData: any = await USERS.findById(rid).lean();
           if (!userData?.webPushToken) {
-            console.log(`⏭️ [WebPush] User ${rid} has no webPushToken saved - skipping`);
+            if (userData?.firebaseToken) {
+              console.log(`⏭️ [WebPush] User ${rid} has no webPushToken - relying on FCM fallback`);
+            } else {
+              console.log(`⏭️ [WebPush] User ${rid} has no webPushToken and no firebaseToken - skipping`);
+            }
             return;
           }
 

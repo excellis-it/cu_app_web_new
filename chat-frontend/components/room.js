@@ -1062,9 +1062,13 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       if (local) {
         const audioTrack = local.getAudioTracks()[0];
         const videoTrack = local.getVideoTracks()[0];
+        const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+        const isSafariBrowser =
+          /Safari/i.test(ua) && !/Chrome|Chromium|Edg|CriOS|FxiOS/i.test(ua);
         console.log("[room.js] local tracks before produce", {
           hasAudio: !!audioTrack,
           hasVideo: !!videoTrack,
+          isSafariBrowser,
         });
         if (audioTrack) {
           audioProducerRef.current = await sendTransport.produce({
@@ -1077,16 +1081,20 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
         // For pure audio calls, do not create a video producer so that
         // no video track is broadcast to other participants.
         if (videoTrack && !isAudioOnlyCall) {
-          const videoEncodings = [
-            {
-              maxBitrate: 300_000,
-              scalabilityMode: "L1T2",
-            },
-            {
-              maxBitrate: 1_200_000,
-              scalabilityMode: "L1T3",
-            },
-          ];
+          // Safari is sensitive to some simulcast/scalability combinations;
+          // keep it on single encoding to reduce freezes and A/V breakups.
+          const videoEncodings = isSafariBrowser
+            ? undefined
+            : [
+              {
+                maxBitrate: 300_000,
+                scalabilityMode: "L1T2",
+              },
+              {
+                maxBitrate: 1_200_000,
+                scalabilityMode: "L1T3",
+              },
+            ];
 
           videoProducerRef.current = await sendTransport.produce({
             track: videoTrack,

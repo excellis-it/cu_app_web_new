@@ -318,6 +318,7 @@ export default function initializeSocket() {
       let error = false;
       try {
         const clients = await io.in(roomId).allSockets();
+        const isCallInitiatorJoin = clients.size === 1;
         clients.forEach((client) => {
           if (socketList[client]?.userName === userName) {
             error = true;
@@ -456,20 +457,20 @@ export default function initializeSocket() {
         }
 
 
-        const groups = await Group.find({ _id: roomId, })
+        const groups = await Group.find({ _id: roomId, });
 
-        if (groups && groups[0].currentUsers) {
+        // Only the very first participant joining a room should trigger outgoing
+        // incoming_call/waiting_call/push fanout. This avoids duplicate ringing
+        // and race conditions when later participants join.
+        if (isCallInitiatorJoin && groups && groups[0].currentUsers) {
           groups[0].currentUsers.forEach(async (uid: any) => {
             const connectedSockets = io.sockets.adapter.rooms.get(uid.toString()) || [];
             if (connectedSockets) {
               let checkUser = await videoCall.find({ groupId: roomId, userActivity: { $elemMatch: { "user": uid, "status": "joined" } } });
-
               let Check_user = await USERS.find({ _id: uid });
               let check_incomming_call = await videoCall.find({ groupId: roomId, status: "active" });
 
-
               if (checkUser.length < 1) {
-
                 console.log(`[Socket] Checking user ${uid}: isActiveInCall=${Check_user[0]?.isActiveInCall}`);
 
                 if (!Check_user[0].isActiveInCall && !check_incomming_call[0]?.incommingCall) {
@@ -479,18 +480,18 @@ export default function initializeSocket() {
                     connectedSockets.forEach(socketId => {
                       socket.broadcast.to(socketId).emit("incomming_call", {
                         uid,
-                        socketId: socket.id, // Caller’s socket
+                        socketId: socket.id,
                         roomId,
                         groupName: groups[0].groupName,
                         groupImage: groups[0]?.groupImage ? groups[0].groupImage : null,
                         callerName: fullName,
                         callType: callType,
                       });
-
                     });
 
-                    if (checkUser[0]?._id.toString() !== userName.toString()) {
-                      let applepushData = sendApplePush({
+                    // Do not call toString() on possibly-undefined checkUser[0]?._id
+                    if ((checkUser[0]?._id?.toString?.() || "") !== userName.toString()) {
+                      sendApplePush({
                         deviceToken: Check_user[0]?.applePushToken ?? "",
                         fullName,
                         groupName: groups[0].groupName,
@@ -499,17 +500,15 @@ export default function initializeSocket() {
                         userId: userName
                       });
                     }
-
                   }
                 } else if (Check_user[0].isActiveInCall) {
                   console.log(`[Socket] User ${uid} is busy. Sending waiting_call.`);
                   if (groups[0].isTemp == false) {
                     connectedSockets.forEach(socketId => {
                       console.log(`[Socket] Emitting waiting_call to ${socketId}`);
-                      // Use io.to() to ensure delivery
                       io.to(socketId).emit("waiting_call", {
                         uid,
-                        socketId: socket.id, // Caller’s socket
+                        socketId: socket.id,
                         roomId,
                         groupName: groups[0].groupName,
                         groupImage: groups[0]?.groupImage ? groups[0].groupImage : null,
@@ -521,16 +520,8 @@ export default function initializeSocket() {
                   }
                 }
               }
-
-
-
             }
           });
-
-        }
-
-        let checkFirebase = await videoCall.find({ groupId: roomId, status: "active" });
-        if (!checkFirebase[0]?.incommingCall) {
 
           if (groups[0].isTemp == false) {
             initializeFirebase(
@@ -542,8 +533,6 @@ export default function initializeSocket() {
               callType,
               [],
               "null"
-
-
             );
 
             const recipients: string[] = groups[0].currentUsers
@@ -557,10 +546,7 @@ export default function initializeSocket() {
               roomId,
               "incomming_call"
             );
-
-
           } else {
-            // meeting ongoing notification to users
             initializeFirebase(
               groups[0].currentUsers.filter((uid: any) => uid.toString() !== userName.toString()),
               `${groups[0].groupName}`,

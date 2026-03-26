@@ -62,6 +62,15 @@ const GroupMessage = () => {
       setProgress(percentCompleted);
     },
   };
+  const urlBase64ToUint8Array = (base64String) => {
+    if (typeof base64String !== "string") {
+      throw new Error("Invalid base64 string input");
+    }
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const rawData = atob(base64);
+    return new Uint8Array([...rawData].map((char) => char.charCodeAt(0)));
+  };
   const [modifiedMsgs, setModifiedMsgs] = useState([]);
   const [isHidden, setIsHidden] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
@@ -176,6 +185,7 @@ const GroupMessage = () => {
 
   // Waiting calls state
   const [waitingCalls, setWaitingCalls] = useState([]);
+  const webPushSyncInFlightRef = useRef(false);
 
   // Guest Meeting State
   const [showGuestMeetingModal, setShowGuestMeetingModal] = useState(false);
@@ -844,6 +854,69 @@ const GroupMessage = () => {
       router.push("/login");
     }
   }, [globalUser, authLoading]);
+
+  useEffect(() => {
+    const syncWebPushToken = async () => {
+      if (!globalUser?.data?.token || !globalUser?.data?.user?._id) return;
+      if (webPushSyncInFlightRef.current) return;
+
+      const PUBLIC_VAPID_KEY = process.env.NEXT_PUBLIC_WEB_PUSH_PUBLIC_KEY;
+      const isSecureContextNow =
+        window.isSecureContext ||
+        window.location.protocol === "https:" ||
+        window.location.hostname === "localhost";
+
+      if (!PUBLIC_VAPID_KEY || !isSecureContextNow) return;
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+
+      webPushSyncInFlightRef.current = true;
+      try {
+        const registration = await navigator.serviceWorker.register("/sw.js");
+        let subscription = await registration.pushManager.getSubscription();
+
+        if (!subscription) {
+          const permission = await Notification.requestPermission();
+          if (permission !== "granted") return;
+          subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(PUBLIC_VAPID_KEY),
+          });
+        }
+
+        if (!subscription) return;
+        const newWebPushToken = JSON.stringify(subscription);
+        const currentWebPushToken = globalUser?.data?.user?.webPushToken || "";
+        if (newWebPushToken === currentWebPushToken) return;
+
+        const tokenConfig = {
+          headers: { "access-token": globalUser?.data?.token },
+        };
+        const formData = new FormData();
+        formData.append("webPushToken", newWebPushToken);
+        await axios.post("/api/users/update-user", formData, tokenConfig);
+
+        const updatedUserState = {
+          ...globalUser,
+          data: {
+            ...globalUser.data,
+            user: {
+              ...globalUser.data.user,
+              webPushToken: newWebPushToken,
+            },
+          },
+        };
+        setGlobalUser(updatedUserState);
+        localStorage.setItem("user", JSON.stringify(updatedUserState));
+      } catch (err) {
+        console.warn("[Push] webPushToken sync failed:", err);
+      } finally {
+        webPushSyncInFlightRef.current = false;
+      }
+    };
+
+    syncWebPushToken();
+  }, [globalUser?.data?.token, globalUser?.data?.user?._id]);
+
   useEffect(() => {
     deleteMsg();
   }, [delMsg]);
