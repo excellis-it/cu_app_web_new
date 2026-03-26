@@ -22,7 +22,7 @@ const IncomingCallButton = ({ socketRef, user_name, userId }) => {
   useEffect(() => {
     if (!socketRef.current) return;
 
-    socketRef?.current.on("incomming_call", async (data) => {
+    const handleIncomingCall = async (data) => {
       const userStorage = localStorage.getItem('user');
       const token = userStorage ? JSON.parse(userStorage).data?.token : '';
       const response = await fetch(`/api/groups/check-active-call?group_id=${data.roomId}`, {
@@ -49,22 +49,27 @@ const IncomingCallButton = ({ socketRef, user_name, userId }) => {
       timeoutRef.current = setTimeout(() => {
         stopCall();
       }, 1000 * 30); // Example: 30 seconds
-    });
+    };
 
-    socketRef?.current.on("FE-call-ended", (data) => {
+    const handleCallEnded = (data) => {
       stopCall();
-    })
+    };
+
+    socketRef?.current.on("incomming_call", handleIncomingCall);
+    socketRef?.current.on("FE-call-ended", handleCallEnded);
 
     return () => {
-      socketRef.current.off("incomming_call");
+      socketRef.current.off("incomming_call", handleIncomingCall);
+      socketRef.current.off("FE-call-ended", handleCallEnded);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      stopRingtone();
     };
   }, [socketRef.current]);
 
 
 
   useEffect(() => {
-    socketRef?.current?.on("FE-error-user-exist", ({ error, roomId, callType }) => {
+    const handleUserExist = ({ error, roomId, callType }) => {
       let callStatus = sessionStorage.getItem("callStatus");
       if (
         !error &&
@@ -85,7 +90,13 @@ const IncomingCallButton = ({ socketRef, user_name, userId }) => {
         setErr(error);
         setErrMsg("User name already exist");
       }
-    });
+    };
+
+    socketRef?.current?.on("FE-error-user-exist", handleUserExist);
+
+    return () => {
+      socketRef?.current?.off("FE-error-user-exist", handleUserExist);
+    };
   }, [incomingCall]);
 
   async function clickJoin() {
@@ -136,17 +147,19 @@ const IncomingCallButton = ({ socketRef, user_name, userId }) => {
 
   const playRingtone = () => {
     try {
-      const audio = new Audio("/ringtone.mp3"); // Add a ringtone file in your public folder
-      audio.loop = true;
-      const playPromise = audio.play();
+      // Reuse one Audio instance to avoid overlapping loops from duplicate events.
+      if (!ringtoneRef.current) {
+        ringtoneRef.current = new Audio("/ringtone.mp3");
+        ringtoneRef.current.loop = true;
+      }
+      const playPromise = ringtoneRef.current.play();
       if (playPromise && typeof playPromise.catch === "function") {
         playPromise.catch((err) => {
           // Autoplay may be blocked until user interacts; log and continue.
           console.warn("Ringtone play blocked or failed:", err?.name || err);
         });
       }
-      ringtoneRef.current = audio;
-      setIncomingCall((prev) => ({ ...prev, ringtone: audio }));
+      setIncomingCall((prev) => ({ ...prev, ringtone: ringtoneRef.current }));
     } catch (e) {
       console.warn("Failed to start ringtone:", e);
     }
@@ -157,7 +170,6 @@ const IncomingCallButton = ({ socketRef, user_name, userId }) => {
     if (audio) {
       audio.pause();
       audio.currentTime = 0;
-      ringtoneRef.current = null; // Clear it out
     } else {
       console.log("No ringtone to stop.");
     }
