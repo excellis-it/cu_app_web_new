@@ -592,7 +592,7 @@ const GroupMessage = () => {
       text: "You want to logout?",
       // icon: 'warning',
       showCancelButton: true,
-      confirmButtonColor: "#f37e20",
+      confirmButtonColor: "#1da678",
       cancelButtonText: "Cancel",
       confirmButtonText: "Yes, logout",
       reverseButtons: true,
@@ -602,7 +602,7 @@ const GroupMessage = () => {
         const cancelBtn = document.querySelector(".swal2-cancel");
 
         if (confirmBtn) {
-          confirmBtn.style.backgroundColor = "#ef6f1f";
+          confirmBtn.style.backgroundColor = "#1da678";
           confirmBtn.style.color = "#fff";
           confirmBtn.style.border = "none";
           confirmBtn.style.borderRadius = "30px";
@@ -3260,21 +3260,21 @@ const GroupMessage = () => {
       text: "You won't be able to revert this!",
       // icon: 'warning',
       showCancelButton: true,
-      confirmButtonColor: "#f37e20",
-      cancelButtonColor: "#ff8500",
+      confirmButtonColor: "#1da678",
+      cancelButtonColor: "#1da678",
       confirmButtonText: "Yes, delete it!",
       didOpen: () => {
         const confirmBtn = document.querySelector(".swal2-confirm");
         const cancelBtn = document.querySelector(".swal2-cancel");
 
         if (confirmBtn) {
-          confirmBtn.style.backgroundColor = "#f37e20";
+          confirmBtn.style.backgroundColor = "#1da678";
           confirmBtn.style.color = "#fff";
           confirmBtn.style.border = "none";
         }
 
         if (cancelBtn) {
-          cancelBtn.style.backgroundColor = "#ff8500";
+          cancelBtn.style.backgroundColor = "#1da678";
           cancelBtn.style.color = "#fff";
           cancelBtn.style.border = "none";
         }
@@ -4250,10 +4250,10 @@ const GroupMessage = () => {
                             className={`btn ${scheduledMeetings ? "btn-dark" : "btn-success"}`}
                             style={{
                               backgroundColor: scheduledMeetings
-                                ? "#f37e20"
-                                : "#ffffff",
-                              border: "solid 1px #000000",
-                              color: scheduledMeetings ? "#fff" : "#000000",
+                                ? "#1da678"
+                                : "#198754",
+                              // border: "solid 1px #000000",
+                              color: "#fff",
                               width: "48%",
                             }}
                           >
@@ -4268,10 +4268,10 @@ const GroupMessage = () => {
                             className={`btn ${pastMeetings ? "btn-dark" : "btn-success"}`}
                             style={{
                               backgroundColor: pastMeetings
-                                ? "#f37e20"
-                                : "#ffffff",
-                              border: "solid 1px #000000",
-                              color: pastMeetings ? "#fff" : "#000000",
+                                ? "#1da678"
+                                : "#198754",
+                              // border: "solid 1px #000000",
+                              color: "#fff",
                               width: "48%",
                             }}
                           >
@@ -4645,7 +4645,7 @@ const GroupMessage = () => {
                   </div>
                 </div>
               </div>
-              <p
+              {/* <p
                 className="text-center"
                 style={{
                   fontSize: "10px",
@@ -4663,7 +4663,7 @@ const GroupMessage = () => {
                 >
                   ExcellisIT
                 </a>
-              </p>
+              </p> */}
             </>
           </div>
         </div>

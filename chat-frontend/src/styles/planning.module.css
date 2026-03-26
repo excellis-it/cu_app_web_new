@@ -1237,7 +1237,7 @@
 }
 
 .listdiv1:hover {
-  background: #fb894969;
+  background: #29da9f69;
   color: #000000 !important;
 }
 
@@ -3219,9 +3219,9 @@
 }
 
 .selectedGroup {
-  background-color: #fb894969;
+  background-color: #29da9f69;
   /* Highlighted background */
-  border-left: 4px solid #f37e20;
+  border-left: 4px solid #1c926b;
   /* Blue indicator line */
   transition: background-color 0.3s ease;
   color: #000000 !important;

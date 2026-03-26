@@ -1,12 +1,5 @@
 import React, { useRef, useState, useEffect } from "react";
-import {
-  Button,
-  Modal,
-  IconButton,
-  Box,
-  Paper,
-  Avatar,
-} from "@mui/material";
+import { Button, Modal, IconButton, Box, Paper, Avatar } from "@mui/material";
 import {
   Mic as MicIcon,
   MicOff as MicOffIcon,
@@ -16,7 +9,14 @@ import {
 } from "@mui/icons-material";
 import { createDummyMediaStream } from "../utils/createDummyMediaStream";
 
-const CallButton = ({ user_id, group_id, socketRef, user_name, onStartCall, renderTrigger }) => {
+const CallButton = ({
+  user_id,
+  group_id,
+  socketRef,
+  user_name,
+  onStartCall,
+  renderTrigger,
+}) => {
   const [open, setOpen] = useState(false);
   const [micOn, setMicOn] = useState(true);
   const [cameraOn, setCameraOn] = useState(true);
@@ -102,14 +102,18 @@ const CallButton = ({ user_id, group_id, socketRef, user_name, onStartCall, rend
     const userInActiveCall = sessionStorage.getItem("userInActiveCall");
     const activeCallId = sessionStorage.getItem("activeCallId");
 
-    if (userInActiveCall === "true" && activeCallId && activeCallId !== group_id.toString()) {
+    if (
+      userInActiveCall === "true" &&
+      activeCallId &&
+      activeCallId !== group_id.toString()
+    ) {
       // User is in a different call
-      const { default: Swal } = await import('sweetalert2');
+      const { default: Swal } = await import("sweetalert2");
       Swal.fire({
-        title: 'Already in a Call',
-        text: 'You are already in an active call. Please end the current call before joining another one.',
-        confirmButtonText: 'OK',
-        confirmButtonColor: '#f37e20 !important'
+        title: "Already in a Call",
+        text: "You are already in an active call. Please end the current call before joining another one.",
+        confirmButtonText: "OK",
+        confirmButtonColor: "#f37e20 !important",
       });
       return;
     }
@@ -173,14 +177,18 @@ const CallButton = ({ user_id, group_id, socketRef, user_name, onStartCall, rend
     const userInActiveCall = sessionStorage.getItem("userInActiveCall");
     const activeCallId = sessionStorage.getItem("activeCallId");
 
-    if (userInActiveCall === "true" && activeCallId && activeCallId !== group_id.toString()) {
+    if (
+      userInActiveCall === "true" &&
+      activeCallId &&
+      activeCallId !== group_id.toString()
+    ) {
       // User is in a different call
-      const { default: Swal } = await import('sweetalert2');
+      const { default: Swal } = await import("sweetalert2");
       Swal.fire({
-        title: 'Already in a Call',
-        text: 'You are already in an active call. Please end the current call before joining another one.',
-        confirmButtonText: 'OK',
-        confirmButtonColor: '#f37e20 !important'
+        title: "Already in a Call",
+        text: "You are already in an active call. Please end the current call before joining another one.",
+        confirmButtonText: "OK",
+        confirmButtonColor: "#f37e20 !important",
       });
       return;
     }
@@ -210,10 +218,11 @@ const CallButton = ({ user_id, group_id, socketRef, user_name, onStartCall, rend
           headers: {
             "access-token": token,
           },
-        }
+        },
       );
 
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      if (!response.ok)
+        throw new Error(`HTTP error! status: ${response.status}`);
       const data = await response.json();
 
       if (data.success && data.data && data.data.activeCall) {
@@ -290,7 +299,6 @@ const CallButton = ({ user_id, group_id, socketRef, user_name, onStartCall, rend
 
   // handelState removed as it was only used for Room onClose
 
-
   console.warn("calltype ===>>>", callType);
 
   return (
@@ -303,8 +311,9 @@ const CallButton = ({ user_id, group_id, socketRef, user_name, onStartCall, rend
           color={activeCall ? "success" : "primary"}
           title={
             activeCall
-              ? `Join ongoing call (${participantCount} participant${participantCount !== 1 ? "s" : ""
-              })`
+              ? `Join ongoing call (${participantCount} participant${
+                  participantCount !== 1 ? "s" : ""
+                })`
               : "Start a new call"
           }
         >
@@ -340,7 +349,7 @@ const CallButton = ({ user_id, group_id, socketRef, user_name, onStartCall, rend
           </Box>
         </IconButton>
       ) : (
-        <Box sx={{ display: "inline-flex", gap: 1 }} >
+        <Box sx={{ display: "inline-flex", gap: 1 }}>
           <Box className="border-right-chat">
             <IconButton onClick={opencallModal} color="primary">
               <CallIcon style={{ color: "#64779a" }} />
@@ -418,7 +427,7 @@ const CallButton = ({ user_id, group_id, socketRef, user_name, onStartCall, rend
             startIcon={<CallIcon />}
             onClick={clickJoin}
             style={{
-              backgroundColor: "#f37e20",
+              backgroundColor: "#1da678",
               color: "white",
               marginTop: "16px",
               borderRadius: "30px",
