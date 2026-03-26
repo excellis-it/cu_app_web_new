@@ -235,6 +235,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
           setRemotePeers(Object.entries(remoteStreamsRef.current).map(([uid, s]) => ({ userId: uid, stream: s })));
           console.log("[room.js] fetchAndConsumeProducers: consumed producer for", newPeerUserId);
         } catch (err) {
+          consumedProducerIdsRef.current.delete(p.producerId); // allow retry on failure
           console.error("[room.js] Error consuming producer in fallback:", err);
         }
       }
@@ -917,6 +918,10 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       }
 
       consumedProducerIdsRef.current.clear(); // reset on each mediasoup init (handles reconnects)
+      sendTransportRef.current = null; // invalidate stale refs so old retries don't pass readiness check
+      recvTransportRef.current = null;
+      deviceRef.current = null;
+      if (socket) { socket.mediasoupDevice = null; socket.mediasoupRecvTransport = null; }
       console.log("[room.js] initializeMediasoup start", {
         roomId,
         userId,
@@ -1143,6 +1148,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
               keys: Object.keys(remoteStreamsRef.current),
             });
           } catch (err) {
+            consumedProducerIdsRef.current.delete(p.producerId); // allow retry on failure
             console.error("Error consuming existing producer:", err);
           }
         }
@@ -1204,6 +1210,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             keys: Object.keys(remoteStreamsRef.current),
           });
         } catch (err) {
+          consumedProducerIdsRef.current.delete(producerId); // allow retry on failure
           console.error("Error consuming remote producer:", err);
         }
       });
