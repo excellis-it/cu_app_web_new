@@ -119,16 +119,14 @@ const initializeFirebase = async (
         },
       },
     },
-    content_available: true,
-
     data: {
-      title, // Notification title
-      body,
-      grp: groupId.toString(), // Custom data field for grp (groupId), must be a string
-      msgType: msgType, //
-      callType: callType ? callType : '', // Custom data field for callType
-      allrecipants: allrecipants ? JSON.stringify(allrecipants) : [], // Custom data field for allrecipants
-      msgId: msgId ? msgId.toString() : 'null', // Custom data field for msgId, must be a string
+      title,
+      body: typeof body === "string" ? body : JSON.stringify(body),
+      grp: groupId.toString(),
+      msgType: msgType,
+      callType: callType ? callType : '',
+      allrecipants: allrecipants ? JSON.stringify(allrecipants) : '[]',
+      msgId: msgId ? msgId.toString() : 'null',
     },
     tokens: registrationTokens, // List of registration tokens
   } : {
@@ -139,7 +137,6 @@ const initializeFirebase = async (
     android: {
       priority: "high",
       notification: {
-
         sound: "default", // Android sound
       }
     },
@@ -153,16 +150,14 @@ const initializeFirebase = async (
         },
       },
     },
-    content_available: true,
-
     data: {
-      title, // Notification title
-      body,
-      grp: groupId.toString(), // Custom data field for grp (groupId), must be a string
-      msgType: msgType, //
-      callType: callType ? callType : '', // Custom data field for callType
-      allrecipants: allrecipants ? JSON.stringify(allrecipants) : [], // Custom data field for allrecipants
-      msgId: msgId ? msgId.toString() : 'null', // Custom data field for msgId, must be a string
+      title,
+      body: typeof body === "string" ? body : JSON.stringify(body),
+      grp: groupId.toString(),
+      msgType: msgType,
+      callType: callType ? callType : '',
+      allrecipants: allrecipants ? JSON.stringify(allrecipants) : '[]',
+      msgId: msgId ? msgId.toString() : 'null',
     },
     tokens: registrationTokens, // List of registration tokens
   };
@@ -175,7 +170,21 @@ const initializeFirebase = async (
   if (registrationTokens.length > 0) {
     try {
       await messaging.sendEachForMulticast(message).then((response: any) => {
-        console.log("Firebase Message sent successfully", response, response.error);
+        console.log("Firebase Message sent successfully", {
+          successCount: response.successCount,
+          failureCount: response.failureCount,
+        });
+        if (response.failureCount > 0) {
+          response.responses.forEach((r: any, i: number) => {
+            if (!r.success) {
+              console.warn(`Firebase FCM failure for token[${i}]:`, {
+                errorCode: r.error?.code,
+                errorMessage: r.error?.message,
+                token: registrationTokens[i]?.slice(0, 20) + "...",
+              });
+            }
+          });
+        }
       });
     } catch (error) {
       console.log(error);

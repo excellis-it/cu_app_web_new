@@ -65,6 +65,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
   const videoProducerRef = useRef(null);
   const remoteStreamsRef = useRef({}); // userId -> MediaStream
   const consumedProducerIdsRef = useRef(new Set()); // track consumed producerIds to prevent duplicates
+  const callGenRef = useRef(0); // incremented each time initializeMediasoup runs; stale retries self-invalidate
   const [remotePeers, setRemotePeers] = useState([]); // [{ userId, stream }]
 
   const userVideoRef = useRef();
@@ -158,7 +159,12 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
   }
 
   // Fallback: fetch and consume producers for a newly joined peer (in case MS-new-producer was missed)
-  const fetchAndConsumeProducersForNewPeer = async (rId, myUserId, newPeerUserId, retryCount = 0) => {
+  const fetchAndConsumeProducersForNewPeer = async (rId, myUserId, newPeerUserId, retryCount = 0, callGen = callGenRef.current) => {
+    // Abort if a new call has started since this retry chain was created
+    if (callGenRef.current !== callGen) {
+      console.log("[room.js] fetchAndConsumeProducers: stale call gen, aborting", { callGen, current: callGenRef.current });
+      return;
+    }
     const socket = socketRef.current;
     // Use refs first; fall back to socket-stored (survives Room remounts)
     const device = deviceRef.current || socket?.mediasoupDevice;
@@ -177,7 +183,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
           attempt: retryCount + 1,
           max: 15,
         });
-        setTimeout(() => fetchAndConsumeProducersForNewPeer(rId, myUserId, newPeerUserId, retryCount + 1), 1000);
+        setTimeout(() => fetchAndConsumeProducersForNewPeer(rId, myUserId, newPeerUserId, retryCount + 1, callGen), 1000);
       }
       return;
     }
@@ -917,6 +923,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
         return;
       }
 
+      callGenRef.current++; // invalidate any pending retries from the previous call
       consumedProducerIdsRef.current.clear(); // reset on each mediasoup init (handles reconnects)
       sendTransportRef.current = null; // invalidate stale refs so old retries don't pass readiness check
       recvTransportRef.current = null;
