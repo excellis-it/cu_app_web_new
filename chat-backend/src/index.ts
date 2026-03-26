@@ -35,15 +35,20 @@ const corsOptions: any = {
     "http://localhost:6000",
     "http://69.62.84.25:10016",
     "http://69.62.84.25:10017",
+    "http://103.121.157.203:10016",
+    "http://103.121.157.203:10017",
     "http://localhost:10016",
     "http://localhost:10017",
     "http://69.62.84.25:10018",
+    "http://103.121.157.203:10018",
     "https://extalk.excellisit.net",  // Production frontend domain
     "https://extalkapi.excellisit.net", // Production API domain (for Socket.io handshake)
     "https://extalk.excellisit.net/guest-meeting",
     "https://extalk.excellisit.net/guest-meeting/",
     "http://69.62.84.25:10016/guest-meeting",
     "http://69.62.84.25:10016/guest-meeting/",
+    "http://103.121.157.203:10016/guest-meeting",
+    "http://103.121.157.203:10016/guest-meeting/",
 
   ],
   methods: "GET,PUT,POST,DELETE,EMIT",

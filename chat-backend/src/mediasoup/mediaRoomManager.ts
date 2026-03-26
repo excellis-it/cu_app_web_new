@@ -71,6 +71,10 @@ export async function getOrCreateRoom(roomId: string): Promise<RoomState> {
   return room;
 }
 
+export function getRoom(roomId: string): RoomState | undefined {
+  return rooms.get(roomId);
+}
+
 export async function addPeer(roomId: string, userId: string): Promise<PeerState> {
   const room = await getOrCreateRoom(roomId);
   let peer = room.peers.get(userId);
