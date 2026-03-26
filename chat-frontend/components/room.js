@@ -215,6 +215,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             kind: consumeInfo.kind,
             rtpParameters: consumeInfo.rtpParameters,
           });
+          console.log("[room.js] consumer track state (retry)", { kind: consumer.kind, paused: consumer.paused, trackMuted: consumer.track.muted, trackReadyState: consumer.track.readyState });
           const kind = consumeInfo.kind || p.kind;
           let existingStream = remoteStreamsRef.current[newPeerUserId];
           if (!existingStream) existingStream = new MediaStream();
@@ -988,6 +989,9 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       });
 
       sendTransportRef.current = sendTransport;
+      sendTransport.on("connectionstatechange", (state) => {
+        console.log("[room.js] sendTransport connectionstatechange", state);
+      });
 
       // 4) Create recv transport
       let recvInfo;
@@ -1029,6 +1033,9 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       });
 
       recvTransportRef.current = recvTransport;
+      recvTransport.on("connectionstatechange", (state) => {
+        console.log("[room.js] recvTransport connectionstatechange", state);
+      });
       socket.mediasoupRecvTransport = recvTransport; // Persist on socket for fetchAndConsumeProducers (survives remounts)
 
       // 5) Produce local tracks
@@ -1096,6 +1103,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
               kind: consumeInfo.kind,
               rtpParameters: consumeInfo.rtpParameters,
             });
+            console.log("[room.js] consumer track state (existing)", { kind: consumer.kind, paused: consumer.paused, trackMuted: consumer.track.muted, trackReadyState: consumer.track.readyState });
 
             // Merge audio/video tracks per remote user
             const kind = consumeInfo.kind || p.kind;
@@ -1152,6 +1160,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             kind: consumeInfo.kind,
             rtpParameters: consumeInfo.rtpParameters,
           });
+          console.log("[room.js] consumer track state (new-producer)", { kind: consumer.kind, paused: consumer.paused, trackMuted: consumer.track.muted, trackReadyState: consumer.track.readyState });
 
           const trackKind = consumeInfo.kind || kind;
           let existingStream = remoteStreamsRef.current[remoteUserId];
