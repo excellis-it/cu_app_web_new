@@ -64,6 +64,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
   const audioProducerRef = useRef(null);
   const videoProducerRef = useRef(null);
   const remoteStreamsRef = useRef({}); // userId -> MediaStream
+  const consumedProducerIdsRef = useRef(new Set()); // track consumed producerIds to prevent duplicates
   const [remotePeers, setRemotePeers] = useState([]); // [{ userId, stream }]
 
   const userVideoRef = useRef();
@@ -199,6 +200,11 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       if (forPeer.length === 0) return;
       for (const p of forPeer) {
         try {
+          if (consumedProducerIdsRef.current.has(p.producerId)) {
+            console.log("[room.js] fetchAndConsumeProducers: skipping duplicate producer", p.producerId);
+            continue;
+          }
+          consumedProducerIdsRef.current.add(p.producerId);
           console.log("[room.js] fetchAndConsumeProducers: consuming producer", {
             producerId: p.producerId,
             kind: p.kind,
@@ -910,6 +916,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
         return;
       }
 
+      consumedProducerIdsRef.current.clear(); // reset on each mediasoup init (handles reconnects)
       console.log("[room.js] initializeMediasoup start", {
         roomId,
         userId,
@@ -1089,6 +1096,11 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
 
         for (const p of existing) {
           try {
+            if (consumedProducerIdsRef.current.has(p.producerId)) {
+              console.log("[room.js] existing producers: skipping duplicate producer", p.producerId);
+              continue;
+            }
+            consumedProducerIdsRef.current.add(p.producerId);
             const consumeInfo = await callService.consume(socket, {
               roomId,
               userId,
@@ -1146,6 +1158,11 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             remoteUserId,
             kind,
           });
+          if (consumedProducerIdsRef.current.has(producerId)) {
+            console.log("[room.js] MS-new-producer: skipping duplicate producer", producerId);
+            return;
+          }
+          consumedProducerIdsRef.current.add(producerId);
           // Request consumer for this producer
           const consumeInfo = await callService.consume(socket, {
             roomId,
