@@ -218,14 +218,42 @@ export async function processRecordingInBackground(recordingId: string) {
     const baseDir = getRecordingBaseDir(id);
     await ensureDir(baseDir);
 
+    // Server-side recording (Phase 1) writes a single raw.webm at stop time.
+    // Client-side chunk flow writes merged.webm after receiving chunks.
+    const rawWebmPath = recording.rawFilePath || null;
     const mergedWebmPath = path.join(baseDir, "merged.webm");
     const mp4Path = path.join(baseDir, "recording.mp4");
 
-    console.log("[recording:process] merging chunks", {
-      recordingId: id,
-      mergedWebmPath,
-    });
-    await mergeChunks(id, mergedWebmPath);
+    if (rawWebmPath) {
+      // Server-side recording mode: we expect `raw.webm` to exist.
+      if (!fs.existsSync(rawWebmPath)) {
+        // Give a short grace period for ffmpeg to flush to disk.
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < 20000) {
+          if (fs.existsSync(rawWebmPath)) break;
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      }
+
+      if (!fs.existsSync(rawWebmPath)) {
+        throw new Error(
+          `Server-side raw webm not found after waiting: ${rawWebmPath}`,
+        );
+      }
+
+      console.log("[recording:process] using server-side raw webm (server recording flow)", {
+        recordingId: id,
+        rawWebmPath,
+      });
+    } else {
+      // Client-side chunk upload mode: merge chunks into merged.webm.
+      console.log("[recording:process] merging chunks (client upload flow)", {
+        recordingId: id,
+        mergedWebmPath,
+      });
+      await mergeChunks(id, mergedWebmPath);
+    }
 
     // eslint-disable-next-line no-console
     console.log("[recording:process] merged.webm exists", {
@@ -233,7 +261,8 @@ export async function processRecordingInBackground(recordingId: string) {
     });
 
     let playbackObjectKey = `recordings/${id}/merged.webm`;
-    let playbackFilePath = mergedWebmPath;
+    // Server mode uses raw.webm; we may upload it under a "merged.webm" key for compatibility.
+    let playbackFilePath = rawWebmPath ? rawWebmPath : mergedWebmPath;
     let playbackUrl = `/uploads/${playbackObjectKey}`; // fallback if CDN is not configured
 
     // Try MP4 first (best for browser playback).

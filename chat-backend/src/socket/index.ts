@@ -29,6 +29,8 @@ import {
   getOrCreateRoom,
   getRoomProducers,
 } from "../mediasoup/mediaRoomManager";
+import { startServerRecording, stopServerRecording } from "../mediasoup/recordingManager";
+import { processRecordingInBackground } from "../helpers/recordingProcessor";
 import type { types as MediasoupTypes } from "mediasoup";
 
 // Define a more comprehensive interface for GroupCall with all required fields
@@ -94,15 +96,25 @@ export default function initializeSocket() {
         "http://localhost:6000",
         "http://69.62.84.25:10016",
         "http://69.62.84.25:10017",
+        "http://103.121.157.203:10016",
+        "http://103.121.157.203:10017",
+        "http://134.199.249.149:10016",
+        "http://134.199.249.149:10017",
         "http://localhost:10016",
         "http://localhost:10017",
         "http://69.62.84.25:10018",
+        "http://103.121.157.203:10018",
+        "http://134.199.249.149:10018",
         "https://extalk.excellisit.net",  // Production frontend domain
         "https://extalkapi.excellisit.net", // Production API domain (for Socket.io handshake)
         "https://extalk.excellisit.net/guest-meeting",
         "https://extalk.excellisit.net/guest-meeting/",
         "http://69.62.84.25:10016/guest-meeting",
         "http://69.62.84.25:10016/guest-meeting/",
+        "http://103.121.157.203:10016/guest-meeting",
+        "http://103.121.157.203:10016/guest-meeting/",
+        "http://134.199.249.149:10016/guest-meeting",
+        "http://134.199.249.149:10016/guest-meeting/",
 
       ],
       methods: ["GET", "POST", "PUT", "DELETE", "EMIT"],
@@ -972,12 +984,47 @@ export default function initializeSocket() {
           startedBy: newRecording.startedBy?.toString?.() || "",
         });
 
+        // Emit immediately so UI reflects recording state quickly.
         io.to(roomId).emit("FE-recording-started", {
           roomId,
           recordingId: newRecording._id,
           startedBy: userId.toString(),
           startedAt: newRecording.createdAt,
           status: newRecording.status,
+        });
+
+        // Phase 1 server-side policy:
+        // - Audio call: mix all audio producers into one audio track (no video)
+        // - Video call: 1 video producer + mixed audio
+        // We infer call type from the mediasoup producers present in this room.
+        const producersNow = getRoomProducers(roomId);
+        const isAudioOnly = !producersNow.some((p) => p.kind === "video");
+
+        startServerRecording({
+          roomId,
+          recordingId: newRecording._id.toString(),
+          isAudioOnly,
+        }).catch(async (e: any) => {
+          console.error("[BE-start-recording] failed to start server ffmpeg", {
+            roomId,
+            recordingId: newRecording._id?.toString?.() || "",
+            error: e?.message || String(e),
+          });
+          await CallRecording.findByIdAndUpdate(newRecording._id, {
+            $set: { status: "failed", errorMessage: e?.message || String(e) },
+          });
+          io.to(roomId).emit("FE-recording-error", {
+            roomId,
+            message: e?.message || "Failed to start server-side recording.",
+          });
+          io.to(roomId).emit("FE-recording-stopped", {
+            roomId,
+            recordingId: newRecording._id,
+            startedBy: userId.toString(),
+            stoppedBy: userId.toString(),
+            stoppedAt: new Date(),
+            status: "failed",
+          });
         });
       } catch (error: any) {
         console.error("BE-start-recording error:", error);
@@ -1011,9 +1058,10 @@ export default function initializeSocket() {
           return;
         }
 
+        const recordingIdStr = recordingId?.toString?.() || recordingId;
         const updatedRecording = await CallRecording.findOneAndUpdate(
-          { _id: recordingId, groupId: roomId, status: "recording" },
-          { $set: { status: "uploading" } },
+          { _id: recordingIdStr, groupId: roomId, status: "recording" },
+          { $set: { status: "processing" } },
           { new: true },
         ).lean();
 
@@ -1026,20 +1074,71 @@ export default function initializeSocket() {
           return;
         }
 
-        console.log("[BE-stop-recording] updated", {
-          roomId,
-          recordingId: updatedRecording._id?.toString?.() || "",
-          startedBy: updatedRecording.startedBy?.toString?.() || "",
+        const createdAt = updatedRecording.createdAt ? new Date(updatedRecording.createdAt) : null;
+        const durationSec = createdAt
+          ? Math.max(0, Math.round((Date.now() - createdAt.getTime()) / 1000))
+          : 0;
+
+        await CallRecording.findByIdAndUpdate(recordingIdStr, {
+          $set: {
+            status: "processing",
+            durationSec,
+          },
         });
 
+        // Update UI immediately; heavy stop/finalize runs in background.
         io.to(roomId).emit("FE-recording-stopped", {
           roomId,
           recordingId: updatedRecording._id,
           startedBy: updatedRecording.startedBy?.toString?.() || null,
           stoppedBy: userId.toString(),
           stoppedAt: new Date(),
-          status: updatedRecording.status,
+          status: "processing",
         });
+
+        (async () => {
+          let outputWebmPath = "";
+          try {
+            const stopped = await stopServerRecording(recordingIdStr);
+            outputWebmPath = stopped.outputWebmPath;
+          } catch (e: any) {
+            console.error("[BE-stop-recording] failed to stop server ffmpeg", {
+              roomId,
+              recordingId: recordingIdStr,
+              error: e?.message || String(e),
+            });
+            await CallRecording.findByIdAndUpdate(recordingIdStr, {
+              $set: { status: "failed", errorMessage: e?.message || String(e) },
+            });
+            io.to(roomId).emit("FE-recording-error", {
+              roomId,
+              message: e?.message || "Failed to stop server-side recording.",
+            });
+            return;
+          }
+
+          await CallRecording.findByIdAndUpdate(recordingIdStr, {
+            $set: {
+              status: "processing",
+              rawFilePath: outputWebmPath,
+            },
+          });
+
+          console.log("[BE-stop-recording] ready for processing", {
+            roomId,
+            recordingId: recordingIdStr,
+            durationSec,
+            outputWebmPath,
+          });
+
+          processRecordingInBackground(recordingIdStr).catch((e: any) => {
+            console.error("[BE-stop-recording] processRecordingInBackground failed", {
+              roomId,
+              recordingId: recordingIdStr,
+              error: e?.message || String(e),
+            });
+          });
+        })();
       } catch (error: any) {
         console.error("BE-stop-recording error:", error);
         socket.emit("FE-recording-error", { roomId, message: error?.message || "Failed to stop recording." });

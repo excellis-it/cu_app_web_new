@@ -39,6 +39,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
 
   // Phase 1 call recording (admin controlled)
   const [isRecording, setIsRecording] = useState(false);
+  const [recordingBlinkOn, setRecordingBlinkOn] = useState(true);
   // Used to prevent duplicate clicks during network upload/processing.
   // Must be false while the MediaRecorder is actively capturing, otherwise Stop stays disabled.
   const [recordingBusy, setRecordingBusy] = useState(false);
@@ -89,6 +90,17 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
     y: 0
   });
   const [offset, setOffset] = useState({ x: 0, y: 0 });
+  useEffect(() => {
+    if (!isRecording) {
+      setRecordingBlinkOn(true);
+      return;
+    }
+    const timer = setInterval(() => {
+      setRecordingBlinkOn((prev) => !prev);
+    }, 700);
+    return () => clearInterval(timer);
+  }, [isRecording]);
+
   useEffect(() => {
     const handleOffline = (e) => {
       toast.error("You are offline!", {
@@ -630,18 +642,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             // Recording is active now; allow Stop button immediately.
             setRecordingBusy(false);
 
-            // Only the admin who started the recording should start MediaRecorder.
-            if (startedBy && String(startedBy) === String(currentUser)) {
-              // Avoid starting two MediaRecorders if FE event arrives twice.
-              const existing = mediaRecorderRef.current;
-              if (existing && existing.state === "recording") {
-                console.warn("[room.js][REC] start ignored (recorder already recording)", {
-                  startedRecordingId,
-                });
-                return;
-              }
-              startLocalRecorder(startedRecordingId);
-            }
+            // Server-side recording: do not start browser MediaRecorder/upload.
           } catch (e) {
             console.error("[room.js] FE-recording-started handler error", e);
           }
@@ -666,11 +667,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             setRecordingBusy(false);
             setActiveRecordingId(null);
 
-            // MediaRecorder runs only on the client that started recording.
-            if (startedBy && String(startedBy) === String(currentUser)) {
-              console.log("[room.js][REC] calling stopLocalRecorder");
-              stopLocalRecorder();
-            }
+            // Server-side recording: do not stop browser MediaRecorder/upload.
           } catch (e) {
             console.error("[room.js] FE-recording-stopped handler error", e);
           }
@@ -1611,6 +1608,9 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       toast.error("Socket is not ready.");
       return;
     }
+    if (!isGroupAdmin) {
+      return;
+    }
     if (recordingBusy) return;
     console.log("[room.js][REC] requestStartRecording", {
       roomId,
@@ -1625,6 +1625,9 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
   const requestStopRecording = (recordingIdToStop) => {
     if (!socketRef?.current) {
       toast.error("Socket is not ready.");
+      return;
+    }
+    if (!isGroupAdmin) {
       return;
     }
     if (!recordingIdToStop) {
@@ -2137,20 +2140,11 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
                 }}
               >
                 {callType.toUpperCase()} CALL
-                {isRecording ? <span style={{ color: "#ef4444", fontSize: 12 }}> | REC</span> : null}
-                <span style={{ fontSize: 12, color: "#e5e7eb" }}>
-                  Participants (media): {1 + remotePeers.length}
-                </span>
-                <span style={{ fontSize: 12, color: "#9ca3af" }}>
-                  Users in room (signaling):{" "}
-                  {1 +
-                    Object.keys(userVideoAudio || {}).filter(
-                      (k) => k && k !== "localUser"
-                    ).length}
-                </span>
-                <span style={{ fontSize: 11, color: "#6b7280" }}>
-                  RoomId: {String(roomId)}
-                </span>
+                {isRecording ? (
+                  <span style={{ color: recordingBlinkOn ? "#ef4444" : "#fca5a5", fontSize: 12 }}>
+                    {" "} | {recordingBlinkOn ? "REC" : "RECORDING"}
+                  </span>
+                ) : null}
               </h5>
               {waitingCalls.length > 0 && (
                 <PulsingAlert>
@@ -2178,38 +2172,61 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
               >
                 -
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (isRecording) {
-                    if (!activeRecordingId) {
-                      toast.error("No active recording to stop.");
-                      return;
+              {isGroupAdmin ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isRecording) {
+                      if (!activeRecordingId) {
+                        toast.error("No active recording to stop.");
+                        return;
+                      }
+                      requestStopRecording(activeRecordingId);
+                    } else {
+                      requestStartRecording();
                     }
-                    requestStopRecording(activeRecordingId);
-                  } else {
-                    requestStartRecording();
-                  }
-                }}
-                disabled={recordingBusy}
-                style={{
-                  backgroundColor: isRecording ? "#ef4444" : "white",
-                  width: "auto",
-                  height: "25px",
-                  borderRadius: "5px",
-                  color: isRecording ? "white" : "black",
-                  marginRight: "8px",
-                  lineHeight: "0px",
-                  padding: "0 10px",
-                  fontSize: 12,
-                  border: isRecording ? "none" : "1px solid #e5e7eb",
-                  cursor: recordingBusy ? "not-allowed" : "pointer",
-                  opacity: isGroupAdmin ? 1 : 0.6,
-                }}
-                title={isGroupAdmin ? "Record/Stop (admin only)" : "Record/Stop (admin only)"}
-              >
-                {isRecording ? "Stop" : "Record"}
-              </button>
+                  }}
+                  disabled={recordingBusy}
+                  style={{
+                    backgroundColor: isRecording ? "#ef4444" : "white",
+                    width: "auto",
+                    height: "25px",
+                    borderRadius: "5px",
+                    color: isRecording ? "white" : "black",
+                    marginRight: "8px",
+                    lineHeight: "0px",
+                    padding: "0 10px",
+                    fontSize: 12,
+                    border: isRecording ? "none" : "1px solid #e5e7eb",
+                    cursor: recordingBusy ? "not-allowed" : "pointer",
+                  }}
+                  title="Record/Stop (admin only)"
+                >
+                  {isRecording ? "Stop" : "Record"}
+                </button>
+              ) : isRecording ? (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    marginRight: "8px",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: recordingBlinkOn ? "#ef4444" : "#fca5a5",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: "50%",
+                      backgroundColor: recordingBlinkOn ? "#ef4444" : "#fca5a5",
+                    }}
+                  />
+                  Recording
+                </span>
+              ) : null}
             </div>
             <div style={{ display: 'flex', width: '100%', height: 'calc(100% - 50px)', position: 'relative' }}>
               <VideoContainer $isFloating={isFloating} className={`width-peer${remotePeers.length > 8 ? "" : remotePeers.length}`} style={{ flex: 1, height: '100%' }}>

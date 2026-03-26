@@ -96,9 +96,6 @@ const MeetingStatusBanner = ({ selected, globalUser, socketRef, onStartCall, use
   }, [timeOffset]);
 
   useEffect(() => {
-    if (now.isBetween(start, end)) {
-      setActiveCall(true);
-    }
     if (!hasLeft && now.isAfter(end)) {
       setHasLeft(true);
       goToBack();
@@ -241,13 +238,9 @@ const MeetingStatusBanner = ({ selected, globalUser, socketRef, onStartCall, use
 
   useEffect(() => {
     if (!socketRef.current) return;
-    socketRef.current.on("FE-leave", (data) => {
-      checkActiveCall();
-    })
-    socketRef.current.on("FE-call-ended", (data) => {
-      checkActiveCall();
-    })
-    socketRef.current.on("FE-error-user-exist", ({ error, roomId }) => {
+    const handleLeave = () => checkActiveCall();
+    const handleCallEnded = () => checkActiveCall();
+    const handleErrorUserExist = ({ error, roomId }) => {
       let callStatus = sessionStorage.getItem("callStatus");
       if (!error && callStatus === "outgoing") {
         const roomName = group_id;
@@ -257,15 +250,21 @@ const MeetingStatusBanner = ({ selected, globalUser, socketRef, onStartCall, use
         setopenRoom(true);
         closePreviewModal();
       }
-    });
+    };
+
+    socketRef.current.on("FE-leave", handleLeave);
+    socketRef.current.on("FE-call-ended", handleCallEnded);
+    socketRef.current.on("FE-error-user-exist", handleErrorUserExist);
+    // Keep UI in sync when component mounts or room changes.
+    checkActiveCall();
 
     return () => {
-      socketRef.current.off("FE-call-ended");
-      socketRef.current.off("FE-user-leave");
-      socketRef.current.off("FE-error-user-exist");
+      socketRef.current.off("FE-leave", handleLeave);
+      socketRef.current.off("FE-call-ended", handleCallEnded);
+      socketRef.current.off("FE-error-user-exist", handleErrorUserExist);
     }
 
-  }, [socketRef.current]);
+  }, [socketRef, group_id, user_id, user_name]);
 
   const userIncluded = selected.currentUsersId.includes(globalUser.data.user._id);
 
@@ -376,10 +375,12 @@ const MeetingStatusBanner = ({ selected, globalUser, socketRef, onStartCall, use
     }
     setHasLeft(true);
     setopenRoom(false);
+    const activeCallId = sessionStorage.getItem("activeCallId");
     sessionStorage.removeItem("userInActiveCall");
     sessionStorage.removeItem("activeCallId");
-    const activeCallId = sessionStorage.getItem("activeCallId");
-    socketRef.current.emit("BE-leave-room", { roomId: activeCallId, leaver: globalUser.data.user._id });
+    if (activeCallId) {
+      socketRef.current.emit("BE-leave-room", { roomId: activeCallId, leaver: globalUser.data.user._id });
+    }
     sessionStorage.removeItem("user");
     sessionStorage.removeItem("callStatus");
 
