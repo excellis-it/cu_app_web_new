@@ -318,7 +318,6 @@ export default function initializeSocket() {
       let error = false;
       try {
         const clients = await io.in(roomId).allSockets();
-        const isCallInitiatorJoin = clients.size === 1;
         clients.forEach((client) => {
           if (socketList[client]?.userName === userName) {
             error = true;
@@ -383,6 +382,7 @@ export default function initializeSocket() {
         await addPeer(roomId, userName.toString());
         // Get all clients in this room
         const clients = await io.in(roomId).allSockets();
+        const isCallInitiatorJoin = clients.size === 1;
         // Create a list of all users in the room for the new user
         const users = [...clients].map((client) => ({
           userId: client,
