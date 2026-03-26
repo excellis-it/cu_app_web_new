@@ -98,10 +98,13 @@ export default function initializeSocket() {
         "http://69.62.84.25:10017",
         "http://103.121.157.203:10016",
         "http://103.121.157.203:10017",
+        "http://134.199.249.149:10016",
+        "http://134.199.249.149:10017",
         "http://localhost:10016",
         "http://localhost:10017",
         "http://69.62.84.25:10018",
         "http://103.121.157.203:10018",
+        "http://134.199.249.149:10018",
         "https://extalk.excellisit.net",  // Production frontend domain
         "https://extalkapi.excellisit.net", // Production API domain (for Socket.io handshake)
         "https://extalk.excellisit.net/guest-meeting",
@@ -110,6 +113,8 @@ export default function initializeSocket() {
         "http://69.62.84.25:10016/guest-meeting/",
         "http://103.121.157.203:10016/guest-meeting",
         "http://103.121.157.203:10016/guest-meeting/",
+        "http://134.199.249.149:10016/guest-meeting",
+        "http://134.199.249.149:10016/guest-meeting/",
 
       ],
       methods: ["GET", "POST", "PUT", "DELETE", "EMIT"],
