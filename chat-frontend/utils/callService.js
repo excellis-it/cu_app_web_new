@@ -30,6 +30,15 @@ export function leaveRoom(socket, { leaveEvent = "BE-leave-room", roomId, leaver
 
 // ---- Mediasoup SFU signaling helpers ----
 
+export function getIceServers(socket) {
+  return new Promise((resolve, reject) => {
+    socket.emit("MS-get-ice-servers", (res) => {
+      if (res && res.ok) resolve({ iceServers: res.iceServers, iceTransportPolicy: res.iceTransportPolicy });
+      else reject(res?.error || "failed");
+    });
+  });
+}
+
 export function getRtpCapabilities(socket, { roomId }) {
   return new Promise((resolve, reject) => {
     socket.emit("MS-get-rtp-capabilities", { roomId }, (res) => {

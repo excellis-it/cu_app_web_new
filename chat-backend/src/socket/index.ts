@@ -1522,6 +1522,49 @@ export default function initializeSocket() {
       },
     );
 
+    // Return ICE servers (STUN/TURN) for client-side transport creation
+    socket.on(
+      "MS-get-ice-servers",
+      (cb: (payload: any) => void) => {
+        try {
+          const iceServers: { urls: string | string[]; username?: string; credential?: string }[] = [];
+
+          // STUN server for reflexive candidates
+          const stunUrl = process.env.STUN_URL || "stun:stun.l.google.com:19302";
+          iceServers.push({ urls: stunUrl });
+
+          const turnUrl1 = process.env.TURN_URL_1;
+          const turnUrlUdp = process.env.TURN_URL_UDP;
+          const turnUrlTcp = process.env.TURN_URL_TCP;
+          const turnUsername = process.env.TURN_USERNAME;
+          const turnCredential = process.env.TURN_CREDENTIAL;
+
+          const turnUrls = [turnUrl1, turnUrlUdp, turnUrlTcp].filter(Boolean) as string[];
+          if (turnUrls.length > 0 && turnUsername && turnCredential) {
+            iceServers.push({
+              urls: turnUrls,
+              username: turnUsername,
+              credential: turnCredential,
+            });
+          }
+
+          const icePolicy = process.env.ICE_POLICY || "all";
+          const iceTransportPolicy = icePolicy; // "all" | "relay"
+
+          console.log("[MS] get-ice-servers", {
+            socketId: socket.id,
+            turnUrls: turnUrls.length,
+            iceTransportPolicy,
+          });
+
+          cb && cb({ ok: true, iceServers, iceTransportPolicy });
+        } catch (err) {
+          console.error("MS-get-ice-servers error:", err);
+          cb && cb({ ok: false, error: "failed" });
+        }
+      },
+    );
+
     // List existing producers in the room for a newly joined peer
     socket.on(
       "MS-get-producers",

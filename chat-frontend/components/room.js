@@ -1237,6 +1237,18 @@ const Room = ({
         canProduceVideo: device.canProduce("video"),
       });
 
+      // 2.5) Fetch ICE servers (STUN/TURN) from backend
+      let iceServers = [];
+      let iceTransportPolicy = "all";
+      try {
+        const iceConfig = await callService.getIceServers(socket);
+        iceServers = iceConfig.iceServers || [];
+        iceTransportPolicy = iceConfig.iceTransportPolicy || "all";
+        console.log("[room.js] got iceServers", { count: iceServers.length, iceTransportPolicy });
+      } catch (e) {
+        console.warn("[room.js] getIceServers failed, continuing without TURN", e);
+      }
+
       // 3) Create send transport
       let sendInfo;
       try {
@@ -1256,6 +1268,8 @@ const Room = ({
         iceParameters: sendInfo.iceParameters,
         iceCandidates: sendInfo.iceCandidates,
         dtlsParameters: sendInfo.dtlsParameters,
+        iceServers,
+        iceTransportPolicy,
       });
 
       sendTransport.on("connect", ({ dtlsParameters }, callback, errback) => {
@@ -1426,6 +1440,8 @@ const Room = ({
         iceParameters: recvInfo.iceParameters,
         iceCandidates: recvInfo.iceCandidates,
         dtlsParameters: recvInfo.dtlsParameters,
+        iceServers,
+        iceTransportPolicy,
       });
 
       recvTransport.on("connect", ({ dtlsParameters }, callback, errback) => {
