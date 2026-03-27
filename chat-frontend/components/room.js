@@ -240,6 +240,18 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
           remoteStreamsRef.current[newPeerUserId] = newStream;
           setRemotePeers(Object.entries(remoteStreamsRef.current).map(([uid, s]) => ({ userId: uid, stream: s })));
           console.log("[room.js] fetchAndConsumeProducers: consumed producer for", newPeerUserId);
+
+          // Resume consumer — server creates consumers paused=true
+          socket.emit("MS-resume-consumer", { roomId: rId, userId: myUserId, consumerId: consumer.id });
+          if (kind === "video") {
+            socket.emit("MS-set-preferred-layers", {
+              roomId: rId,
+              userId: myUserId,
+              consumerId: consumer.id,
+              spatialLayer: 0,
+              temporalLayer: 1,
+            });
+          }
         } catch (err) {
           consumedProducerIdsRef.current.delete(p.producerId); // allow retry on failure
           console.error("[room.js] Error consuming producer in fallback:", err);
@@ -1162,6 +1174,22 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             console.log("[room.js] remotePeers after consuming existing", {
               keys: Object.keys(remoteStreamsRef.current),
             });
+
+            // Resume consumer now that the track is set up in the stream.
+            // Server creates consumers paused=true; we must explicitly resume.
+            socket.emit("MS-resume-consumer", { roomId, userId, consumerId: consumer.id });
+
+            // For video: start at the lower temporal layer (L1T1 = 300kbps) so the
+            // browser's REMB/TWCC can ramp up only as bandwidth allows.
+            if (kind === "video") {
+              socket.emit("MS-set-preferred-layers", {
+                roomId,
+                userId,
+                consumerId: consumer.id,
+                spatialLayer: 0,
+                temporalLayer: 1,
+              });
+            }
           } catch (err) {
             consumedProducerIdsRef.current.delete(p.producerId); // allow retry on failure
             console.error("Error consuming existing producer:", err);
@@ -1224,6 +1252,20 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
           console.log("[room.js] remotePeers after MS-new-producer", {
             keys: Object.keys(remoteStreamsRef.current),
           });
+
+          // Resume consumer now that the track is set up in the stream.
+          socket.emit("MS-resume-consumer", { roomId, userId, consumerId: consumer.id });
+
+          // For video: request lower temporal layer initially so REMB can ramp up naturally.
+          if (trackKind === "video") {
+            socket.emit("MS-set-preferred-layers", {
+              roomId,
+              userId,
+              consumerId: consumer.id,
+              spatialLayer: 0,
+              temporalLayer: 1,
+            });
+          }
         } catch (err) {
           consumedProducerIdsRef.current.delete(producerId); // allow retry on failure
           console.error("Error consuming remote producer:", err);

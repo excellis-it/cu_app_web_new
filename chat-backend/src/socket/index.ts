@@ -28,6 +28,8 @@ import {
   getRouterRtpCapabilities,
   getOrCreateRoom,
   getRoomProducers,
+  resumeConsumer,
+  setConsumerPreferredLayers,
 } from "../mediasoup/mediaRoomManager";
 import { startServerRecording, stopServerRecording } from "../mediasoup/recordingManager";
 import { processRecordingInBackground } from "../helpers/recordingProcessor";
@@ -1480,6 +1482,52 @@ export default function initializeSocket() {
         }
       }
     );
+    // Resume a paused consumer after the client has set it up
+    socket.on(
+      "MS-resume-consumer",
+      async (
+        { roomId, userId, consumerId }: { roomId: string; userId: string; consumerId: string },
+        cb: (payload: any) => void
+      ) => {
+        try {
+          await resumeConsumer(roomId, userId.toString(), consumerId);
+          cb && cb({ ok: true });
+        } catch (err) {
+          console.error("MS-resume-consumer error:", err);
+          cb && cb({ ok: false, error: "failed" });
+        }
+      }
+    );
+
+    // Set preferred simulcast/SVC layers for a video consumer (adaptive quality)
+    socket.on(
+      "MS-set-preferred-layers",
+      async (
+        {
+          roomId,
+          userId,
+          consumerId,
+          spatialLayer,
+          temporalLayer,
+        }: { roomId: string; userId: string; consumerId: string; spatialLayer: number; temporalLayer: number },
+        cb: (payload: any) => void
+      ) => {
+        try {
+          await setConsumerPreferredLayers(
+            roomId,
+            userId.toString(),
+            consumerId,
+            spatialLayer,
+            temporalLayer
+          );
+          cb && cb({ ok: true });
+        } catch (err) {
+          console.error("MS-set-preferred-layers error:", err);
+          cb && cb({ ok: false, error: "failed" });
+        }
+      }
+    );
+
     // ===========================================================================
     // ===========================================================================
     // ===========================================================================

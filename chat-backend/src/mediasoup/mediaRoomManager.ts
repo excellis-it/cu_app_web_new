@@ -1,4 +1,5 @@
 import { types, createWorker } from "mediasoup";
+import * as os from "os";
 
 type Direction = "send" | "recv";
 
@@ -21,17 +22,39 @@ export interface RoomState {
 
 const rooms: Map<string, RoomState> = new Map();
 
-let workerPromise: Promise<types.Worker> | null = null;
+// Use one worker per CPU core to avoid single-core saturation that causes system hangs
+const numWorkers = Math.max(1, os.cpus().length);
+const workers: types.Worker[] = [];
+let workerIndex = 0;
+
+async function initWorkers(): Promise<void> {
+  if (workers.length > 0) return;
+  const portsPerWorker = Math.floor(10000 / numWorkers);
+  for (let i = 0; i < numWorkers; i++) {
+    const minPort = 40000 + i * portsPerWorker;
+    const maxPort = Math.min(49999, minPort + portsPerWorker - 1);
+    const worker = await createWorker({
+      logLevel: "warn",
+      rtcMinPort: minPort,
+      rtcMaxPort: maxPort,
+    });
+    worker.on("died", () => {
+      console.error(`[mediasoup] Worker ${i} died, restarting...`);
+      workers[i] = null as any;
+      createWorker({ logLevel: "warn", rtcMinPort: minPort, rtcMaxPort: maxPort }).then(
+        (w) => { workers[i] = w; }
+      );
+    });
+    workers.push(worker);
+  }
+}
 
 async function getWorker(): Promise<types.Worker> {
-  if (!workerPromise) {
-    workerPromise = createWorker({
-      logLevel: "warn",
-      rtcMinPort: 40000,
-      rtcMaxPort: 49999,
-    });
-  }
-  return workerPromise;
+  await initWorkers();
+  // Round-robin across workers
+  const worker = workers[workerIndex % workers.length];
+  workerIndex++;
+  return worker;
 }
 
 // Basic audio/video codecs – adjust as needed for your deployment
@@ -49,7 +72,9 @@ const mediaCodecs: types.RtpCodecCapability[] = [
     clockRate: 90000,
     preferredPayloadType: 96,
     parameters: {
-      "x-google-start-bitrate": 1000,
+      "x-google-start-bitrate": 1000,  // kbps
+      "x-google-max-bitrate": 2000,    // kbps – cap encoder ceiling
+      "x-google-min-bitrate": 100,     // kbps – prevent quality collapsing to 0
     },
   },
 ];
@@ -133,8 +158,14 @@ export async function createWebRtcTransport(
     enableUdp: true,
     enableTcp: true,
     preferUdp: true,
-    initialAvailableOutgoingBitrate: 800000,
+    enableSctp: false,
+    initialAvailableOutgoingBitrate: 1000000,  // 1 Mbps start
   });
+
+  // Cap how much the server will push to each receiving client (prevents flooding on slow links)
+  if (direction === "recv") {
+    await transport.setMaxIncomingBitrate(1500000); // 1.5 Mbps max per recv transport
+  }
 
   peer.transports.set(transport.id, { transport, direction });
   return transport;
@@ -222,11 +253,45 @@ export async function createConsumer(
   const consumer = await transport.consume({
     producerId,
     rtpCapabilities,
-    paused: false,
+    paused: true,  // Always start paused; client must explicitly resume after setup
   });
 
   peer.consumers.set(consumer.id, consumer);
   return { consumer, peerUserId: targetUserId };
+}
+
+export async function resumeConsumer(
+  roomId: string,
+  userId: string,
+  consumerId: string
+): Promise<void> {
+  const room = rooms.get(roomId);
+  if (!room) return;
+  const peer = room.peers.get(userId);
+  if (!peer) return;
+  const consumer = peer.consumers.get(consumerId);
+  if (!consumer) return;
+  await consumer.resume();
+}
+
+export async function setConsumerPreferredLayers(
+  roomId: string,
+  userId: string,
+  consumerId: string,
+  spatialLayer: number,
+  temporalLayer: number
+): Promise<void> {
+  const room = rooms.get(roomId);
+  if (!room) return;
+  const peer = room.peers.get(userId);
+  if (!peer) return;
+  const consumer = peer.consumers.get(consumerId);
+  if (!consumer || consumer.kind !== "video") return;
+  try {
+    await consumer.setPreferredLayers({ spatialLayer, temporalLayer });
+  } catch {
+    // ignore if codec doesn't support layers
+  }
 }
 
 export function getRouterRtpCapabilities(roomId: string): types.RtpCapabilities | null {
