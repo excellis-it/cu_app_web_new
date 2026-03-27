@@ -75,6 +75,7 @@ let consumers: any = {};  // Store consumers per user
 let rooms: any = {}; // store rooms
 const socketUserMap = new Map();
 const socketRoomMap = new Map();
+const socketConnectedAtMap = new Map<string, number>();
 let ioInstance: Server | null = null;
 // Shared across all connections - each connection handler previously had its own socketList,
 // so callee could not see caller's info when building FE-user-join
@@ -139,6 +140,7 @@ export default function initializeSocket() {
 
   io.on("connection", (socket) => {
     console.log("[SOCKET] new connection", socket.id);
+    socketConnectedAtMap.set(socket.id, Date.now());
     const rooms: any = {};
 
     socketList[socket.id] = { video: true, audio: true };
@@ -152,9 +154,24 @@ export default function initializeSocket() {
     // ===========================================================================
     // ===========================================================================
     // ===========================================================================
-    socket.on("disconnect", async () => {
+    socket.on("disconnect", async (reason) => {
       const roomId = socketRoomMap.get(socket.id);
       const userId = socketUserMap.get(socket.id);
+      const connectionStartedAt = socketConnectedAtMap.get(socket.id);
+      const connectedForMs = connectionStartedAt ? Date.now() - connectionStartedAt : 0;
+      const connectedForSeconds = Math.max(0, Math.round(connectedForMs / 1000));
+      const socketUserInfo = socketList[socket.id] || {};
+
+      console.log("[SOCKET] disconnected", {
+        socketId: socket.id,
+        reason,
+        userId: userId || connectedUser?.userId || socketUserInfo?.userName || null,
+        userName: socketUserInfo?.userName || null,
+        fullName: socketUserInfo?.fullName || socketUserInfo?.name || null,
+        roomId: roomId || connectedUser?.roomId || null,
+        connectedForSeconds,
+        disconnectedAt: new Date().toISOString(),
+      });
 
       // Cleanup mediasoup peer state for this user/room
       try {
@@ -189,6 +206,8 @@ export default function initializeSocket() {
 
       delete socketList[socket.id];
       socketUserMap.delete(socket.id);
+      socketRoomMap.delete(socket.id);
+      socketConnectedAtMap.delete(socket.id);
 
       // Handle case where user disconnects without properly leaving the call 
       // (e.g., browser refresh, close tab, etc.)
