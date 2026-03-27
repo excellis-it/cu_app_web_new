@@ -77,6 +77,9 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
   const hasReceivedInitialUsers = useRef(false);
   const socketHandlersRegisteredRef = useRef(false);
   const pendingConsumePeerIdsRef = useRef(new Set());
+  const recoveryTimerRef = useRef(null);
+  const recoveryInProgressRef = useRef(false);
+  const unmountingRef = useRef(false);
 
   // MediaRecorder / mixing refs (browser-side recorder)
   const mediaRecorderRef = useRef(null);
@@ -1037,6 +1040,35 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       sendTransportRef.current = sendTransport;
       sendTransport.on("connectionstatechange", (state) => {
         console.log("[room.js] sendTransport connectionstatechange", state);
+        if ((state === "failed" || state === "disconnected") && !recoveryInProgressRef.current && !recoveryTimerRef.current) {
+          recoveryTimerRef.current = setTimeout(async () => {
+            recoveryTimerRef.current = null;
+            if (recoveryInProgressRef.current || unmountingRef.current) return;
+            if (!socketRef.current?.connected) return;
+            recoveryInProgressRef.current = true;
+            console.warn("[room.js] send transport degraded; rebuilding mediasoup transports");
+            try {
+              try { audioProducerRef.current && audioProducerRef.current.close(); } catch { }
+              try { videoProducerRef.current && videoProducerRef.current.close(); } catch { }
+              try { sendTransportRef.current && sendTransportRef.current.close(); } catch { }
+              try { recvTransportRef.current && recvTransportRef.current.close(); } catch { }
+              audioProducerRef.current = null;
+              videoProducerRef.current = null;
+              sendTransportRef.current = null;
+              recvTransportRef.current = null;
+              deviceRef.current = null;
+              consumedProducerIdsRef.current.clear();
+              await initializeMediasoup(roomId, userId);
+            } catch (err) {
+              console.error("[room.js] send transport recovery failed", err);
+            } finally {
+              recoveryInProgressRef.current = false;
+            }
+          }, 3500);
+        } else if (state === "connected" && recoveryTimerRef.current) {
+          clearTimeout(recoveryTimerRef.current);
+          recoveryTimerRef.current = null;
+        }
       });
 
       // 4) Create recv transport
@@ -1081,6 +1113,35 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       recvTransportRef.current = recvTransport;
       recvTransport.on("connectionstatechange", (state) => {
         console.log("[room.js] recvTransport connectionstatechange", state);
+        if ((state === "failed" || state === "disconnected") && !recoveryInProgressRef.current && !recoveryTimerRef.current) {
+          recoveryTimerRef.current = setTimeout(async () => {
+            recoveryTimerRef.current = null;
+            if (recoveryInProgressRef.current || unmountingRef.current) return;
+            if (!socketRef.current?.connected) return;
+            recoveryInProgressRef.current = true;
+            console.warn("[room.js] recv transport degraded; rebuilding mediasoup transports");
+            try {
+              try { audioProducerRef.current && audioProducerRef.current.close(); } catch { }
+              try { videoProducerRef.current && videoProducerRef.current.close(); } catch { }
+              try { sendTransportRef.current && sendTransportRef.current.close(); } catch { }
+              try { recvTransportRef.current && recvTransportRef.current.close(); } catch { }
+              audioProducerRef.current = null;
+              videoProducerRef.current = null;
+              sendTransportRef.current = null;
+              recvTransportRef.current = null;
+              deviceRef.current = null;
+              consumedProducerIdsRef.current.clear();
+              await initializeMediasoup(roomId, userId);
+            } catch (err) {
+              console.error("[room.js] recv transport recovery failed", err);
+            } finally {
+              recoveryInProgressRef.current = false;
+            }
+          }, 3500);
+        } else if (state === "connected" && recoveryTimerRef.current) {
+          clearTimeout(recoveryTimerRef.current);
+          recoveryTimerRef.current = null;
+        }
       });
       socket.mediasoupRecvTransport = recvTransport; // Persist on socket for fetchAndConsumeProducers (survives remounts)
 
@@ -1108,20 +1169,14 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
         // For pure audio calls, do not create a video producer so that
         // no video track is broadcast to other participants.
         if (videoTrack && !isAudioOnlyCall) {
-          // Safari is sensitive to some simulcast/scalability combinations;
-          // keep it on single encoding to reduce freezes and A/V breakups.
-          const videoEncodings = isSafariBrowser
-            ? undefined
-            : [
-              {
-                maxBitrate: 300_000,
-                scalabilityMode: "L1T2",
-              },
-              {
-                maxBitrate: 1_200_000,
-                scalabilityMode: "L1T3",
-              },
-            ];
+          // Keep video on a conservative single layer to improve stability
+          // on lossy links and avoid simulcast layer churn freezes.
+          const videoEncodings = [
+            {
+              maxBitrate: isSafariBrowser ? 500_000 : 700_000,
+              scalabilityMode: "L1T1",
+            },
+          ];
 
           videoProducerRef.current = await sendTransport.produce({
             track: videoTrack,
@@ -1203,7 +1258,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
                 userId,
                 consumerId: consumer.id,
                 spatialLayer: 0,
-                temporalLayer: 1,
+                temporalLayer: 0,
               });
             }
           } catch (err) {
@@ -1281,7 +1336,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
               userId,
               consumerId: consumer.id,
               spatialLayer: 0,
-              temporalLayer: 1,
+              temporalLayer: 0,
             });
           }
         } catch (err) {
@@ -1304,6 +1359,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
   };
 
   useEffect(() => {
+    unmountingRef.current = false;
     initializeMedia();
 
     socketRef.current.on("reconnect_error", (err) => {
@@ -1350,6 +1406,11 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
     window.addEventListener("popstate", goToBack);
 
     return () => {
+      unmountingRef.current = true;
+      if (recoveryTimerRef.current) {
+        clearTimeout(recoveryTimerRef.current);
+        recoveryTimerRef.current = null;
+      }
       socketRef.current.off("connect", handleSocketConnect);
       socketRef.current.off("FE-user-join");
       socketRef.current.off("FE-user-leave");

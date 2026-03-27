@@ -68,8 +68,10 @@ const VideoCard = ({ stream, username, fullName, isMuted, isScreenShare }) => {
 
     let lastFrames = -1;
     let lastTs = 0;
+    let lastCurrentTime = 0;
     let stuckForMs = 0;
-    const FREEZE_THRESHOLD_MS = 2500;
+    let isFrozenEpisode = false;
+    const FREEZE_THRESHOLD_MS = 5000;
 
     const onWaiting = () => {
       console.warn("[VideoCard] remote video waiting", {
@@ -86,6 +88,15 @@ const VideoCard = ({ stream, username, fullName, isMuted, isScreenShare }) => {
       });
     };
     const onPlaying = () => {
+      if (isFrozenEpisode) {
+        console.log("[VideoCard] remote video recovered", {
+          username,
+          fullName,
+          currentTime: el.currentTime,
+        });
+      }
+      isFrozenEpisode = false;
+      stuckForMs = 0;
       console.log("[VideoCard] remote video resumed", {
         username,
         fullName,
@@ -115,15 +126,19 @@ const VideoCard = ({ stream, username, fullName, isMuted, isScreenShare }) => {
       const dt = now - lastTs;
       const frameDelta =
         totalFrames >= 0 && lastFrames >= 0 ? totalFrames - lastFrames : -1;
+      const currentTimeDelta = Math.abs((el.currentTime || 0) - lastCurrentTime);
       const looksStuck =
+        !document.hidden &&
         !el.paused &&
         !el.ended &&
-        el.readyState >= 2 &&
-        frameDelta === 0;
+        el.readyState >= 3 &&
+        frameDelta === 0 &&
+        currentTimeDelta < 0.01;
 
       if (looksStuck) {
         stuckForMs += dt;
-        if (stuckForMs >= FREEZE_THRESHOLD_MS) {
+        if (stuckForMs >= FREEZE_THRESHOLD_MS && !isFrozenEpisode) {
+          isFrozenEpisode = true;
           console.warn("[VideoCard] remote video freeze detected", {
             username,
             fullName,
@@ -137,14 +152,23 @@ const VideoCard = ({ stream, username, fullName, isMuted, isScreenShare }) => {
                 : null,
             timestamp: new Date().toISOString(),
           });
-          stuckForMs = 0;
         }
       } else {
+        if (isFrozenEpisode) {
+          console.log("[VideoCard] remote video freeze ended", {
+            username,
+            fullName,
+            currentTime: el.currentTime,
+            timestamp: new Date().toISOString(),
+          });
+        }
+        isFrozenEpisode = false;
         stuckForMs = 0;
       }
 
       lastTs = now;
       lastFrames = totalFrames;
+      lastCurrentTime = el.currentTime || 0;
     }, 500);
 
     return () => {
