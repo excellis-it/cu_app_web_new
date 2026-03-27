@@ -331,7 +331,7 @@
 }
 
 .filter_all ul li.active button {
-  background: var(--primary-color);
+  background: #145c4b;
   color: #fff;
 }
 

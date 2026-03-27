@@ -127,8 +127,13 @@ const SidebarPanel = ({
         }}
       >
         <img
-          src={siteSettings?.siteLogo || "cu-logo-2.svg"}
-          alt={siteSettings?.siteName || "Logo"}
+          // src={siteSettings?.siteLogo || "cu-logo-2.svg"}
+          src="/cu-logo-1.svg"
+          // alt={siteSettings?.siteName || "Logo"}
+          alt={"Logo"}
+          onError={(e) => {
+            e.currentTarget.src = "/cu-logo-1.svg";
+          }}
           style={{ maxHeight: "40px", objectFit: "contain" }}
         />
       </div>
