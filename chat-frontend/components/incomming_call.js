@@ -3,7 +3,7 @@ import { Button, Modal, IconButton, Box, Typography, Avatar } from "@mui/materia
 import { Call as CallIcon, CallEnd as CallEndIcon, Videocam as VideocamIcon, Phone as PhoneIcon } from "@mui/icons-material";
 import Room from "./room";
 
-const IncomingCallButton = ({ socketRef, user_name, userId }) => {
+const IncomingCallButton = ({ socketRef, user_name, userId, onAcceptIncomingCall }) => {
   const [fullScreenCall, setFullScreenCall] = useState(false); // Fullscreen call state
   const [incomingCall, setIncomingCall] = useState(null); // Incoming call data
   const [producers, setProducers] = useState({ audio: null, video: null });
@@ -116,7 +116,16 @@ const IncomingCallButton = ({ socketRef, user_name, userId }) => {
         sessionStorage.setItem("fullName", user_name);
         setErr(false);
         setErrMsg("");
-        setopenRoom(true);
+        if (typeof onAcceptIncomingCall === "function") {
+          onAcceptIncomingCall({
+            roomId: roomName,
+            callType: callType || incomingCall?.callType || "video",
+            callerName: incomingCall?.callerName,
+            groupName: incomingCall?.groupName,
+          });
+        } else {
+          setopenRoom(true);
+        }
       } else {
         setErr(error);
         setErrMsg("User name already exist");
@@ -128,7 +137,7 @@ const IncomingCallButton = ({ socketRef, user_name, userId }) => {
     return () => {
       socketRef?.current?.off("FE-error-user-exist", handleUserExist);
     };
-  }, [incomingCall]);
+  }, [incomingCall, onAcceptIncomingCall, callType, group_id, userId, user_name]);
 
   async function clickJoin() {
     // Check if user is already in a call
@@ -170,6 +179,14 @@ const IncomingCallButton = ({ socketRef, user_name, userId }) => {
       sessionStorage.setItem("callStatus", 'incoming');
       sessionStorage.setItem("userInActiveCall", true);
       sessionStorage.setItem("activeCallId", roomName);
+      if (typeof onAcceptIncomingCall === "function") {
+        onAcceptIncomingCall({
+          roomId: roomName,
+          callType: callType || incomingCall?.callType || "video",
+          callerName: incomingCall?.callerName,
+          groupName: incomingCall?.groupName,
+        });
+      }
       socketRef.current.emit('BE-check-user', { roomId: roomName, userName }, (ack) => {
       });
     }

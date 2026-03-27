@@ -778,6 +778,60 @@ const GroupMessage = () => {
     };
   }, [socketRef.current]);
 
+  const handleAcceptIncomingCall = useCallback(
+    async (callData = {}) => {
+      const targetRoomId = callData?.roomId?.toString();
+      if (!targetRoomId) return;
+
+      // Route UI to chat view and mark this as a navigation that should auto-open join preview.
+      sessionStorage.setItem("isDeepLinkNavigation", "true");
+      setShowActivity(true);
+      setCallHistoryActivity(false);
+      setMeetingsActivity(false);
+      setGuestMeetingsActivity(false);
+      currentViewRef.current = "chat";
+      setActiveIndex(0);
+
+      const targetFromList = (groupList || []).find(
+        (group) => String(group?._id) === targetRoomId,
+      );
+
+      if (targetFromList) {
+        setSelected(targetFromList);
+        setIsHidden(true);
+        setShowSidebar(false);
+        return;
+      }
+
+      try {
+        const result = await axios.get(`/api/groups/get-group-details`, {
+          params: { id: targetRoomId },
+          headers: { "access-token": globalUser?.data?.token },
+        });
+        const fetchedGroup = result?.data?.data;
+        if (fetchedGroup?._id) {
+          setGroupList((prev) => [fetchedGroup, ...(prev || [])]);
+          setSelected(fetchedGroup);
+          setIsHidden(true);
+          setShowSidebar(false);
+          return;
+        }
+      } catch (error) {
+        console.error("Unable to fetch incoming call group details:", error);
+      }
+
+      // Fallback so message panel can still attempt loading by id.
+      setSelected({
+        _id: targetRoomId,
+        groupName: callData?.groupName || "Group",
+        isTemp: false,
+      });
+      setIsHidden(true);
+      setShowSidebar(false);
+    },
+    [groupList, globalUser?.data?.token],
+  );
+
   // Instantly reflect newly created meetings for participants (badge/count + list + calendar)
   useEffect(() => {
     if (!socketRef.current) return;
@@ -4662,6 +4716,7 @@ const GroupMessage = () => {
                           socketRef={socketRef}
                           user_name={globalUser?.data?.user?.name}
                           userId={globalUser?.data?.user?._id}
+                          onAcceptIncomingCall={handleAcceptIncomingCall}
                         />
                         {selected && selected?._id ? (
                           <ChatArea
