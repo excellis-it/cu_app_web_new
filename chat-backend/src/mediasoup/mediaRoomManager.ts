@@ -180,21 +180,74 @@ export async function createWebRtcTransport(
 
   const { router } = room;
 
+  const preferTcp = String(process.env.MEDIASOUP_PREFER_TCP || "").toLowerCase() === "true";
+  const enableUdp = String(process.env.MEDIASOUP_ENABLE_UDP || "true").toLowerCase() !== "false";
+  const enableTcp = String(process.env.MEDIASOUP_ENABLE_TCP || "true").toLowerCase() !== "false";
+  const initialOutgoingBitrate = Number(process.env.MEDIASOUP_INITIAL_OUTGOING_BITRATE || 400000);
+  const maxIncomingBitrate = Number(process.env.MEDIASOUP_MAX_INCOMING_BITRATE || 800000);
+
   const transport = await router.createWebRtcTransport({
     listenIps: [
       // Adjust ip and announcedIp for your deployment
       { ip: "0.0.0.0", announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || undefined },
     ],
-    enableUdp: true,
-    enableTcp: true,
-    preferUdp: true,
+    enableUdp,
+    enableTcp,
+    preferUdp: !preferTcp,
+    preferTcp,
     enableSctp: false,
-    initialAvailableOutgoingBitrate: 600000,   // 600 kbps start (mobile-friendly)
+    initialAvailableOutgoingBitrate: initialOutgoingBitrate,
+  });
+
+  console.log("[MS] transport created", {
+    roomId,
+    userId,
+    direction,
+    transportId: transport.id,
+    announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || null,
+    enableUdp,
+    enableTcp,
+    preferTcp,
+    initialOutgoingBitrate,
+  });
+
+  transport.on("icestatechange", (iceState) => {
+    console.log("[MS] transport ice state", {
+      roomId,
+      userId,
+      direction,
+      transportId: transport.id,
+      iceState,
+    });
+  });
+
+  transport.on("iceselectedtuplechange", (tuple) => {
+    console.log("[MS] transport selected tuple", {
+      roomId,
+      userId,
+      direction,
+      transportId: transport.id,
+      protocol: tuple?.protocol,
+      localIp: tuple?.localIp,
+      localPort: tuple?.localPort,
+      remoteIp: tuple?.remoteIp,
+      remotePort: tuple?.remotePort,
+    });
+  });
+
+  transport.on("dtlsstatechange", (dtlsState) => {
+    console.log("[MS] transport dtls state", {
+      roomId,
+      userId,
+      direction,
+      transportId: transport.id,
+      dtlsState,
+    });
   });
 
   // Cap how much the server will push to each receiving client (prevents flooding on slow links)
   if (direction === "recv") {
-    await transport.setMaxIncomingBitrate(1500000); // 1.5 Mbps max per recv transport
+    await transport.setMaxIncomingBitrate(maxIncomingBitrate);
   }
 
   peer.transports.set(transport.id, { transport, direction });
