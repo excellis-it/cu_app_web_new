@@ -1480,6 +1480,7 @@ export default function initializeSocket() {
               rtpParameters: consumer.rtpParameters,
               type: consumer.type,
               producerPaused: consumer.producerPaused,
+              paused: true,
             });
         } catch (err) {
           console.error("MS-consume error:", err);

@@ -222,7 +222,9 @@ const IncomingCallButton = ({ socketRef, user_name, userId }) => {
       if (producers.video && producers.video.track) {
         producers.video.track.stop();
       }
-      socketRef.current.emit("call_disconnect", { roomId: group_id, userId: user_id });
+      if (group_id && user_id) {
+        socketRef.current.emit("call_disconnect", { roomId: group_id, userId: user_id });
+      }
 
       setProducers({ audio: null, video: null });
       setFullScreenCall(false); // Close the call UI

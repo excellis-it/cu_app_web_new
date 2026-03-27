@@ -22,6 +22,35 @@ export interface RoomState {
 
 const rooms: Map<string, RoomState> = new Map();
 
+// Keyframe request timers: consumerId → NodeJS.Timeout
+// Without periodic keyframe requests, VP8 video freezes after any packet loss
+// because the decoder can't reconstruct frames without a keyframe.
+const keyframeTimers: Map<string, NodeJS.Timeout> = new Map();
+
+function startKeyframeTimer(consumer: types.Consumer): void {
+  if (consumer.kind !== "video") return;
+  if (keyframeTimers.has(consumer.id)) return;
+  // Request immediately to give the decoder a clean start
+  try { consumer.requestKeyFrame(); } catch { }
+  const timer = setInterval(() => {
+    if (consumer.closed) {
+      clearInterval(timer);
+      keyframeTimers.delete(consumer.id);
+      return;
+    }
+    try { consumer.requestKeyFrame(); } catch { }
+  }, 4000); // every 4 seconds — allows recovery from a single dropped keyframe
+  keyframeTimers.set(consumer.id, timer);
+}
+
+function stopKeyframeTimer(consumerId: string): void {
+  const timer = keyframeTimers.get(consumerId);
+  if (timer) {
+    clearInterval(timer);
+    keyframeTimers.delete(consumerId);
+  }
+}
+
 // Use one worker per CPU core to avoid single-core saturation that causes system hangs
 const numWorkers = Math.max(1, os.cpus().length);
 const workers: types.Worker[] = [];
@@ -121,6 +150,7 @@ export async function removePeer(roomId: string, userId: string): Promise<void> 
   const peer = room.peers.get(userId);
   if (peer) {
     peer.consumers.forEach((c) => {
+      stopKeyframeTimer(c.id);
       try { c.close(); } catch { }
     });
     peer.producers.forEach((p) => {
@@ -257,6 +287,7 @@ export async function createConsumer(
   });
 
   peer.consumers.set(consumer.id, consumer);
+  startKeyframeTimer(consumer);
   return { consumer, peerUserId: targetUserId };
 }
 

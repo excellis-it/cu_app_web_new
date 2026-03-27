@@ -206,7 +206,18 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
         totalProducers: existing.length,
         forThisPeer: forPeer.length,
       });
-      if (forPeer.length === 0) return;
+      if (forPeer.length === 0) {
+        // Peer joined the socket room but hasn't published mediasoup producers yet — retry
+        if (retryCount < 15) {
+          console.log("[room.js] fetchAndConsumeProducers: no producers yet for peer, retrying in 1s", {
+            newPeerUserId,
+            attempt: retryCount + 1,
+            max: 15,
+          });
+          setTimeout(() => fetchAndConsumeProducersForNewPeer(rId, myUserId, newPeerUserId, retryCount + 1, callGen), 1000);
+        }
+        return;
+      }
       for (const p of forPeer) {
         try {
           if (consumedProducerIdsRef.current.has(p.producerId)) {
@@ -229,6 +240,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             producerId: consumeInfo.producerId,
             kind: consumeInfo.kind,
             rtpParameters: consumeInfo.rtpParameters,
+            paused: consumeInfo.paused ?? true,
           });
           console.log("[room.js] consumer track state (retry)", { kind: consumer.kind, paused: consumer.paused, trackMuted: consumer.track.muted, trackReadyState: consumer.track.readyState });
           const kind = consumeInfo.kind || p.kind;
@@ -1149,6 +1161,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
               producerId: consumeInfo.producerId,
               kind: consumeInfo.kind,
               rtpParameters: consumeInfo.rtpParameters,
+              paused: consumeInfo.paused ?? true,
             });
             console.log("[room.js] consumer track state (existing)", { kind: consumer.kind, paused: consumer.paused, trackMuted: consumer.track.muted, trackReadyState: consumer.track.readyState });
 
@@ -1228,6 +1241,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             producerId: consumeInfo.producerId,
             kind: consumeInfo.kind,
             rtpParameters: consumeInfo.rtpParameters,
+            paused: consumeInfo.paused ?? true,
           });
           console.log("[room.js] consumer track state (new-producer)", { kind: consumer.kind, paused: consumer.paused, trackMuted: consumer.track.muted, trackReadyState: consumer.track.readyState });
 
