@@ -67,7 +67,9 @@ const GroupMessage = () => {
       throw new Error("Invalid base64 string input");
     }
     const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const base64 = (base64String + padding)
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
     const rawData = atob(base64);
     return new Uint8Array([...rawData].map((char) => char.charCodeAt(0)));
   };
@@ -744,7 +746,8 @@ const GroupMessage = () => {
     const handleWaitingCall = (data) => {
       setWaitingCalls((prev) => {
         // Use String comparison to avoid ObjectId vs string mismatch
-        if (prev.find((c) => String(c.roomId) === String(data.roomId))) return prev;
+        if (prev.find((c) => String(c.roomId) === String(data.roomId)))
+          return prev;
         return [...prev, data];
       });
     };
@@ -753,7 +756,7 @@ const GroupMessage = () => {
     const handleCallEnded = (data) => {
       if (data?.roomId) {
         setWaitingCalls((prev) =>
-          prev.filter((c) => String(c.roomId) !== String(data.roomId))
+          prev.filter((c) => String(c.roomId) !== String(data.roomId)),
         );
       }
     };
@@ -762,7 +765,7 @@ const GroupMessage = () => {
     const handleLeave = (data) => {
       if (data?.roomId && data?.isActive === false) {
         setWaitingCalls((prev) =>
-          prev.filter((c) => String(c.roomId) !== String(data.roomId))
+          prev.filter((c) => String(c.roomId) !== String(data.roomId)),
         );
       }
     };

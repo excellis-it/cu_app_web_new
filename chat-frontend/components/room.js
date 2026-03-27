@@ -5,7 +5,7 @@ import styled, { keyframes } from "styled-components";
 import VideoCard from "./VideoCard";
 import BottomBar from "./BottomBar";
 import ChatArea from "./ChatArea";
-import { useRouter } from 'next/router';
+import { useRouter } from "next/router";
 import { toast } from "react-toastify";
 import ReconnectModal from "./reconnectionModalComponant";
 import { useAppContext } from "../appContext/appContext";
@@ -13,8 +13,16 @@ import { Device } from "mediasoup-client";
 import { createDummyMediaStream } from "../utils/createDummyMediaStream";
 import * as callService from "../utils/callService";
 
-const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent, isGuestMeeting, chatAreaProps }) => {
-
+const Room = ({
+  socketRef,
+  room_id,
+  onSendData,
+  callType,
+  joinEvent,
+  leaveEvent,
+  isGuestMeeting,
+  chatAreaProps,
+}) => {
   const { globalUser, setGlobalUser } = useAppContext();
   const currentUser = sessionStorage.getItem("user");
   const currentUserFullName = sessionStorage.getItem("fullName");
@@ -93,7 +101,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
   const [dragging, setDragging] = useState(false);
   const [position, setPosition] = useState({
     x: 0,
-    y: 0
+    y: 0,
   });
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   useEffect(() => {
@@ -165,7 +173,12 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
   // ICE restart for a single transport. Asks the server to regenerate ICE credentials,
   // then tells the mediasoup-client transport to use them.
   // This recovers from NAT binding expiry without tearing down producers/consumers.
-  const restartTransportIce = async (transport, transportId, roomId, userId) => {
+  const restartTransportIce = async (
+    transport,
+    transportId,
+    roomId,
+    userId,
+  ) => {
     const socket = socketRef.current;
     if (!socket || !transport || transport.closed) return false;
     try {
@@ -185,19 +198,34 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
   // Called by VideoCard when a remote video stream appears frozen for >5s.
   // Attempts a lightweight ICE restart of the recv transport to restore packet flow.
   const handleRemoteVideoFreeze = async (username) => {
-    if (recoveryInProgressRef.current || iceRestartInProgressRef.current) return;
+    if (recoveryInProgressRef.current || iceRestartInProgressRef.current)
+      return;
     const recvTransport = recvTransportRef.current;
     if (!recvTransport || recvTransport.closed) return;
     iceRestartInProgressRef.current = true;
-    console.warn("[room.js] remote video freeze — attempting ICE restart of recvTransport", { username });
+    console.warn(
+      "[room.js] remote video freeze — attempting ICE restart of recvTransport",
+      { username },
+    );
     try {
-      const ok = await restartTransportIce(recvTransport, recvTransport.id, roomId, currentUser);
+      const ok = await restartTransportIce(
+        recvTransport,
+        recvTransport.id,
+        roomId,
+        currentUser,
+      );
       if (!ok) {
-        console.warn("[room.js] ICE restart failed after freeze; falling back to full transport rebuild");
+        console.warn(
+          "[room.js] ICE restart failed after freeze; falling back to full transport rebuild",
+        );
         recoveryInProgressRef.current = true;
         consumedProducerIdsRef.current.clear();
-        try { sendTransportRef.current?.close(); } catch { }
-        try { recvTransportRef.current?.close(); } catch { }
+        try {
+          sendTransportRef.current?.close();
+        } catch {}
+        try {
+          recvTransportRef.current?.close();
+        } catch {}
         sendTransportRef.current = null;
         recvTransportRef.current = null;
         deviceRef.current = null;
@@ -210,16 +238,26 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
   };
 
   // Fallback: fetch and consume producers for a newly joined peer (in case MS-new-producer was missed)
-  const fetchAndConsumeProducersForNewPeer = async (rId, myUserId, newPeerUserId, retryCount = 0, callGen = callGenRef.current) => {
+  const fetchAndConsumeProducersForNewPeer = async (
+    rId,
+    myUserId,
+    newPeerUserId,
+    retryCount = 0,
+    callGen = callGenRef.current,
+  ) => {
     // Abort if a new call has started since this retry chain was created
     if (callGenRef.current !== callGen) {
-      console.log("[room.js] fetchAndConsumeProducers: stale call gen, aborting", { callGen, current: callGenRef.current });
+      console.log(
+        "[room.js] fetchAndConsumeProducers: stale call gen, aborting",
+        { callGen, current: callGenRef.current },
+      );
       return;
     }
     const socket = socketRef.current;
     // Use refs first; fall back to socket-stored (survives Room remounts)
     const device = deviceRef.current || socket?.mediasoupDevice;
-    const recvTransport = recvTransportRef.current || socket?.mediasoupRecvTransport;
+    const recvTransport =
+      recvTransportRef.current || socket?.mediasoupRecvTransport;
     // Also check device.loaded — device object may exist but rtpCapabilities empty
     // if initializeMediasoup hasn't finished device.load() yet → causes cannot-consume errors
     if (!socket || !device || !device.loaded || !recvTransport) {
@@ -237,7 +275,17 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
           attempt: retryCount + 1,
           max: 15,
         });
-        setTimeout(() => fetchAndConsumeProducersForNewPeer(rId, myUserId, newPeerUserId, retryCount + 1, callGen), 1000);
+        setTimeout(
+          () =>
+            fetchAndConsumeProducersForNewPeer(
+              rId,
+              myUserId,
+              newPeerUserId,
+              retryCount + 1,
+              callGen,
+            ),
+          1000,
+        );
       }
       return;
     }
@@ -245,13 +293,21 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
     if (!stream || stream.getTracks().length > 0) return; // already have tracks
     try {
       const roomIdStr = String(rId);
-      console.log("[room.js] fetchAndConsumeProducers: calling MS-get-producers", {
+      console.log(
+        "[room.js] fetchAndConsumeProducers: calling MS-get-producers",
+        {
+          roomId: roomIdStr,
+          myUserId,
+          newPeerUserId,
+        },
+      );
+      const existing = await callService.getProducers(socket, {
         roomId: roomIdStr,
-        myUserId,
-        newPeerUserId,
+        userId: myUserId,
       });
-      const existing = await callService.getProducers(socket, { roomId: roomIdStr, userId: myUserId });
-      const forPeer = existing.filter((p) => String(p.userId) === String(newPeerUserId));
+      const forPeer = existing.filter(
+        (p) => String(p.userId) === String(newPeerUserId),
+      );
       console.log("[room.js] fetchAndConsumeProducers", {
         newPeerUserId,
         totalProducers: existing.length,
@@ -260,26 +316,45 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       if (forPeer.length === 0) {
         // Peer joined the socket room but hasn't published mediasoup producers yet — retry
         if (retryCount < 15) {
-          console.log("[room.js] fetchAndConsumeProducers: no producers yet for peer, retrying in 1s", {
-            newPeerUserId,
-            attempt: retryCount + 1,
-            max: 15,
-          });
-          setTimeout(() => fetchAndConsumeProducersForNewPeer(rId, myUserId, newPeerUserId, retryCount + 1, callGen), 1000);
+          console.log(
+            "[room.js] fetchAndConsumeProducers: no producers yet for peer, retrying in 1s",
+            {
+              newPeerUserId,
+              attempt: retryCount + 1,
+              max: 15,
+            },
+          );
+          setTimeout(
+            () =>
+              fetchAndConsumeProducersForNewPeer(
+                rId,
+                myUserId,
+                newPeerUserId,
+                retryCount + 1,
+                callGen,
+              ),
+            1000,
+          );
         }
         return;
       }
       for (const p of forPeer) {
         try {
           if (consumedProducerIdsRef.current.has(p.producerId)) {
-            console.log("[room.js] fetchAndConsumeProducers: skipping duplicate producer", p.producerId);
+            console.log(
+              "[room.js] fetchAndConsumeProducers: skipping duplicate producer",
+              p.producerId,
+            );
             continue;
           }
           consumedProducerIdsRef.current.add(p.producerId);
-          console.log("[room.js] fetchAndConsumeProducers: consuming producer", {
-            producerId: p.producerId,
-            kind: p.kind,
-          });
+          console.log(
+            "[room.js] fetchAndConsumeProducers: consuming producer",
+            {
+              producerId: p.producerId,
+              kind: p.kind,
+            },
+          );
           const consumeInfo = await callService.consume(socket, {
             roomId: rId,
             userId: myUserId,
@@ -293,22 +368,45 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             rtpParameters: consumeInfo.rtpParameters,
             paused: consumeInfo.paused ?? true,
           });
-          console.log("[room.js] consumer track state (retry)", { kind: consumer.kind, paused: consumer.paused, trackMuted: consumer.track.muted, trackReadyState: consumer.track.readyState });
+          console.log("[room.js] consumer track state (retry)", {
+            kind: consumer.kind,
+            paused: consumer.paused,
+            trackMuted: consumer.track.muted,
+            trackReadyState: consumer.track.readyState,
+          });
           const kind = consumeInfo.kind || p.kind;
           let existingStream = remoteStreamsRef.current[newPeerUserId];
           if (!existingStream) existingStream = new MediaStream();
           else {
-            if (kind === "video") existingStream.getVideoTracks().forEach((t) => existingStream.removeTrack(t));
-            else if (kind === "audio") existingStream.getAudioTracks().forEach((t) => existingStream.removeTrack(t));
+            if (kind === "video")
+              existingStream
+                .getVideoTracks()
+                .forEach((t) => existingStream.removeTrack(t));
+            else if (kind === "audio")
+              existingStream
+                .getAudioTracks()
+                .forEach((t) => existingStream.removeTrack(t));
           }
           existingStream.addTrack(consumer.track);
           const newStream = new MediaStream(existingStream.getTracks());
           remoteStreamsRef.current[newPeerUserId] = newStream;
-          setRemotePeers(Object.entries(remoteStreamsRef.current).map(([uid, s]) => ({ userId: uid, stream: s })));
-          console.log("[room.js] fetchAndConsumeProducers: consumed producer for", newPeerUserId);
+          setRemotePeers(
+            Object.entries(remoteStreamsRef.current).map(([uid, s]) => ({
+              userId: uid,
+              stream: s,
+            })),
+          );
+          console.log(
+            "[room.js] fetchAndConsumeProducers: consumed producer for",
+            newPeerUserId,
+          );
 
           // Resume consumer — server creates consumers paused=true
-          socket.emit("MS-resume-consumer", { roomId: rId, userId: myUserId, consumerId: consumer.id });
+          socket.emit("MS-resume-consumer", {
+            roomId: rId,
+            userId: myUserId,
+            consumerId: consumer.id,
+          });
           if (kind === "video") {
             socket.emit("MS-set-preferred-layers", {
               roomId: rId,
@@ -334,11 +432,14 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
 
   // Debug: log whenever remotePeers changes so we can see who is being rendered
   useEffect(() => {
-    console.log("[room.js] remotePeers updated:", remotePeers.map(p => ({
-      userId: p.userId,
-      hasAudio: !!p.stream?.getAudioTracks()?.length,
-      hasVideo: !!p.stream?.getVideoTracks()?.length,
-    })));
+    console.log(
+      "[room.js] remotePeers updated:",
+      remotePeers.map((p) => ({
+        userId: p.userId,
+        hasAudio: !!p.stream?.getAudioTracks()?.length,
+        hasVideo: !!p.stream?.getVideoTracks()?.length,
+      })),
+    );
   }, [remotePeers]);
 
   // Local audio level detector to indicate when user is speaking
@@ -386,13 +487,17 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
 
     return () => {
       if (rafId) cancelAnimationFrame(rafId);
-      try { source && source.disconnect(); } catch { }
-      try { analyser && analyser.disconnect(); } catch { }
-      try { audioContext && audioContext.close(); } catch { }
+      try {
+        source && source.disconnect();
+      } catch {}
+      try {
+        analyser && analyser.disconnect();
+      } catch {}
+      try {
+        audioContext && audioContext.close();
+      } catch {}
     };
   }, [stream]);
-
-
 
   const initializeMedia = async () => {
     try {
@@ -428,26 +533,43 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             hasAudio: !!audioTrack,
             hasVideo: !!videoTrack,
           });
-        } else if (!navigator || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
-          console.warn("mediaDevices.enumerateDevices not available; skipping device check and using dummy stream.");
+        } else if (
+          !navigator ||
+          !navigator.mediaDevices ||
+          !navigator.mediaDevices.enumerateDevices
+        ) {
+          console.warn(
+            "mediaDevices.enumerateDevices not available; skipping device check and using dummy stream.",
+          );
           // Leave deviceCheckPassed = false so we hit the dummy-stream fallback below.
         } else {
           const devices = await navigator.mediaDevices.enumerateDevices();
-          const hasAudio = devices.some((device) => device.kind === "audioinput");
-          const hasVideo = devices.some((device) => device.kind === "videoinput");
+          const hasAudio = devices.some(
+            (device) => device.kind === "audioinput",
+          );
+          const hasVideo = devices.some(
+            (device) => device.kind === "videoinput",
+          );
 
-          setVideoDevices(devices.filter((device) => device.kind === "videoinput"));
+          setVideoDevices(
+            devices.filter((device) => device.kind === "videoinput"),
+          );
 
           // First, try to get audio if available
           if (hasAudio) {
             try {
-              const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+              const audioStream = await navigator.mediaDevices.getUserMedia({
+                audio: true,
+                video: false,
+              });
               audioTrack = audioStream.getAudioTracks()[0];
               console.log("[room.js] Successfully captured audio track");
             } catch (audioErr) {
               console.warn("Audio capture failed:", audioErr);
               if (audioErr.name === "NotAllowedError") {
-                toast.error("Microphone permission denied. Please allow access to microphone.");
+                toast.error(
+                  "Microphone permission denied. Please allow access to microphone.",
+                );
               }
             }
           }
@@ -456,24 +578,28 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
           // and fall back gracefully if it fails or there is no physical camera.
           if (!isAudioOnlyCall) {
             try {
-              const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
-              const isMobileBrowser = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+              const ua =
+                typeof navigator !== "undefined" ? navigator.userAgent : "";
+              const isMobileBrowser = /Android|iPhone|iPad|iPod|Mobile/i.test(
+                ua,
+              );
               const effectiveType = navigator?.connection?.effectiveType || "";
               const lowBandwidthNet =
                 effectiveType === "slow-2g" ||
                 effectiveType === "2g" ||
                 effectiveType === "3g";
-              const mobileVideoConstraints = isMobileBrowser || lowBandwidthNet
-                ? {
-                    width: { ideal: 480, max: 640 },
-                    height: { ideal: 270, max: 360 },
-                    frameRate: { ideal: 10, max: 12 },
-                  }
-                : {
-                    width: { ideal: 960, max: 1280 },
-                    height: { ideal: 540, max: 720 },
-                    frameRate: { ideal: 15, max: 20 },
-                  };
+              const mobileVideoConstraints =
+                isMobileBrowser || lowBandwidthNet
+                  ? {
+                      width: { ideal: 480, max: 640 },
+                      height: { ideal: 270, max: 360 },
+                      frameRate: { ideal: 10, max: 12 },
+                    }
+                  : {
+                      width: { ideal: 960, max: 1280 },
+                      height: { ideal: 540, max: 720 },
+                      frameRate: { ideal: 15, max: 20 },
+                    };
               const videoStream = await navigator.mediaDevices.getUserMedia({
                 audio: false,
                 video: mobileVideoConstraints,
@@ -483,7 +609,9 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             } catch (videoErr) {
               console.warn("Video capture failed:", videoErr);
               if (videoErr.name === "NotAllowedError") {
-                toast.error("Camera permission denied. Please allow access to camera.");
+                toast.error(
+                  "Camera permission denied. Please allow access to camera.",
+                );
               }
             }
           }
@@ -511,7 +639,9 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
           const dummy = getDummy();
           const dummyAudioTrack = dummy.getAudioTracks()[0];
           tracks.push(dummyAudioTrack);
-          console.log("[room.js] Using dummy audio track (no microphone available)");
+          console.log(
+            "[room.js] Using dummy audio track (no microphone available)",
+          );
         }
 
         // Add real video track if we got it, otherwise create dummy video track.
@@ -530,7 +660,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             console.log("[room.js] Using dummy video track (no camera)", {
               trackId: dummyVideoTrack?.id,
               enabled: dummyVideoTrack?.enabled,
-              readyState: dummyVideoTrack?.readyState
+              readyState: dummyVideoTrack?.readyState,
             });
           }
         }
@@ -547,28 +677,27 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
           videoEnabled: localStreamRef.getVideoTracks()[0]?.enabled,
           videoLabel: localStreamRef.getVideoTracks()[0]?.label,
           videoReadyState: localStreamRef.getVideoTracks()[0]?.readyState,
-          hasRealDevices: deviceCheckPassed
+          hasRealDevices: deviceCheckPassed,
         });
-
-
 
         setHasRealDevices(deviceCheckPassed);
         setHasRealVideo(!isAudioOnlyCall && videoCheckPassed);
-        setUserVideoAudio(prev => ({
+        setUserVideoAudio((prev) => ({
           ...prev,
           // Set video/audio to true if tracks exist in stream (including dummy tracks)
           localUser: {
             video: localStreamRef.getVideoTracks().length > 0,
-            audio: localStreamRef.getAudioTracks().length > 0
-          }
+            audio: localStreamRef.getAudioTracks().length > 0,
+          },
         }));
-
       } catch (err) {
         console.error("getUserMedia / enumerateDevices failed:", err);
         if (err.name === "NotReadableError") {
           toast.error("Camera or microphone is already in use.");
         } else if (err.name === "NotAllowedError") {
-          toast.error("Permission denied. Please allow access to camera and microphone.");
+          toast.error(
+            "Permission denied. Please allow access to camera and microphone.",
+          );
         } else {
           console.warn("Media access failed, using dummy stream");
         }
@@ -586,18 +715,18 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
         }
         setHasRealDevices(false);
         setHasRealVideo(false);
-        setUserVideoAudio(prev => ({
+        setUserVideoAudio((prev) => ({
           ...prev,
           // Even dummy stream has video/audio tracks that should be shown
           localUser: {
             video: localStreamRef.getVideoTracks().length > 0,
-            audio: localStreamRef.getAudioTracks().length > 0
-          }
+            audio: localStreamRef.getAudioTracks().length > 0,
+          },
         }));
 
         console.log("[room.js] Using fallback dummy stream with tracks:", {
           videoTracks: localStreamRef.getVideoTracks().length,
-          audioTracks: localStreamRef.getAudioTracks().length
+          audioTracks: localStreamRef.getAudioTracks().length,
         });
       }
 
@@ -626,7 +755,10 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       // Debug: Log local stream tracks
       if (localStreamRef) {
         if (localStreamRef.getVideoTracks().length > 0) {
-          console.log("[room.js] Local video track readyState:", localStreamRef.getVideoTracks()[0].readyState);
+          console.log(
+            "[room.js] Local video track readyState:",
+            localStreamRef.getVideoTracks()[0].readyState,
+          );
         }
       }
 
@@ -637,60 +769,71 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
 
         // Socket event handlers (presence / UX only; media is handled by mediasoup)
         socketRef.current.on("FE-user-join", (users) => {
-        console.log("[room.js] FE-user-join received:", {
-          rawUsers: users,
-          currentUser,
-        });
-        // If receiving multiple users, it's the initial sync (when joining/rejoining)
-        // If receiving a single user, it's a new user actually joining
-        // Note: Backend sends all users including yourself, so if length > 1, it's initial sync
-        const isInitialSync = users.length > 1;
+          console.log("[room.js] FE-user-join received:", {
+            rawUsers: users,
+            currentUser,
+          });
+          // If receiving multiple users, it's the initial sync (when joining/rejoining)
+          // If receiving a single user, it's a new user actually joining
+          // Note: Backend sends all users including yourself, so if length > 1, it's initial sync
+          const isInitialSync = users.length > 1;
 
-        // Count how many non-self users we're processing
-        const otherUsers = users.filter(({ info }) => info && info.userName !== currentUser);
-        const isProcessingMultipleOtherUsers = otherUsers.length > 1;
+          // Count how many non-self users we're processing
+          const otherUsers = users.filter(
+            ({ info }) => info && info.userName !== currentUser,
+          );
+          const isProcessingMultipleOtherUsers = otherUsers.length > 1;
 
-        // Mark that we've received the initial user list BEFORE processing users
-        // This ensures we don't show toasts during initial sync
-        if (isInitialSync || isProcessingMultipleOtherUsers) {
-          hasReceivedInitialUsers.current = true;
-        }
+          // Mark that we've received the initial user list BEFORE processing users
+          // This ensures we don't show toasts during initial sync
+          if (isInitialSync || isProcessingMultipleOtherUsers) {
+            hasReceivedInitialUsers.current = true;
+          }
 
-        users.forEach(({ userId, info }) => {
-          if (!info) {
-            console.log("[room.js] FE-user-join: skipping user with missing info", { userId });
-            return;
-          }
-          const { userName, video, audio, name, fullName, senderName } = info;
-          // Treat participants as "remote" based on socket id, not username.
-          // Use String() to avoid type mismatches (e.g. undefined vs "undefined").
-          const myId = socketRef.current?.id;
-          if (!myId || String(userId) === String(myId)) {
-            return;
-          }
-          if (!userName) {
-            console.log("[room.js] FE-user-join: skipping user with missing userName", { userId, info });
-            return;
-          }
-          {
-            console.log("[room.js] registering remote user from FE-user-join", {
-              userId,
-              userName,
-              video,
-              audio,
-            });
-            const displayName = senderName || name || fullName || userName;
-            setUserVideoAudio((prev) => ({
-              ...prev,
-              [userName]: {
-                video,
-                audio,
-                senderName,
-                name: displayName,
-                fullName: displayName,
-                socketId: userId,
-              },
-            }));
+          users.forEach(({ userId, info }) => {
+            if (!info) {
+              console.log(
+                "[room.js] FE-user-join: skipping user with missing info",
+                { userId },
+              );
+              return;
+            }
+            const { userName, video, audio, name, fullName, senderName } = info;
+            // Treat participants as "remote" based on socket id, not username.
+            // Use String() to avoid type mismatches (e.g. undefined vs "undefined").
+            const myId = socketRef.current?.id;
+            if (!myId || String(userId) === String(myId)) {
+              return;
+            }
+            if (!userName) {
+              console.log(
+                "[room.js] FE-user-join: skipping user with missing userName",
+                { userId, info },
+              );
+              return;
+            }
+            {
+              console.log(
+                "[room.js] registering remote user from FE-user-join",
+                {
+                  userId,
+                  userName,
+                  video,
+                  audio,
+                },
+              );
+              const displayName = senderName || name || fullName || userName;
+              setUserVideoAudio((prev) => ({
+                ...prev,
+                [userName]: {
+                  video,
+                  audio,
+                  senderName,
+                  name: displayName,
+                  fullName: displayName,
+                  socketId: userId,
+                },
+              }));
 
               // Ensure we have a remote MediaStream entry for this user so that
               // a tile is shown even before mediasoup finishes attaching tracks.
@@ -698,39 +841,49 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
                 remoteStreamsRef.current[userName] = new MediaStream();
                 pendingConsumePeerIdsRef.current.add(userName);
                 setRemotePeers(
-                  Object.entries(remoteStreamsRef.current).map(([uid, stream]) => ({
-                    userId: uid,
-                    stream,
-                  }))
+                  Object.entries(remoteStreamsRef.current).map(
+                    ([uid, stream]) => ({
+                      userId: uid,
+                      stream,
+                    }),
+                  ),
                 );
                 // Fallback: call immediately (will retry every 1s if mediasoup not ready yet)
-                fetchAndConsumeProducersForNewPeer(roomId, currentUser, userName);
+                fetchAndConsumeProducersForNewPeer(
+                  roomId,
+                  currentUser,
+                  userName,
+                );
               }
 
-            const shouldShowToast =
-              !isInitialSync &&
-              !isProcessingMultipleOtherUsers &&
-              hasReceivedInitialUsers.current;
+              const shouldShowToast =
+                !isInitialSync &&
+                !isProcessingMultipleOtherUsers &&
+                hasReceivedInitialUsers.current;
 
-            if (shouldShowToast) {
-              toast.success(`${fullName || userName} joined the call`, {
-                position: "top-right",
-                autoClose: 3000,
-                hideProgressBar: false,
-                closeOnClick: true,
-                pauseOnHover: true,
-                draggable: true,
-              });
+              if (shouldShowToast) {
+                toast.success(`${fullName || userName} joined the call`, {
+                  position: "top-right",
+                  autoClose: 3000,
+                  hideProgressBar: false,
+                  closeOnClick: true,
+                  pauseOnHover: true,
+                  draggable: true,
+                });
+              }
             }
+          });
+
+          // Mark that we've received initial users if it was a single user (edge case)
+          // This handles the case where we receive a single user before any initial sync
+          if (
+            !isInitialSync &&
+            !isProcessingMultipleOtherUsers &&
+            !hasReceivedInitialUsers.current
+          ) {
+            hasReceivedInitialUsers.current = true;
           }
         });
-
-        // Mark that we've received initial users if it was a single user (edge case)
-        // This handles the case where we receive a single user before any initial sync
-        if (!isInitialSync && !isProcessingMultipleOtherUsers && !hasReceivedInitialUsers.current) {
-          hasReceivedInitialUsers.current = true;
-        }
-      });
 
         socketRef.current.on("FE-recording-started", (payload) => {
           try {
@@ -785,134 +938,108 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
           setRecordingBusy(false);
         });
 
-        socketRef.current.on("FE-user-leave", ({ userId, userName, fullName }) => {
-        if (!userName) {
-          console.warn("[room.js] FE-user-leave: skipping, no userName in payload", { userId });
-          return;
-        }
-        const info = userVideoAudio[userName] || {};
-        const displayName =
-          info.senderName || info.name || fullName || info.fullName || userName;
-        toast.info(`${displayName} left the call`, {
-          position: "top-right",
-          autoClose: 3000,
-          hideProgressBar: false,
-          closeOnClick: true,
-          pauseOnHover: true,
-          draggable: true,
-        });
+        socketRef.current.on(
+          "FE-user-leave",
+          ({ userId, userName, fullName }) => {
+            if (!userName) {
+              console.warn(
+                "[room.js] FE-user-leave: skipping, no userName in payload",
+                { userId },
+              );
+              return;
+            }
+            const info = userVideoAudio[userName] || {};
+            const displayName =
+              info.senderName ||
+              info.name ||
+              fullName ||
+              info.fullName ||
+              userName;
+            toast.info(`${displayName} left the call`, {
+              position: "top-right",
+              autoClose: 3000,
+              hideProgressBar: false,
+              closeOnClick: true,
+              pauseOnHover: true,
+              draggable: true,
+            });
 
-        setUserVideoAudio((prevUserVideoAudio) => {
-          const { [userName]: _, ...rest } = prevUserVideoAudio;
-          return rest;
-        });
+            setUserVideoAudio((prevUserVideoAudio) => {
+              const { [userName]: _, ...rest } = prevUserVideoAudio;
+              return rest;
+            });
 
-        // Remove any mediasoup-rendered stream for this user
-        if (remoteStreamsRef.current[userName]) {
-          delete remoteStreamsRef.current[userName];
-          setRemotePeers(
-            Object.entries(remoteStreamsRef.current).map(([uid, stream]) => ({
-              userId: uid,
-              stream,
-            }))
-          );
-        }
-      });
+            // Remove any mediasoup-rendered stream for this user
+            if (remoteStreamsRef.current[userName]) {
+              delete remoteStreamsRef.current[userName];
+              setRemotePeers(
+                Object.entries(remoteStreamsRef.current).map(
+                  ([uid, stream]) => ({
+                    userId: uid,
+                    stream,
+                  }),
+                ),
+              );
+            }
+          },
+        );
 
         socketRef.current.on("FE-toggle-camera", ({ userId, switchTarget }) => {
-        const targetUserName = Object.keys(userVideoAudio).find(
-          (name) => name === userId || userVideoAudio[name]?.socketId === userId
-        );
-        if (!targetUserName) return;
+          const targetUserName = Object.keys(userVideoAudio).find(
+            (name) =>
+              name === userId || userVideoAudio[name]?.socketId === userId,
+          );
+          if (!targetUserName) return;
 
-        setUserVideoAudio((prev) => ({
-          ...prev,
-          [targetUserName]: {
-            ...prev[targetUserName],
-            video:
-              switchTarget === "video"
-                ? !prev[targetUserName]?.video
-                : prev[targetUserName]?.video,
-            audio:
-              switchTarget === "audio"
-                ? !prev[targetUserName]?.audio
-                : prev[targetUserName]?.audio,
-          },
-        }));
-      });
-
-        socketRef.current.on("FE-toggle-screen-share", ({ userId, isScreenShare, userName }) => {
-        const peerIdx = findPeer(userId);
-        if (peerIdx) {
           setUserVideoAudio((prev) => ({
             ...prev,
-            [peerIdx.userName]: {
-              ...prev[peerIdx.userName],
-              isScreenShare: isScreenShare
+            [targetUserName]: {
+              ...prev[targetUserName],
+              video:
+                switchTarget === "video"
+                  ? !prev[targetUserName]?.video
+                  : prev[targetUserName]?.video,
+              audio:
+                switchTarget === "audio"
+                  ? !prev[targetUserName]?.audio
+                  : prev[targetUserName]?.audio,
             },
           }));
-
-          // Track who is currently sharing
-          if (isScreenShare) {
-            setCurrentScreenSharer({ userId, userName: peerIdx.userName });
-          } else {
-            // Clear if this user stopped sharing
-            setCurrentScreenSharer(prev =>
-              prev?.userId === userId ? null : prev
-            );
-          }
-        }
-      });
-
-        socketRef.current.on("FE-user-disconnected", (data) => {
-        const disconnectedUserId = data?.userSocketId;
-        if (!disconnectedUserId) return;
-
-        // Show toast notification when user disconnects
-        const displayName =
-          data?.fullName || data?.userName || "A participant";
-        toast.warning(`${displayName} disconnected from the call`, {
-          position: "top-right",
-          autoClose: 3000,
-          hideProgressBar: false,
-          closeOnClick: true,
-          pauseOnHover: true,
-          draggable: true,
         });
 
-        const userNameToRemove = data?.userName;
+        socketRef.current.on(
+          "FE-toggle-screen-share",
+          ({ userId, isScreenShare, userName }) => {
+            const peerIdx = findPeer(userId);
+            if (peerIdx) {
+              setUserVideoAudio((prev) => ({
+                ...prev,
+                [peerIdx.userName]: {
+                  ...prev[peerIdx.userName],
+                  isScreenShare: isScreenShare,
+                },
+              }));
 
-        if (userNameToRemove) {
-          setUserVideoAudio((prevUserVideoAudio) => {
-            const { [userNameToRemove]: _, ...rest } = prevUserVideoAudio;
-            if (!rest.localUser && prevUserVideoAudio.localUser) {
-              rest.localUser = prevUserVideoAudio.localUser;
+              // Track who is currently sharing
+              if (isScreenShare) {
+                setCurrentScreenSharer({ userId, userName: peerIdx.userName });
+              } else {
+                // Clear if this user stopped sharing
+                setCurrentScreenSharer((prev) =>
+                  prev?.userId === userId ? null : prev,
+                );
+              }
             }
-            return rest;
-          });
+          },
+        );
 
-          if (remoteStreamsRef.current[userNameToRemove]) {
-            delete remoteStreamsRef.current[userNameToRemove];
-            setRemotePeers(
-              Object.entries(remoteStreamsRef.current).map(([uid, stream]) => ({
-                userId: uid,
-                stream,
-              }))
-            );
-          }
-        }
-      });
+        socketRef.current.on("FE-user-disconnected", (data) => {
+          const disconnectedUserId = data?.userSocketId;
+          if (!disconnectedUserId) return;
 
-        socketRef.current.on("FE-guest-disconnected", (data) => {
-        const disconnectedUserId = data?.userSocketId;
-        if (!disconnectedUserId) return;
-
-        const userNameToRemove = data?.userName;
-
-        if (userNameToRemove) {
-          // Show toast notification when guest disconnects
+          // Show toast notification when user disconnects
           const displayName =
-            data?.senderName || data?.name || data?.fullName || userNameToRemove || "Guest";
+            data?.fullName || data?.userName || "A participant";
           toast.warning(`${displayName} disconnected from the call`, {
             position: "top-right",
             autoClose: 3000,
@@ -922,49 +1049,107 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             draggable: true,
           });
 
-          setUserVideoAudio((prevUserVideoAudio) => {
-            const { [userNameToRemove]: _, ...rest } = prevUserVideoAudio;
-            if (!rest.localUser && prevUserVideoAudio.localUser) {
-              rest.localUser = prevUserVideoAudio.localUser;
-            }
-            return rest;
-          });
+          const userNameToRemove = data?.userName;
 
-          if (remoteStreamsRef.current[userNameToRemove]) {
-            delete remoteStreamsRef.current[userNameToRemove];
-            setRemotePeers(
-              Object.entries(remoteStreamsRef.current).map(([uid, stream]) => ({
-                userId: uid,
-                stream,
-              }))
-            );
+          if (userNameToRemove) {
+            setUserVideoAudio((prevUserVideoAudio) => {
+              const { [userNameToRemove]: _, ...rest } = prevUserVideoAudio;
+              if (!rest.localUser && prevUserVideoAudio.localUser) {
+                rest.localUser = prevUserVideoAudio.localUser;
+              }
+              return rest;
+            });
+
+            if (remoteStreamsRef.current[userNameToRemove]) {
+              delete remoteStreamsRef.current[userNameToRemove];
+              setRemotePeers(
+                Object.entries(remoteStreamsRef.current).map(
+                  ([uid, stream]) => ({
+                    userId: uid,
+                    stream,
+                  }),
+                ),
+              );
+            }
           }
-        }
-      });
+        });
+
+        socketRef.current.on("FE-guest-disconnected", (data) => {
+          const disconnectedUserId = data?.userSocketId;
+          if (!disconnectedUserId) return;
+
+          const userNameToRemove = data?.userName;
+
+          if (userNameToRemove) {
+            // Show toast notification when guest disconnects
+            const displayName =
+              data?.senderName ||
+              data?.name ||
+              data?.fullName ||
+              userNameToRemove ||
+              "Guest";
+            toast.warning(`${displayName} disconnected from the call`, {
+              position: "top-right",
+              autoClose: 3000,
+              hideProgressBar: false,
+              closeOnClick: true,
+              pauseOnHover: true,
+              draggable: true,
+            });
+
+            setUserVideoAudio((prevUserVideoAudio) => {
+              const { [userNameToRemove]: _, ...rest } = prevUserVideoAudio;
+              if (!rest.localUser && prevUserVideoAudio.localUser) {
+                rest.localUser = prevUserVideoAudio.localUser;
+              }
+              return rest;
+            });
+
+            if (remoteStreamsRef.current[userNameToRemove]) {
+              delete remoteStreamsRef.current[userNameToRemove];
+              setRemotePeers(
+                Object.entries(remoteStreamsRef.current).map(
+                  ([uid, stream]) => ({
+                    userId: uid,
+                    stream,
+                  }),
+                ),
+              );
+            }
+          }
+        });
 
         socketRef.current.on("waiting_call", (data) => {
-        setWaitingCalls(prev => {
-          // Avoid duplicates based on roomId or socketId
-          if (prev.find(c => c.roomId === data.roomId)) return prev;
-          return [...prev, data];
+          setWaitingCalls((prev) => {
+            // Avoid duplicates based on roomId or socketId
+            if (prev.find((c) => c.roomId === data.roomId)) return prev;
+            return [...prev, data];
+          });
+          const callerDisplay = data.isDirect
+            ? data.callerName
+            : data.groupName;
+          toast.info(
+            `${callerDisplay} is calling (${data.callType})... Call is waiting.`,
+          );
         });
-        const callerDisplay = data.isDirect ? data.callerName : data.groupName;
-        toast.info(`${callerDisplay} is calling (${data.callType})... Call is waiting.`);
-      });
 
         // Clear waiting calls when a call ends
         socketRef.current.on("FE-call-ended", (data) => {
-        if (data?.roomId) {
-          setWaitingCalls(prev => prev.filter(c => c.roomId !== data.roomId));
-        }
-      });
+          if (data?.roomId) {
+            setWaitingCalls((prev) =>
+              prev.filter((c) => c.roomId !== data.roomId),
+            );
+          }
+        });
 
         // Clear waiting calls when user leaves
         socketRef.current.on("FE-leave", (data) => {
-        if (data?.roomId) {
-          setWaitingCalls(prev => prev.filter(c => c.roomId !== data.roomId));
-        }
-      });
+          if (data?.roomId) {
+            setWaitingCalls((prev) =>
+              prev.filter((c) => c.roomId !== data.roomId),
+            );
+          }
+        });
       }
 
       // Join room with device capability info via callService
@@ -999,7 +1184,6 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
         currentUser,
       });
       await initializeMediasoup(roomId, currentUser);
-
     } catch (error) {
       console.error("Error initializing media:", error);
       toast.error("Failed to initialize media. Please refresh and try again.");
@@ -1020,7 +1204,10 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       sendTransportRef.current = null; // invalidate stale refs so old retries don't pass readiness check
       recvTransportRef.current = null;
       deviceRef.current = null;
-      if (socket) { socket.mediasoupDevice = null; socket.mediasoupRecvTransport = null; }
+      if (socket) {
+        socket.mediasoupDevice = null;
+        socket.mediasoupRecvTransport = null;
+      }
       console.log("[room.js] initializeMediasoup start", {
         roomId,
         userId,
@@ -1039,7 +1226,9 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
 
       // 2) Create Device
       const device = new Device();
-      console.log("[room.js] Device created, loading with routerRtpCapabilities");
+      console.log(
+        "[room.js] Device created, loading with routerRtpCapabilities",
+      );
       await device.load({ routerRtpCapabilities: rtpCaps });
       deviceRef.current = device;
       socket.mediasoupDevice = device; // Persist on socket for fetchAndConsumeProducers (survives remounts)
@@ -1087,27 +1276,44 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
           });
       });
 
-      sendTransport.on("produce", ({ kind, rtpParameters }, callback, errback) => {
-        console.log("[room.js] sendTransport produce requested", { kind });
-        socket.emit(
-          "MS-produce",
-          { roomId, userId, transportId: sendTransport.id, kind, rtpParameters },
-          (res) => {
-            if (res && res.ok && res.id) callback({ id: res.id });
-            else errback(new Error(res?.error || "produce-failed"));
-          }
-        );
-      });
+      sendTransport.on(
+        "produce",
+        ({ kind, rtpParameters }, callback, errback) => {
+          console.log("[room.js] sendTransport produce requested", { kind });
+          socket.emit(
+            "MS-produce",
+            {
+              roomId,
+              userId,
+              transportId: sendTransport.id,
+              kind,
+              rtpParameters,
+            },
+            (res) => {
+              if (res && res.ok && res.id) callback({ id: res.id });
+              else errback(new Error(res?.error || "produce-failed"));
+            },
+          );
+        },
+      );
 
       sendTransportRef.current = sendTransport;
       sendTransport.on("connectionstatechange", (state) => {
         console.log("[room.js] sendTransport connectionstatechange", state);
         if (state === "connected") {
-          if (recoveryTimerRef.current) { clearTimeout(recoveryTimerRef.current); recoveryTimerRef.current = null; }
+          if (recoveryTimerRef.current) {
+            clearTimeout(recoveryTimerRef.current);
+            recoveryTimerRef.current = null;
+          }
           iceRestartInProgressRef.current = false;
           return;
         }
-        if (state === "disconnected" && !recoveryInProgressRef.current && !recoveryTimerRef.current && !iceRestartInProgressRef.current) {
+        if (
+          state === "disconnected" &&
+          !recoveryInProgressRef.current &&
+          !recoveryTimerRef.current &&
+          !iceRestartInProgressRef.current
+        ) {
           // Disconnected is often transient — wait briefly then try ICE restart before full rebuild
           recoveryTimerRef.current = setTimeout(async () => {
             recoveryTimerRef.current = null;
@@ -1115,18 +1321,35 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             if (!socketRef.current?.connected) return;
             if (sendTransport.connectionState === "connected") return; // recovered on its own
             iceRestartInProgressRef.current = true;
-            console.warn("[room.js] send transport disconnected; attempting ICE restart");
-            const ok = await restartTransportIce(sendTransport, sendTransport.id, roomId, userId);
+            console.warn(
+              "[room.js] send transport disconnected; attempting ICE restart",
+            );
+            const ok = await restartTransportIce(
+              sendTransport,
+              sendTransport.id,
+              roomId,
+              userId,
+            );
             iceRestartInProgressRef.current = false;
             if (!ok && sendTransport.connectionState !== "connected") {
               // ICE restart didn't help — full rebuild
               recoveryInProgressRef.current = true;
-              console.warn("[room.js] send transport ICE restart failed; rebuilding mediasoup transports");
+              console.warn(
+                "[room.js] send transport ICE restart failed; rebuilding mediasoup transports",
+              );
               try {
-                try { audioProducerRef.current?.close(); } catch { }
-                try { videoProducerRef.current?.close(); } catch { }
-                try { sendTransportRef.current?.close(); } catch { }
-                try { recvTransportRef.current?.close(); } catch { }
+                try {
+                  audioProducerRef.current?.close();
+                } catch {}
+                try {
+                  videoProducerRef.current?.close();
+                } catch {}
+                try {
+                  sendTransportRef.current?.close();
+                } catch {}
+                try {
+                  recvTransportRef.current?.close();
+                } catch {}
                 audioProducerRef.current = null;
                 videoProducerRef.current = null;
                 sendTransportRef.current = null;
@@ -1141,19 +1364,33 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
               }
             }
           }, 3500);
-        } else if (state === "failed" && !recoveryInProgressRef.current && !recoveryTimerRef.current) {
+        } else if (
+          state === "failed" &&
+          !recoveryInProgressRef.current &&
+          !recoveryTimerRef.current
+        ) {
           // Failed is definitive — rebuild immediately after a short grace period
           recoveryTimerRef.current = setTimeout(async () => {
             recoveryTimerRef.current = null;
             if (recoveryInProgressRef.current || unmountingRef.current) return;
             if (!socketRef.current?.connected) return;
             recoveryInProgressRef.current = true;
-            console.warn("[room.js] send transport failed; rebuilding mediasoup transports");
+            console.warn(
+              "[room.js] send transport failed; rebuilding mediasoup transports",
+            );
             try {
-              try { audioProducerRef.current?.close(); } catch { }
-              try { videoProducerRef.current?.close(); } catch { }
-              try { sendTransportRef.current?.close(); } catch { }
-              try { recvTransportRef.current?.close(); } catch { }
+              try {
+                audioProducerRef.current?.close();
+              } catch {}
+              try {
+                videoProducerRef.current?.close();
+              } catch {}
+              try {
+                sendTransportRef.current?.close();
+              } catch {}
+              try {
+                recvTransportRef.current?.close();
+              } catch {}
               audioProducerRef.current = null;
               videoProducerRef.current = null;
               sendTransportRef.current = null;
@@ -1213,11 +1450,19 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       recvTransport.on("connectionstatechange", (state) => {
         console.log("[room.js] recvTransport connectionstatechange", state);
         if (state === "connected") {
-          if (recoveryTimerRef.current) { clearTimeout(recoveryTimerRef.current); recoveryTimerRef.current = null; }
+          if (recoveryTimerRef.current) {
+            clearTimeout(recoveryTimerRef.current);
+            recoveryTimerRef.current = null;
+          }
           iceRestartInProgressRef.current = false;
           return;
         }
-        if (state === "disconnected" && !recoveryInProgressRef.current && !recoveryTimerRef.current && !iceRestartInProgressRef.current) {
+        if (
+          state === "disconnected" &&
+          !recoveryInProgressRef.current &&
+          !recoveryTimerRef.current &&
+          !iceRestartInProgressRef.current
+        ) {
           // Disconnected is often transient — wait briefly then try ICE restart before full rebuild
           recoveryTimerRef.current = setTimeout(async () => {
             recoveryTimerRef.current = null;
@@ -1225,18 +1470,35 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             if (!socketRef.current?.connected) return;
             if (recvTransport.connectionState === "connected") return; // recovered on its own
             iceRestartInProgressRef.current = true;
-            console.warn("[room.js] recv transport disconnected; attempting ICE restart");
-            const ok = await restartTransportIce(recvTransport, recvTransport.id, roomId, userId);
+            console.warn(
+              "[room.js] recv transport disconnected; attempting ICE restart",
+            );
+            const ok = await restartTransportIce(
+              recvTransport,
+              recvTransport.id,
+              roomId,
+              userId,
+            );
             iceRestartInProgressRef.current = false;
             if (!ok && recvTransport.connectionState !== "connected") {
               // ICE restart didn't help — full rebuild
               recoveryInProgressRef.current = true;
-              console.warn("[room.js] recv transport ICE restart failed; rebuilding mediasoup transports");
+              console.warn(
+                "[room.js] recv transport ICE restart failed; rebuilding mediasoup transports",
+              );
               try {
-                try { audioProducerRef.current?.close(); } catch { }
-                try { videoProducerRef.current?.close(); } catch { }
-                try { sendTransportRef.current?.close(); } catch { }
-                try { recvTransportRef.current?.close(); } catch { }
+                try {
+                  audioProducerRef.current?.close();
+                } catch {}
+                try {
+                  videoProducerRef.current?.close();
+                } catch {}
+                try {
+                  sendTransportRef.current?.close();
+                } catch {}
+                try {
+                  recvTransportRef.current?.close();
+                } catch {}
                 audioProducerRef.current = null;
                 videoProducerRef.current = null;
                 sendTransportRef.current = null;
@@ -1251,19 +1513,33 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
               }
             }
           }, 3500);
-        } else if (state === "failed" && !recoveryInProgressRef.current && !recoveryTimerRef.current) {
+        } else if (
+          state === "failed" &&
+          !recoveryInProgressRef.current &&
+          !recoveryTimerRef.current
+        ) {
           // Failed is definitive — rebuild after short grace period
           recoveryTimerRef.current = setTimeout(async () => {
             recoveryTimerRef.current = null;
             if (recoveryInProgressRef.current || unmountingRef.current) return;
             if (!socketRef.current?.connected) return;
             recoveryInProgressRef.current = true;
-            console.warn("[room.js] recv transport failed; rebuilding mediasoup transports");
+            console.warn(
+              "[room.js] recv transport failed; rebuilding mediasoup transports",
+            );
             try {
-              try { audioProducerRef.current?.close(); } catch { }
-              try { videoProducerRef.current?.close(); } catch { }
-              try { sendTransportRef.current?.close(); } catch { }
-              try { recvTransportRef.current?.close(); } catch { }
+              try {
+                audioProducerRef.current?.close();
+              } catch {}
+              try {
+                videoProducerRef.current?.close();
+              } catch {}
+              try {
+                sendTransportRef.current?.close();
+              } catch {}
+              try {
+                recvTransportRef.current?.close();
+              } catch {}
               audioProducerRef.current = null;
               videoProducerRef.current = null;
               sendTransportRef.current = null;
@@ -1291,7 +1567,10 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
         // Re-acquire any ended tracks so the produce() calls succeed.
         if (audioTrack?.readyState === "ended") {
           try {
-            const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            const s = await navigator.mediaDevices.getUserMedia({
+              audio: true,
+              video: false,
+            });
             const fresh = s.getAudioTracks()[0];
             local.removeTrack(audioTrack);
             local.addTrack(fresh);
@@ -1312,8 +1591,16 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             const s = await navigator.mediaDevices.getUserMedia({
               audio: false,
               video: lowBandwidthNet
-                ? { width: { ideal: 480, max: 640 }, height: { ideal: 270, max: 360 }, frameRate: { ideal: 10, max: 12 } }
-                : { width: { ideal: 960, max: 1280 }, height: { ideal: 540, max: 720 }, frameRate: { ideal: 15, max: 20 } },
+                ? {
+                    width: { ideal: 480, max: 640 },
+                    height: { ideal: 270, max: 360 },
+                    frameRate: { ideal: 10, max: 12 },
+                  }
+                : {
+                    width: { ideal: 960, max: 1280 },
+                    height: { ideal: 540, max: 720 },
+                    frameRate: { ideal: 15, max: 20 },
+                  },
             });
             const fresh = s.getVideoTracks()[0];
             local.removeTrack(videoTrack);
@@ -1353,7 +1640,11 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
           // on lossy links and avoid simulcast layer churn freezes.
           const videoEncodings = [
             {
-              maxBitrate: isMobileBrowser ? 220_000 : (isSafariBrowser ? 350_000 : 450_000),
+              maxBitrate: isMobileBrowser
+                ? 220_000
+                : isSafariBrowser
+                  ? 350_000
+                  : 450_000,
               maxFramerate: isMobileBrowser ? 12 : 15,
               scalabilityMode: "L1T1",
             },
@@ -1380,7 +1671,10 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
         for (const p of existing) {
           try {
             if (consumedProducerIdsRef.current.has(p.producerId)) {
-              console.log("[room.js] existing producers: skipping duplicate producer", p.producerId);
+              console.log(
+                "[room.js] existing producers: skipping duplicate producer",
+                p.producerId,
+              );
               continue;
             }
             consumedProducerIdsRef.current.add(p.producerId);
@@ -1390,7 +1684,10 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
               producerId: p.producerId,
               rtpCapabilities: device.rtpCapabilities,
             });
-            console.log("[room.js] consume existing producer response", consumeInfo);
+            console.log(
+              "[room.js] consume existing producer response",
+              consumeInfo,
+            );
 
             const consumer = await recvTransport.consume({
               id: consumeInfo.id,
@@ -1399,7 +1696,12 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
               rtpParameters: consumeInfo.rtpParameters,
               paused: consumeInfo.paused ?? true,
             });
-            console.log("[room.js] consumer track state (existing)", { kind: consumer.kind, paused: consumer.paused, trackMuted: consumer.track.muted, trackReadyState: consumer.track.readyState });
+            console.log("[room.js] consumer track state (existing)", {
+              kind: consumer.kind,
+              paused: consumer.paused,
+              trackMuted: consumer.track.muted,
+              trackReadyState: consumer.track.readyState,
+            });
 
             // Merge audio/video tracks per remote user
             const kind = consumeInfo.kind || p.kind;
@@ -1408,9 +1710,13 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
               existingStream = new MediaStream();
             } else {
               if (kind === "video") {
-                existingStream.getVideoTracks().forEach((t) => existingStream.removeTrack(t));
+                existingStream
+                  .getVideoTracks()
+                  .forEach((t) => existingStream.removeTrack(t));
               } else if (kind === "audio") {
-                existingStream.getAudioTracks().forEach((t) => existingStream.removeTrack(t));
+                existingStream
+                  .getAudioTracks()
+                  .forEach((t) => existingStream.removeTrack(t));
               }
             }
             existingStream.addTrack(consumer.track);
@@ -1421,7 +1727,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
               Object.entries(remoteStreamsRef.current).map(([uid, stream]) => ({
                 userId: uid,
                 stream,
-              }))
+              })),
             );
             console.log("[room.js] remotePeers after consuming existing", {
               keys: Object.keys(remoteStreamsRef.current),
@@ -1429,7 +1735,11 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
 
             // Resume consumer now that the track is set up in the stream.
             // Server creates consumers paused=true; we must explicitly resume.
-            socket.emit("MS-resume-consumer", { roomId, userId, consumerId: consumer.id });
+            socket.emit("MS-resume-consumer", {
+              roomId,
+              userId,
+              consumerId: consumer.id,
+            });
 
             // For video: start at the lower temporal layer (L1T1 = 300kbps) so the
             // browser's REMB/TWCC can ramp up only as bandwidth allows.
@@ -1453,89 +1763,113 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
 
       // 7) Listen for new remote producers (remove stale handler first to prevent duplicates on reconnect)
       socket.off("MS-new-producer");
-      socket.on("MS-new-producer", async ({ producerId, userId: remoteUserId, kind }) => {
-        try {
-          console.log("[room.js] MS-new-producer received", {
-            producerId,
-            remoteUserId,
-            kind,
-          });
-          if (consumedProducerIdsRef.current.has(producerId)) {
-            console.log("[room.js] MS-new-producer: skipping duplicate producer", producerId);
-            return;
-          }
-          consumedProducerIdsRef.current.add(producerId);
-          // Request consumer for this producer
-          const consumeInfo = await callService.consume(socket, {
-            roomId,
-            userId,
-            producerId,
-            rtpCapabilities: device.rtpCapabilities,
-          });
-
-          const consumer = await recvTransport.consume({
-            id: consumeInfo.id,
-            producerId: consumeInfo.producerId,
-            kind: consumeInfo.kind,
-            rtpParameters: consumeInfo.rtpParameters,
-            paused: consumeInfo.paused ?? true,
-          });
-          console.log("[room.js] consumer track state (new-producer)", { kind: consumer.kind, paused: consumer.paused, trackMuted: consumer.track.muted, trackReadyState: consumer.track.readyState });
-
-          const trackKind = consumeInfo.kind || kind;
-          let existingStream = remoteStreamsRef.current[remoteUserId];
-          if (!existingStream) {
-            existingStream = new MediaStream();
-          } else {
-            if (trackKind === "video") {
-              existingStream.getVideoTracks().forEach((t) => existingStream.removeTrack(t));
-            } else if (trackKind === "audio") {
-              existingStream.getAudioTracks().forEach((t) => existingStream.removeTrack(t));
+      socket.on(
+        "MS-new-producer",
+        async ({ producerId, userId: remoteUserId, kind }) => {
+          try {
+            console.log("[room.js] MS-new-producer received", {
+              producerId,
+              remoteUserId,
+              kind,
+            });
+            if (consumedProducerIdsRef.current.has(producerId)) {
+              console.log(
+                "[room.js] MS-new-producer: skipping duplicate producer",
+                producerId,
+              );
+              return;
             }
-          }
-          existingStream.addTrack(consumer.track);
-          // Create a new MediaStream reference so VideoCard's useEffect re-runs and shows the video
-          const newStream = new MediaStream(existingStream.getTracks());
-          remoteStreamsRef.current[remoteUserId] = newStream;
-          setRemotePeers(
-            Object.entries(remoteStreamsRef.current).map(([uid, stream]) => ({
-              userId: uid,
-              stream,
-            }))
-          );
-          console.log("[room.js] remotePeers after MS-new-producer", {
-            keys: Object.keys(remoteStreamsRef.current),
-          });
+            consumedProducerIdsRef.current.add(producerId);
+            // Request consumer for this producer
+            const consumeInfo = await callService.consume(socket, {
+              roomId,
+              userId,
+              producerId,
+              rtpCapabilities: device.rtpCapabilities,
+            });
 
-          // Resume consumer now that the track is set up in the stream.
-          socket.emit("MS-resume-consumer", { roomId, userId, consumerId: consumer.id });
+            const consumer = await recvTransport.consume({
+              id: consumeInfo.id,
+              producerId: consumeInfo.producerId,
+              kind: consumeInfo.kind,
+              rtpParameters: consumeInfo.rtpParameters,
+              paused: consumeInfo.paused ?? true,
+            });
+            console.log("[room.js] consumer track state (new-producer)", {
+              kind: consumer.kind,
+              paused: consumer.paused,
+              trackMuted: consumer.track.muted,
+              trackReadyState: consumer.track.readyState,
+            });
 
-          // For video: request lower temporal layer initially so REMB can ramp up naturally.
-          if (trackKind === "video") {
-            socket.emit("MS-set-preferred-layers", {
+            const trackKind = consumeInfo.kind || kind;
+            let existingStream = remoteStreamsRef.current[remoteUserId];
+            if (!existingStream) {
+              existingStream = new MediaStream();
+            } else {
+              if (trackKind === "video") {
+                existingStream
+                  .getVideoTracks()
+                  .forEach((t) => existingStream.removeTrack(t));
+              } else if (trackKind === "audio") {
+                existingStream
+                  .getAudioTracks()
+                  .forEach((t) => existingStream.removeTrack(t));
+              }
+            }
+            existingStream.addTrack(consumer.track);
+            // Create a new MediaStream reference so VideoCard's useEffect re-runs and shows the video
+            const newStream = new MediaStream(existingStream.getTracks());
+            remoteStreamsRef.current[remoteUserId] = newStream;
+            setRemotePeers(
+              Object.entries(remoteStreamsRef.current).map(([uid, stream]) => ({
+                userId: uid,
+                stream,
+              })),
+            );
+            console.log("[room.js] remotePeers after MS-new-producer", {
+              keys: Object.keys(remoteStreamsRef.current),
+            });
+
+            // Resume consumer now that the track is set up in the stream.
+            socket.emit("MS-resume-consumer", {
               roomId,
               userId,
               consumerId: consumer.id,
-              spatialLayer: 0,
-              temporalLayer: 0,
             });
+
+            // For video: request lower temporal layer initially so REMB can ramp up naturally.
+            if (trackKind === "video") {
+              socket.emit("MS-set-preferred-layers", {
+                roomId,
+                userId,
+                consumerId: consumer.id,
+                spatialLayer: 0,
+                temporalLayer: 0,
+              });
+            }
+          } catch (err) {
+            consumedProducerIdsRef.current.delete(producerId); // allow retry on failure
+            console.error("Error consuming remote producer:", err);
           }
-        } catch (err) {
-          consumedProducerIdsRef.current.delete(producerId); // allow retry on failure
-          console.error("Error consuming remote producer:", err);
-        }
-      });
+        },
+      );
 
       // 8) Consume any remote peers that joined before we were ready (fixes timing race)
       for (const [peerId, s] of Object.entries(remoteStreamsRef.current)) {
         if (s.getTracks().length === 0) {
-          console.log("[room.js] mediasoup ready: consuming pending peer", peerId);
+          console.log(
+            "[room.js] mediasoup ready: consuming pending peer",
+            peerId,
+          );
           fetchAndConsumeProducersForNewPeer(roomId, userId, peerId);
         }
       }
     } catch (err) {
       console.error("initializeMediasoup failed:", err);
-      toast.error("Failed to initialize high-quality media. Falling back to basic call.");
+      toast.error(
+        "Failed to initialize high-quality media. Falling back to basic call.",
+      );
     }
   };
 
@@ -1616,16 +1950,16 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       // Cleanup mediasoup transports/producers
       try {
         audioProducerRef.current && audioProducerRef.current.close();
-      } catch { }
+      } catch {}
       try {
         videoProducerRef.current && videoProducerRef.current.close();
-      } catch { }
+      } catch {}
       try {
         sendTransportRef.current && sendTransportRef.current.close();
-      } catch { }
+      } catch {}
       try {
         recvTransportRef.current && recvTransportRef.current.close();
-      } catch { }
+      } catch {}
       audioProducerRef.current = null;
       videoProducerRef.current = null;
       sendTransportRef.current = null;
@@ -1638,7 +1972,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       setTimeout(() => {
         if (userVideoRef.current && userStream.current) {
           userVideoRef.current.srcObject = userStream.current;
-          userVideoRef.current.play().catch(() => { });
+          userVideoRef.current.play().catch(() => {});
         }
       }, 700);
     }
@@ -1653,14 +1987,13 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       const playPromise = userVideoRef.current.play();
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
-          if (err.name !== 'AbortError') {
+          if (err.name !== "AbortError") {
             console.warn("Video play rejected:", err);
           }
         });
       }
     }
   }, [isFloating, stream, screenShare, screenShareLoading]);
-
 
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -1669,7 +2002,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
         if (!screenShare && !screenShareLoading && userStream.current) {
           userVideoRef.current.srcObject = userStream.current;
         }
-        userVideoRef.current.play().catch(() => { });
+        userVideoRef.current.play().catch(() => {});
       }
     };
 
@@ -1690,7 +2023,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
   function findPeer(socketId) {
     if (!socketId) return null;
     const entry = Object.entries(userVideoAudio).find(
-      ([, info]) => info && info.socketId === socketId
+      ([, info]) => info && info.socketId === socketId,
     );
     if (!entry) return null;
     const [userName, info] = entry;
@@ -1698,12 +2031,14 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
   }
   //  className={`width-peer${peers.length > 8 ? "" : peers.length}`}
 
-
   const goToBack = (e) => {
     e.preventDefault();
     setShowReconnectModal(false);
     const activeCallId = sessionStorage.getItem("activeCallId");
-    socketRef.current.emit(leaveEvent || "BE-leave-room", { roomId: activeCallId, leaver: currentUser });
+    socketRef.current.emit(leaveEvent || "BE-leave-room", {
+      roomId: activeCallId,
+      leaver: currentUser,
+    });
     sessionStorage.removeItem("user");
     sessionStorage.removeItem("callStatus");
     sessionStorage.removeItem("userInActiveCall");
@@ -1715,7 +2050,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       userStream.current = null;
     }
     if (window.userStream) {
-      window.userStream.getTracks().forEach(track => track.stop());
+      window.userStream.getTracks().forEach((track) => track.stop());
       window.userStream = null;
     }
 
@@ -1780,7 +2115,10 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       }
     }
 
-    socketRef.current.emit("BE-toggle-camera-audio", { roomId, switchTarget: target });
+    socketRef.current.emit("BE-toggle-camera-audio", {
+      roomId,
+      switchTarget: target,
+    });
   };
 
   const clickScreenSharing = () => {
@@ -1792,103 +2130,135 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
     if (!screenShare) {
       // Check if someone else is already sharing
       if (currentScreenSharer) {
-        toast.warning(`Screen is already sharing. Please wait for them to stop.`);
+        toast.warning(
+          `Screen is already sharing. Please wait for them to stop.`,
+        );
         return;
       }
 
       setScreenShareLoading(true); // Start loading
-      navigator.mediaDevices.getDisplayMedia({
-        cursor: true,
-        video: {
-          displaySurface: 'monitor' // Prefer full monitor to avoid window recursion
-        }
-      }).then(async (stream) => {
-        const screenTrack = stream.getTracks()[0];
-
-        const originalVideoTrack = userStream.current?.getVideoTracks()[0];
-
-        // Update local preview
-        if (userVideoRef.current) {
-          userVideoRef.current.srcObject = stream;
-          userVideoRef.current.play().catch(() => { });
-        }
-
-        // Replace track in mediasoup video producer (SFU path)
-        if (useMediasoup && videoProducerRef.current && screenTrack) {
-          try {
-            wasVideoProducerPausedBeforeShareRef.current = !!videoProducerRef.current.paused;
-            await videoProducerRef.current.replaceTrack({ track: screenTrack });
-            // If user had video paused, sharing should still be visible remotely.
-            if (videoProducerRef.current.paused) {
-              await videoProducerRef.current.resume();
-            }
-            console.log("[room.js] screen share track replaced on producer");
-          } catch (err) {
-            console.error("Failed to replace track on video producer for screen share:", err);
-          }
-        }
-
-        screenTrack.onended = () => {
-          // Stop all tracks in the screen share stream to remove browser UI
-          stream.getTracks().forEach(track => track.stop());
+      navigator.mediaDevices
+        .getDisplayMedia({
+          cursor: true,
+          video: {
+            displaySurface: "monitor", // Prefer full monitor to avoid window recursion
+          },
+        })
+        .then(async (stream) => {
+          const screenTrack = stream.getTracks()[0];
 
           const originalVideoTrack = userStream.current?.getVideoTracks()[0];
 
-          // Restore local preview
-          if (userVideoRef.current && userStream.current) {
-            userVideoRef.current.srcObject = userStream.current;
-            // Force video element to re-render properly
-            userVideoRef.current.play().catch(() => { });
+          // Update local preview
+          if (userVideoRef.current) {
+            userVideoRef.current.srcObject = stream;
+            userVideoRef.current.play().catch(() => {});
           }
 
-          // Restore original track on mediasoup producer
-          if (useMediasoup && videoProducerRef.current && originalVideoTrack) {
-            videoProducerRef.current
-              .replaceTrack({ track: originalVideoTrack })
-              .then(async () => {
-                // Restore previous paused state after screen sharing ends.
-                if (wasVideoProducerPausedBeforeShareRef.current && !videoProducerRef.current.paused) {
-                  await videoProducerRef.current.pause();
-                }
-                wasVideoProducerPausedBeforeShareRef.current = false;
-                console.log("[room.js] original video track restored after screen share");
-              })
-              .catch((err) => {
-                console.warn("Failed to restore original track on video producer:", err);
+          // Replace track in mediasoup video producer (SFU path)
+          if (useMediasoup && videoProducerRef.current && screenTrack) {
+            try {
+              wasVideoProducerPausedBeforeShareRef.current =
+                !!videoProducerRef.current.paused;
+              await videoProducerRef.current.replaceTrack({
+                track: screenTrack,
               });
+              // If user had video paused, sharing should still be visible remotely.
+              if (videoProducerRef.current.paused) {
+                await videoProducerRef.current.resume();
+              }
+              console.log("[room.js] screen share track replaced on producer");
+            } catch (err) {
+              console.error(
+                "Failed to replace track on video producer for screen share:",
+                err,
+              );
+            }
           }
-          setScreenShare(false);
-          setScreenShareLoading(false);
-          setCurrentScreenSharer(null); // Clear current sharer
-          socketRef.current.emit("BE-toggle-screen-share", { roomId, isScreenShare: false });
-        };
 
-        if (userVideoRef.current) {
-          // Set stream and ensure proper playback
-          userVideoRef.current.srcObject = stream;
-          userVideoRef.current.play().catch((err) => {
-            console.warn("Screen share video play warning:", err);
-          });
-        }
-        screenTrackRef.current = screenTrack;
+          screenTrack.onended = () => {
+            // Stop all tracks in the screen share stream to remove browser UI
+            stream.getTracks().forEach((track) => track.stop());
 
-        // Small delay to ensure stream is ready before hiding loader
-        setTimeout(() => {
-          setScreenShare(true);
-          setScreenShareLoading(false);
-          // Set self as current sharer
-          setCurrentScreenSharer({ userId: socketRef.current.id, userName: 'You' });
-          socketRef.current.emit("BE-toggle-screen-share", { roomId, isScreenShare: true });
-        }, 500);
-      }).catch((err) => {
-        console.error("Screen sharing failed:", err);
-        setScreenShareLoading(false); // Stop loading on error
-        if (err.name === 'NotAllowedError') {
-          toast.info("Screen sharing permission denied.");
-        } else {
-          toast.error("Screen sharing failed. Please try again.");
-        }
-      });
+            const originalVideoTrack = userStream.current?.getVideoTracks()[0];
+
+            // Restore local preview
+            if (userVideoRef.current && userStream.current) {
+              userVideoRef.current.srcObject = userStream.current;
+              // Force video element to re-render properly
+              userVideoRef.current.play().catch(() => {});
+            }
+
+            // Restore original track on mediasoup producer
+            if (
+              useMediasoup &&
+              videoProducerRef.current &&
+              originalVideoTrack
+            ) {
+              videoProducerRef.current
+                .replaceTrack({ track: originalVideoTrack })
+                .then(async () => {
+                  // Restore previous paused state after screen sharing ends.
+                  if (
+                    wasVideoProducerPausedBeforeShareRef.current &&
+                    !videoProducerRef.current.paused
+                  ) {
+                    await videoProducerRef.current.pause();
+                  }
+                  wasVideoProducerPausedBeforeShareRef.current = false;
+                  console.log(
+                    "[room.js] original video track restored after screen share",
+                  );
+                })
+                .catch((err) => {
+                  console.warn(
+                    "Failed to restore original track on video producer:",
+                    err,
+                  );
+                });
+            }
+            setScreenShare(false);
+            setScreenShareLoading(false);
+            setCurrentScreenSharer(null); // Clear current sharer
+            socketRef.current.emit("BE-toggle-screen-share", {
+              roomId,
+              isScreenShare: false,
+            });
+          };
+
+          if (userVideoRef.current) {
+            // Set stream and ensure proper playback
+            userVideoRef.current.srcObject = stream;
+            userVideoRef.current.play().catch((err) => {
+              console.warn("Screen share video play warning:", err);
+            });
+          }
+          screenTrackRef.current = screenTrack;
+
+          // Small delay to ensure stream is ready before hiding loader
+          setTimeout(() => {
+            setScreenShare(true);
+            setScreenShareLoading(false);
+            // Set self as current sharer
+            setCurrentScreenSharer({
+              userId: socketRef.current.id,
+              userName: "You",
+            });
+            socketRef.current.emit("BE-toggle-screen-share", {
+              roomId,
+              isScreenShare: true,
+            });
+          }, 500);
+        })
+        .catch((err) => {
+          console.error("Screen sharing failed:", err);
+          setScreenShareLoading(false); // Stop loading on error
+          if (err.name === "NotAllowedError") {
+            toast.info("Screen sharing permission denied.");
+          } else {
+            toast.error("Screen sharing failed. Please try again.");
+          }
+        });
     } else {
       if (screenTrackRef.current) {
         screenTrackRef.current.onended();
@@ -1898,7 +2268,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
 
   const expandScreen = (e) => {
     // Target the parent container (VideoBox) to preserve CSS transforms like mirroring
-    const elem = e.target.closest('div') || e.target;
+    const elem = e.target.closest("div") || e.target;
     if (elem.requestFullscreen) elem.requestFullscreen();
     else if (elem.mozRequestFullScreen) elem.mozRequestFullScreen();
     else if (elem.webkitRequestFullscreen) elem.webkitRequestFullscreen();
@@ -1930,8 +2300,18 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
     navigator.mediaDevices
       .getUserMedia({
         video: lowBandwidthNet
-          ? { deviceId, width: { ideal: 480, max: 640 }, height: { ideal: 270, max: 360 }, frameRate: { ideal: 10, max: 12 } }
-          : { deviceId, width: { ideal: 960, max: 1280 }, height: { ideal: 540, max: 720 }, frameRate: { ideal: 15, max: 20 } },
+          ? {
+              deviceId,
+              width: { ideal: 480, max: 640 },
+              height: { ideal: 270, max: 360 },
+              frameRate: { ideal: 10, max: 12 },
+            }
+          : {
+              deviceId,
+              width: { ideal: 960, max: 1280 },
+              height: { ideal: 540, max: 720 },
+              frameRate: { ideal: 15, max: 20 },
+            },
         audio: enabledAudio,
       })
       .then(async (newStream) => {
@@ -1960,7 +2340,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
           } catch (e) {
             console.error(
               "Failed to replace track on mediasoup video producer:",
-              e
+              e,
             );
             toast.error("Failed to apply camera change to the call.");
           }
@@ -1983,7 +2363,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       const rect = boxRef.current.getBoundingClientRect();
       setOffset({
         x: e.clientX - rect.left,
-        y: e.clientY - rect.top
+        y: e.clientY - rect.top,
       });
       setDragging(true);
       e.stopPropagation();
@@ -1994,7 +2374,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
     if (!dragging) return;
     setPosition({
       x: e.clientX - offset.x,
-      y: e.clientY - offset.y
+      y: e.clientY - offset.y,
     });
   };
 
@@ -2043,7 +2423,10 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       recordingBusy,
     });
     setRecordingBusy(true);
-    socketRef.current.emit("BE-stop-recording", { roomId, recordingId: recordingIdToStop });
+    socketRef.current.emit("BE-stop-recording", {
+      roomId,
+      recordingId: recordingIdToStop,
+    });
   };
 
   function pickPrimaryVideoStream() {
@@ -2051,7 +2434,11 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
     // that has a video track (remote first, then local).
     if (!isAudioOnlyCall) {
       for (const stream of Object.values(remoteStreamsRef.current || {})) {
-        if (stream && stream.getVideoTracks && stream.getVideoTracks().length > 0) {
+        if (
+          stream &&
+          stream.getVideoTracks &&
+          stream.getVideoTracks().length > 0
+        ) {
           return stream;
         }
       }
@@ -2061,15 +2448,19 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
 
   async function uploadRecordedBlob(blob, recordingId, durationSec) {
     if (!blob || !blob.size || !recordingId) {
-      console.warn("[room.js][REC] uploadRecordedBlob skipped (missing blob/size/recordingId)", {
-        blobSize: blob?.size,
-        blobType: blob?.type,
-        recordingId,
-      });
+      console.warn(
+        "[room.js][REC] uploadRecordedBlob skipped (missing blob/size/recordingId)",
+        {
+          blobSize: blob?.size,
+          blobType: blob?.type,
+          recordingId,
+        },
+      );
       return;
     }
 
-    const proxyBase = process.env.NEXT_PUBLIC_PROXY || process.env.NEXT_PUBLIC_API_URL || "";
+    const proxyBase =
+      process.env.NEXT_PUBLIC_PROXY || process.env.NEXT_PUBLIC_API_URL || "";
     const apiBase = proxyBase ? String(proxyBase).replace(/\/+$/, "") : "";
 
     try {
@@ -2083,9 +2474,15 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
 
       const mimeType = blob.type || "video/webm";
 
-      const initUrl = apiBase ? `${apiBase}/api/v1/groups/recordings/init` : "/api/v1/groups/recordings/init";
-      const chunkUrl = apiBase ? `${apiBase}/api/v1/groups/recordings/chunk` : "/api/v1/groups/recordings/chunk";
-      const completeUrl = apiBase ? `${apiBase}/api/v1/groups/recordings/complete` : "/api/v1/groups/recordings/complete";
+      const initUrl = apiBase
+        ? `${apiBase}/api/v1/groups/recordings/init`
+        : "/api/v1/groups/recordings/init";
+      const chunkUrl = apiBase
+        ? `${apiBase}/api/v1/groups/recordings/chunk`
+        : "/api/v1/groups/recordings/chunk";
+      const completeUrl = apiBase
+        ? `${apiBase}/api/v1/groups/recordings/complete`
+        : "/api/v1/groups/recordings/complete";
 
       const initRes = await fetch(initUrl, {
         method: "POST",
@@ -2120,11 +2517,14 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
           : initJson,
       });
       if (!initRes.ok || !initJson?.success) {
-        throw new Error(initJson?.message || "Failed to initialize recording upload.");
+        throw new Error(
+          initJson?.message || "Failed to initialize recording upload.",
+        );
       }
 
       const uploadSessionId = initJson?.data?.uploadSessionId;
-      if (!uploadSessionId) throw new Error("Missing uploadSessionId from server.");
+      if (!uploadSessionId)
+        throw new Error("Missing uploadSessionId from server.");
 
       const chunkSize = 5 * 1024 * 1024; // 5MB chunks
       const totalChunks = Math.ceil(blob.size / chunkSize);
@@ -2181,7 +2581,8 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
           throw new Error(
             chunkJson?.error
               ? `${chunkJson?.message || "Chunk upload failed"}: ${String(chunkJson?.error)}`
-              : chunkJson?.message || `Chunk upload failed at index ${chunkIndex}.`,
+              : chunkJson?.message ||
+                  `Chunk upload failed at index ${chunkIndex}.`,
           );
         }
       }
@@ -2219,7 +2620,9 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
         message: completeJson?.message,
       });
       if (!completeRes.ok || !completeJson?.success) {
-        throw new Error(completeJson?.message || "Failed to complete recording upload.");
+        throw new Error(
+          completeJson?.message || "Failed to complete recording upload.",
+        );
       }
     } catch (e) {
       console.error("[room.js] uploadRecordedBlob failed", e);
@@ -2259,7 +2662,9 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
 
     const addAudioTrackToMix = (track) => {
       if (!track) return;
-      const source = audioContext.createMediaStreamSource(new MediaStream([track]));
+      const source = audioContext.createMediaStreamSource(
+        new MediaStream([track]),
+      );
       const gainNode = audioContext.createGain();
       gainNode.gain.value = 1.0;
       source.connect(gainNode).connect(destination);
@@ -2286,7 +2691,9 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
     let mimeType = undefined;
     if (isAudioOnlyCall) {
       const preferredAudio = "audio/webm;codecs=opus";
-      mimeType = MediaRecorder.isTypeSupported(preferredAudio) ? preferredAudio : "audio/webm";
+      mimeType = MediaRecorder.isTypeSupported(preferredAudio)
+        ? preferredAudio
+        : "audio/webm";
     } else {
       mimeType = "video/webm;codecs=vp9,opus";
       if (!MediaRecorder.isTypeSupported(mimeType))
@@ -2304,7 +2711,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
     let composedStream;
     let drawTimer = null;
     let canvas = null;
-  let videoEls = [];
+    let videoEls = [];
 
     if (!isAudioOnlyCall) {
       // Phase 2: record a single "mosaic" video by drawing all participant tiles
@@ -2317,7 +2724,9 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
 
       const remoteVideoStreams = remoteEntries.map(([, s]) => s);
       const localVideoStreams =
-        userStream.current && userStream.current.getVideoTracks && userStream.current.getVideoTracks().length > 0
+        userStream.current &&
+        userStream.current.getVideoTracks &&
+        userStream.current.getVideoTracks().length > 0
           ? [userStream.current]
           : [];
 
@@ -2424,14 +2833,17 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
     const recordedChunks = [];
     recordedChunksRef.current = recordedChunks;
 
-    const recorder = new MediaRecorder(composedStream, { mimeType: chosenMimeType });
+    const recorder = new MediaRecorder(composedStream, {
+      mimeType: chosenMimeType,
+    });
     mediaRecorderRef.current = recorder;
     recordingStartTimeRef.current = Date.now();
 
     let ondataLogged = false;
     recorder.ondataavailable = (event) => {
       try {
-        if (event.data && event.data.size > 0) recordedChunksRef.current.push(event.data);
+        if (event.data && event.data.size > 0)
+          recordedChunksRef.current.push(event.data);
         if (!ondataLogged && event.data && event.data.size > 0) {
           ondataLogged = true;
           console.log("[room.js][REC] first ondataavailable", {
@@ -2446,14 +2858,19 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
 
     recorder.onstop = async () => {
       try {
-        console.log("[room.js][REC] recorder stopped, chunks:", recordedChunksRef.current?.length || 0);
+        console.log(
+          "[room.js][REC] recorder stopped, chunks:",
+          recordedChunksRef.current?.length || 0,
+        );
         // Stop drawing
         if (recordingDrawTimerRef.current) {
           window.clearInterval(recordingDrawTimerRef.current);
           recordingDrawTimerRef.current = null;
         }
 
-        const elapsedSec = Math.round(((Date.now() - recordingStartTimeRef.current) || 0) / 1000);
+        const elapsedSec = Math.round(
+          (Date.now() - recordingStartTimeRef.current || 0) / 1000,
+        );
 
         const finalBlob = new Blob(recordedChunksRef.current || [], {
           type: chosenMimeType,
@@ -2467,7 +2884,11 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
         const durationForServer = Number.isFinite(elapsedSec) ? elapsedSec : 0;
 
         setRecordingBusy(true);
-        await uploadRecordedBlob(finalBlob, startingRecordingId, durationForServer);
+        await uploadRecordedBlob(
+          finalBlob,
+          startingRecordingId,
+          durationForServer,
+        );
       } catch (e) {
         // uploadRecordedBlob already toasts errors
         console.error("[room.js][REC] recorder.onstop error", e);
@@ -2508,24 +2929,22 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
   return (
     <>
       {showModal && (
-        <div className={isFloating ? 'minimize' : 'maximize'}
+        <div
+          className={isFloating ? "minimize" : "maximize"}
           onMouseDown={handleMouseDown}
           ref={boxRef}
           style={{
-            left: isFloating ? position.x : '0px',
-            top: isFloating ? position.y : '0px',
+            left: isFloating ? position.x : "0px",
+            top: isFloating ? position.y : "0px",
             right: "auto",
             bottom: "auto",
-
-
-
-
-          }}>
-          <ModalContent onClick={(e) => e.stopPropagation()} $isFloating={isFloating}>
-            <ReconnectModal
-              visible={showReconnectModal}
-              goToBack={goToBack}
-            />
+          }}
+        >
+          <ModalContent
+            onClick={(e) => e.stopPropagation()}
+            $isFloating={isFloating}
+          >
+            <ReconnectModal visible={showReconnectModal} goToBack={goToBack} />
             <div className="modal-header">
               <h5
                 className="modal-title"
@@ -2540,16 +2959,28 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
               >
                 {callType.toUpperCase()} CALL
                 {isRecording ? (
-                  <span style={{ color: recordingBlinkOn ? "#ef4444" : "#fca5a5", fontSize: 12 }}>
-                    {" "} | {recordingBlinkOn ? "REC" : "RECORDING"}
+                  <span
+                    style={{
+                      color: recordingBlinkOn ? "#ef4444" : "#fca5a5",
+                      fontSize: 12,
+                    }}
+                  >
+                    {" "}
+                    | {recordingBlinkOn ? "REC" : "RECORDING"}
                   </span>
                 ) : null}
               </h5>
               {waitingCalls.length > 0 && (
                 <PulsingAlert>
                   <span>
-                    <i className="fas fa-phone-volume" style={{ marginRight: '8px' }}></i>
-                    Waiting: {waitingCalls.map(c => c.isDirect ? c.callerName : c.groupName).join(', ')}
+                    <i
+                      className="fas fa-phone-volume"
+                      style={{ marginRight: "8px" }}
+                    ></i>
+                    Waiting:{" "}
+                    {waitingCalls
+                      .map((c) => (c.isDirect ? c.callerName : c.groupName))
+                      .join(", ")}
                   </span>
                 </PulsingAlert>
               )}
@@ -2627,12 +3058,29 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
                 </span>
               ) : null}
             </div>
-            <div style={{ display: 'flex', width: '100%', height: 'calc(100% - 50px)', position: 'relative' }}>
-              <VideoContainer $isFloating={isFloating} className={`width-peer${remotePeers.length > 8 ? "" : remotePeers.length}`} style={{ flex: 1, height: '100%' }}>
+            <div
+              style={{
+                display: "flex",
+                width: "100%",
+                height: "calc(100% - 50px)",
+                position: "relative",
+              }}
+            >
+              <VideoContainer
+                $isFloating={isFloating}
+                className={`width-peer${remotePeers.length > 8 ? "" : remotePeers.length}`}
+                style={{ flex: 1, height: "100%" }}
+              >
                 <VideoBox>
-                  {userVideoAudio["localUser"].video ? <Label>You</Label> : <UserName>You</UserName>}
+                  {userVideoAudio["localUser"].video ? (
+                    <Label>You</Label>
+                  ) : (
+                    <UserName>You</UserName>
+                  )}
                   {/* Hide expand icon during screen share to prevent infinite loop */}
-                  {!screenShare && <FaIcon className="fas fa-expand" onClick={expandScreen} />}
+                  {!screenShare && (
+                    <FaIcon className="fas fa-expand" onClick={expandScreen} />
+                  )}
                   <MyVideo
                     ref={userVideoRef}
                     muted
@@ -2640,9 +3088,12 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
                     playsInline
                     controls={false}
                     style={{
-                      transform: (screenShare || !hasRealVideo) ? "scaleX(1)" : "scaleX(-1)",
+                      transform:
+                        screenShare || !hasRealVideo
+                          ? "scaleX(1)"
+                          : "scaleX(-1)",
                       cursor: screenShare ? "default" : "pointer",
-                      opacity: screenShareLoading ? 0.5 : 1
+                      opacity: screenShareLoading ? 0.5 : 1,
                     }}
                     onClick={!screenShare ? expandScreen : undefined}
                   />
@@ -2654,18 +3105,19 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
                     </LoadingOverlay>
                   )}
                   {!userVideoAudio["localUser"].audio && (
-                    <MuteIconContainer>
-                      🔇
-                    </MuteIconContainer>
+                    <MuteIconContainer>🔇</MuteIconContainer>
                   )}
                   {isSpeaking && userVideoAudio["localUser"].audio && (
                     <SpeakingDot />
                   )}
                 </VideoBox>
                 {remotePeers.map((remote, index, arr) => {
-                const info = userVideoAudio[remote.userId] || {};
-                const displayName =
-                  info.senderName || info.name || info.fullName || remote.userId;
+                  const info = userVideoAudio[remote.userId] || {};
+                  const displayName =
+                    info.senderName ||
+                    info.name ||
+                    info.fullName ||
+                    remote.userId;
                   const isMuted = info.audio === false;
                   const isScreenSharing = info.isScreenShare;
 
@@ -2675,7 +3127,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
                       onClick={!isScreenSharing ? expandScreen : undefined}
                       $isScreenShare={isScreenSharing}
                       style={{
-                        cursor: isScreenSharing ? "default" : "pointer"
+                        cursor: isScreenSharing ? "default" : "pointer",
                       }}
                     >
                       {writeUserName(displayName)}
@@ -2698,9 +3150,26 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
               {showChat && (
                 <ChatSidebarContainer show={showChat}>
                   <ChatSidebarHeader>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <i className="fas fa-comments" style={{ color: 'var(--primary-color)' }} />
-                      <span style={{ fontWeight: 600, fontSize: '1rem', color: '#334155' }}>In-call Messages</span>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                      }}
+                    >
+                      <i
+                        className="fas fa-comments"
+                        style={{ color: "var(--primary-color)" }}
+                      />
+                      <span
+                        style={{
+                          fontWeight: 600,
+                          fontSize: "1rem",
+                          color: "#334155",
+                        }}
+                      >
+                        In-call Messages
+                      </span>
                     </div>
                     <IconButton onClick={() => setShowChat(false)} size="small">
                       <CloseIcon fontSize="small" />
@@ -2734,7 +3203,6 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
               isGuestMeeting={isGuestMeeting}
               clickChat={clickChat}
             />
-
           </ModalContent>
         </div>
       )}
@@ -2765,14 +3233,18 @@ const ChatSidebarContainer = styled.div`
   border-left: 1px solid #e2e8f0;
   display: flex;
   flex-direction: column;
-  box-shadow: -2px 0 10px rgba(0,0,0,0.1);
+  box-shadow: -2px 0 10px rgba(0, 0, 0, 0.1);
   animation: slideIn 0.3s ease-out;
   flex-shrink: 0;
   z-index: 100;
 
   @keyframes slideIn {
-    from { transform: translateX(100%); }
-    to { transform: translateX(0); }
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: translateX(0);
+    }
   }
 
   @media (max-width: 768px) {
@@ -2814,17 +3286,19 @@ const ModalOverlay_minimize = styled.div`
 
 const ModalContent = styled.div`
   background: #1a1a1a;
-  padding: ${props => props?.$isFloating ? '20px' : '10px'};
+  padding: ${(props) => (props?.$isFloating ? "20px" : "10px")};
   border-radius: 12px;
   box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.5);
   width: 100%;
-  height: ${props => props?.$isFloating ? '100%' : '100vh'};
+  height: ${(props) => (props?.$isFloating ? "100%" : "100vh")};
   overflow: hidden;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  
-  ${props => !props?.$isFloating && `
+
+  ${(props) =>
+    !props?.$isFloating &&
+    `
     .header-section {
       flex-shrink: 0;
     }
@@ -2844,18 +3318,21 @@ const ModalContent = styled.div`
 `;
 // grid-template-columns: ${props => props?.isFloating ? '1fr' : 'repeat(auto-fit, minmax(200px, 1fr))'};
 const VideoContainer = styled.div`
-   ${props => !props?.$isFloating && `display: grid;`}
-  
-  gap: ${props => props?.$isFloating ? '8px' : '8px'};
-  height: ${props => props?.$isFloating ? 'calc(100% - 50px)' : 'calc(100% - 100px)'};
+  ${(props) => !props?.$isFloating && `display: grid;`}
+
+  gap: ${(props) => (props?.$isFloating ? "8px" : "8px")};
+  height: ${(props) =>
+    props?.$isFloating ? "calc(100% - 50px)" : "calc(100% - 100px)"};
   overflow: hidden;
   padding: 0 5px;
   min-height: 0;
   align-content: center;
   transition: all 0.3s ease-in-out;
   overflow-y: auto;
-  
-  ${props => !props?.$isFloating && `
+
+  ${(props) =>
+    !props?.$isFloating &&
+    `
     @media (max-width: 768px) {
       grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
       gap: 6px;
@@ -2871,33 +3348,42 @@ const VideoContainer = styled.div`
 const VideoBox = styled.div`
   background: #2c2c2c;
   border-radius: 8px;
-  padding: ${props => props?.$isFloating ? '8px' : '4px'};
+  padding: ${(props) => (props?.$isFloating ? "8px" : "4px")};
   position: relative;
   width: 100%;
-  // aspect-ratio: ${props => props?.isFloating ? '4/3' : '16/9'};
+  // aspect-ratio: ${(props) => (props?.isFloating ? "4/3" : "16/9")};
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  
+
   /* Main screen share takes full area */
-  ${props => props?.$isMainShare && `
+  ${(props) =>
+    props?.$isMainShare &&
+    `
     width: 100%;
     height: 100%;
     background: #000;
     padding: 0;
   `}
-  
+
   /* Make screen shares bigger by spanning 2 columns in grid */
-  ${props => props?.$isScreenShare && !props?.$isFloating && !props?.$isMainShare && `
+  ${(props) =>
+    props?.$isScreenShare &&
+    !props?.$isFloating &&
+    !props?.$isMainShare &&
+    `
     grid-column: span 2;
     @media (max-width: 768px) {
       grid-column: span 1; /* Mobile: take full width */
     }
   `}
   
-  ${props => !props?.$isFloating && !props?.$isMainShare && `
+  ${(props) =>
+    !props?.$isFloating &&
+    !props?.$isMainShare &&
+    `
     @media (max-width: 768px) {
       padding: 3px;
     }
@@ -2948,7 +3434,7 @@ const pulseAnimation = keyframes`
 `;
 
 const PulsingAlert = styled.div`
-  background-color: #E65100;
+  background-color: #e65100;
   padding: 8px 12px;
   border-radius: 5px;
   margin-bottom: 10px;
@@ -2956,7 +3442,7 @@ const PulsingAlert = styled.div`
   align-items: center;
   justify-content: space-between;
   font-size: 14px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
   margin-right: 10px;
   color: #fff;
   font-weight: bold;
@@ -2998,10 +3484,12 @@ const ScreenShareLayout = styled.div`
   gap: 10px;
   width: 100%;
   height: calc(100vh - 200px);
-  padding: ${props => props?.$isFloating ? '5px' : '10px'};
+  padding: ${(props) => (props?.$isFloating ? "5px" : "10px")};
   box-sizing: border-box;
 
-  ${props => props?.$isFloating && `
+  ${(props) =>
+    props?.$isFloating &&
+    `
     height: 100%;
     padding: 5px;
   `}
@@ -3037,22 +3525,22 @@ const ParticipantsSidebar = styled.div`
   background: #1a1a1a;
   border-radius: 8px;
   padding: 8px;
-  
+
   /* Custom scrollbar */
   &::-webkit-scrollbar {
     width: 6px;
   }
-  
+
   &::-webkit-scrollbar-track {
     background: #2c2c2c;
     border-radius: 3px;
   }
-  
+
   &::-webkit-scrollbar-thumb {
     background: #666;
     border-radius: 3px;
   }
-  
+
   &::-webkit-scrollbar-thumb:hover {
     background: #888;
   }
@@ -3063,7 +3551,7 @@ const ParticipantsSidebar = styled.div`
     flex-direction: row;
     overflow-x: auto;
     overflow-y: hidden;
-    
+
     & > * {
       min-width: 120px;
     }

@@ -101,9 +101,9 @@ const mediaCodecs: types.RtpCodecCapability[] = [
     clockRate: 90000,
     preferredPayloadType: 96,
     parameters: {
-      "x-google-start-bitrate": 1000,  // kbps
-      "x-google-max-bitrate": 2000,    // kbps – cap encoder ceiling
-      "x-google-min-bitrate": 100,     // kbps – prevent quality collapsing to 0
+      "x-google-start-bitrate": 500,  // kbps - start lower to avoid immediate congestion
+      "x-google-max-bitrate": 2500,    // kbps - allow higher quality if link supports it
+      "x-google-min-bitrate": 150,     // kbps
     },
   },
 ];
@@ -183,9 +183,9 @@ export async function createWebRtcTransport(
   const preferTcp = String(process.env.MEDIASOUP_PREFER_TCP || "").toLowerCase() === "true";
   const enableUdp = String(process.env.MEDIASOUP_ENABLE_UDP || "true").toLowerCase() !== "false";
   const enableTcp = String(process.env.MEDIASOUP_ENABLE_TCP || "true").toLowerCase() !== "false";
-  const initialOutgoingBitrate = Number(process.env.MEDIASOUP_INITIAL_OUTGOING_BITRATE || 300000);
-  const maxIncomingBitrate = Number(process.env.MEDIASOUP_MAX_INCOMING_BITRATE || 600000);
-  const maxOutgoingBitrate = Number(process.env.MEDIASOUP_MAX_OUTGOING_BITRATE || 450000);
+  const initialOutgoingBitrate = Number(process.env.MEDIASOUP_INITIAL_OUTGOING_BITRATE || 1000000);
+  const maxIncomingBitrate = Number(process.env.MEDIASOUP_MAX_INCOMING_BITRATE || 3000000);
+  const maxOutgoingBitrate = Number(process.env.MEDIASOUP_MAX_OUTGOING_BITRATE || 2500000);
 
   const transport = await router.createWebRtcTransport({
     listenIps: [
@@ -248,9 +248,11 @@ export async function createWebRtcTransport(
 
   // Cap how much the server will push to each receiving client (prevents flooding on slow links)
   if (direction === "recv") {
-    await transport.setMaxIncomingBitrate(maxIncomingBitrate);
-    // Cap server -> client stream bitrate so weaker mobile links do not stall on downlink.
+    // SFU -> Client
     await transport.setMaxOutgoingBitrate(maxOutgoingBitrate);
+  } else {
+    // Client -> SFU
+    await transport.setMaxIncomingBitrate(maxIncomingBitrate);
   }
 
   peer.transports.set(transport.id, { transport, direction });
