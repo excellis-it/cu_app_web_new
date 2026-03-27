@@ -189,7 +189,7 @@ export async function createWebRtcTransport(
     enableTcp: true,
     preferUdp: true,
     enableSctp: false,
-    initialAvailableOutgoingBitrate: 1000000,  // 1 Mbps start
+    initialAvailableOutgoingBitrate: 600000,   // 600 kbps start (mobile-friendly)
   });
 
   // Cap how much the server will push to each receiving client (prevents flooding on slow links)
@@ -329,6 +329,20 @@ export function getRouterRtpCapabilities(roomId: string): types.RtpCapabilities 
   const room = rooms.get(roomId);
   if (!room) return null;
   return room.router.rtpCapabilities;
+}
+
+export async function restartTransportIce(
+  roomId: string,
+  userId: string,
+  transportId: string
+): Promise<types.IceParameters | null> {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  const peer = room.peers.get(userId);
+  if (!peer) return null;
+  const entry = peer.transports.get(transportId);
+  if (!entry) return null;
+  return entry.transport.restartIce();
 }
 
 export function getRoomProducers(

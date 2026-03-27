@@ -30,6 +30,7 @@ import {
   getRoomProducers,
   resumeConsumer,
   setConsumerPreferredLayers,
+  restartTransportIce,
 } from "../mediasoup/mediaRoomManager";
 import { startServerRecording, stopServerRecording } from "../mediasoup/recordingManager";
 import { processRecordingInBackground } from "../helpers/recordingProcessor";
@@ -1529,6 +1530,31 @@ export default function initializeSocket() {
           cb && cb({ ok: true });
         } catch (err) {
           console.error("MS-set-preferred-layers error:", err);
+          cb && cb({ ok: false, error: "failed" });
+        }
+      }
+    );
+
+    // ICE restart — client sends this when its transport goes "disconnected".
+    // Server restarts ICE on the transport and returns fresh iceParameters.
+    // Client calls transport.restartIce({ iceParameters }) to re-establish connectivity.
+    // This fixes NAT binding expiry on mobile (ICE-lite SFU never sends keepalives).
+    socket.on(
+      "MS-restart-ice",
+      async (
+        { roomId, userId, transportId }: { roomId: string; userId: string; transportId: string },
+        cb: (payload: any) => void
+      ) => {
+        try {
+          const iceParameters = await restartTransportIce(roomId, userId.toString(), transportId);
+          if (!iceParameters) {
+            cb && cb({ ok: false, error: "transport-not-found" });
+            return;
+          }
+          console.log("[MS] restart-ice", { roomId, userId, transportId });
+          cb && cb({ ok: true, iceParameters });
+        } catch (err) {
+          console.error("MS-restart-ice error:", err);
           cb && cb({ ok: false, error: "failed" });
         }
       }

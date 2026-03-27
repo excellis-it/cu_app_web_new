@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import styled from 'styled-components';
 
 // Mediasoup-only VideoCard: receives a MediaStream directly instead of a simple-peer instance.
-const VideoCard = ({ stream, username, fullName, isMuted, isScreenShare }) => {
+const VideoCard = ({ stream, username, fullName, isMuted, isScreenShare, onFreeze }) => {
   const videoRef = useRef();
   const [showVideo, setShowVideo] = useState(false);
 
@@ -152,6 +152,8 @@ const VideoCard = ({ stream, username, fullName, isMuted, isScreenShare }) => {
                 : null,
             timestamp: new Date().toISOString(),
           });
+          // Notify parent so it can attempt ICE restart / keyframe recovery
+          if (typeof onFreeze === "function") onFreeze(username);
         }
       } else {
         if (isFrozenEpisode) {

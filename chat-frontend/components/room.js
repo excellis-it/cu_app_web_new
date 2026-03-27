@@ -80,6 +80,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
   const recoveryTimerRef = useRef(null);
   const recoveryInProgressRef = useRef(false);
   const unmountingRef = useRef(false);
+  const iceRestartInProgressRef = useRef(false); // true while an ICE restart is pending
 
   // MediaRecorder / mixing refs (browser-side recorder)
   const mediaRecorderRef = useRef(null);
@@ -160,6 +161,53 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
   function getDummyStream() {
     return createDummyMediaStream();
   }
+
+  // ICE restart for a single transport. Asks the server to regenerate ICE credentials,
+  // then tells the mediasoup-client transport to use them.
+  // This recovers from NAT binding expiry without tearing down producers/consumers.
+  const restartTransportIce = async (transport, transportId, roomId, userId) => {
+    const socket = socketRef.current;
+    if (!socket || !transport || transport.closed) return false;
+    try {
+      const res = await new Promise((resolve) => {
+        socket.emit("MS-restart-ice", { roomId, userId, transportId }, resolve);
+      });
+      if (!res?.ok || !res.iceParameters) return false;
+      await transport.restartIce({ iceParameters: res.iceParameters });
+      console.log("[room.js] ICE restart applied", { transportId });
+      return true;
+    } catch (err) {
+      console.warn("[room.js] ICE restart failed", { transportId, err });
+      return false;
+    }
+  };
+
+  // Called by VideoCard when a remote video stream appears frozen for >5s.
+  // Attempts a lightweight ICE restart of the recv transport to restore packet flow.
+  const handleRemoteVideoFreeze = async (username) => {
+    if (recoveryInProgressRef.current || iceRestartInProgressRef.current) return;
+    const recvTransport = recvTransportRef.current;
+    if (!recvTransport || recvTransport.closed) return;
+    iceRestartInProgressRef.current = true;
+    console.warn("[room.js] remote video freeze — attempting ICE restart of recvTransport", { username });
+    try {
+      const ok = await restartTransportIce(recvTransport, recvTransport.id, roomId, currentUser);
+      if (!ok) {
+        console.warn("[room.js] ICE restart failed after freeze; falling back to full transport rebuild");
+        recoveryInProgressRef.current = true;
+        consumedProducerIdsRef.current.clear();
+        try { sendTransportRef.current?.close(); } catch { }
+        try { recvTransportRef.current?.close(); } catch { }
+        sendTransportRef.current = null;
+        recvTransportRef.current = null;
+        deviceRef.current = null;
+        await initializeMediasoup(roomId, currentUser);
+      }
+    } finally {
+      iceRestartInProgressRef.current = false;
+      recoveryInProgressRef.current = false;
+    }
+  };
 
   // Fallback: fetch and consume producers for a newly joined peer (in case MS-new-producer was missed)
   const fetchAndConsumeProducersForNewPeer = async (rId, myUserId, newPeerUserId, retryCount = 0, callGen = callGenRef.current) => {
@@ -1040,18 +1088,58 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       sendTransportRef.current = sendTransport;
       sendTransport.on("connectionstatechange", (state) => {
         console.log("[room.js] sendTransport connectionstatechange", state);
-        if ((state === "failed" || state === "disconnected") && !recoveryInProgressRef.current && !recoveryTimerRef.current) {
+        if (state === "connected") {
+          if (recoveryTimerRef.current) { clearTimeout(recoveryTimerRef.current); recoveryTimerRef.current = null; }
+          iceRestartInProgressRef.current = false;
+          return;
+        }
+        if (state === "disconnected" && !recoveryInProgressRef.current && !recoveryTimerRef.current && !iceRestartInProgressRef.current) {
+          // Disconnected is often transient — wait briefly then try ICE restart before full rebuild
+          recoveryTimerRef.current = setTimeout(async () => {
+            recoveryTimerRef.current = null;
+            if (recoveryInProgressRef.current || unmountingRef.current) return;
+            if (!socketRef.current?.connected) return;
+            if (sendTransport.connectionState === "connected") return; // recovered on its own
+            iceRestartInProgressRef.current = true;
+            console.warn("[room.js] send transport disconnected; attempting ICE restart");
+            const ok = await restartTransportIce(sendTransport, sendTransport.id, roomId, userId);
+            iceRestartInProgressRef.current = false;
+            if (!ok && sendTransport.connectionState !== "connected") {
+              // ICE restart didn't help — full rebuild
+              recoveryInProgressRef.current = true;
+              console.warn("[room.js] send transport ICE restart failed; rebuilding mediasoup transports");
+              try {
+                try { audioProducerRef.current?.close(); } catch { }
+                try { videoProducerRef.current?.close(); } catch { }
+                try { sendTransportRef.current?.close(); } catch { }
+                try { recvTransportRef.current?.close(); } catch { }
+                audioProducerRef.current = null;
+                videoProducerRef.current = null;
+                sendTransportRef.current = null;
+                recvTransportRef.current = null;
+                deviceRef.current = null;
+                consumedProducerIdsRef.current.clear();
+                await initializeMediasoup(roomId, userId);
+              } catch (err) {
+                console.error("[room.js] send transport recovery failed", err);
+              } finally {
+                recoveryInProgressRef.current = false;
+              }
+            }
+          }, 3500);
+        } else if (state === "failed" && !recoveryInProgressRef.current && !recoveryTimerRef.current) {
+          // Failed is definitive — rebuild immediately after a short grace period
           recoveryTimerRef.current = setTimeout(async () => {
             recoveryTimerRef.current = null;
             if (recoveryInProgressRef.current || unmountingRef.current) return;
             if (!socketRef.current?.connected) return;
             recoveryInProgressRef.current = true;
-            console.warn("[room.js] send transport degraded; rebuilding mediasoup transports");
+            console.warn("[room.js] send transport failed; rebuilding mediasoup transports");
             try {
-              try { audioProducerRef.current && audioProducerRef.current.close(); } catch { }
-              try { videoProducerRef.current && videoProducerRef.current.close(); } catch { }
-              try { sendTransportRef.current && sendTransportRef.current.close(); } catch { }
-              try { recvTransportRef.current && recvTransportRef.current.close(); } catch { }
+              try { audioProducerRef.current?.close(); } catch { }
+              try { videoProducerRef.current?.close(); } catch { }
+              try { sendTransportRef.current?.close(); } catch { }
+              try { recvTransportRef.current?.close(); } catch { }
               audioProducerRef.current = null;
               videoProducerRef.current = null;
               sendTransportRef.current = null;
@@ -1064,10 +1152,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             } finally {
               recoveryInProgressRef.current = false;
             }
-          }, 3500);
-        } else if (state === "connected" && recoveryTimerRef.current) {
-          clearTimeout(recoveryTimerRef.current);
-          recoveryTimerRef.current = null;
+          }, 1000);
         }
       });
 
@@ -1113,18 +1198,58 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       recvTransportRef.current = recvTransport;
       recvTransport.on("connectionstatechange", (state) => {
         console.log("[room.js] recvTransport connectionstatechange", state);
-        if ((state === "failed" || state === "disconnected") && !recoveryInProgressRef.current && !recoveryTimerRef.current) {
+        if (state === "connected") {
+          if (recoveryTimerRef.current) { clearTimeout(recoveryTimerRef.current); recoveryTimerRef.current = null; }
+          iceRestartInProgressRef.current = false;
+          return;
+        }
+        if (state === "disconnected" && !recoveryInProgressRef.current && !recoveryTimerRef.current && !iceRestartInProgressRef.current) {
+          // Disconnected is often transient — wait briefly then try ICE restart before full rebuild
+          recoveryTimerRef.current = setTimeout(async () => {
+            recoveryTimerRef.current = null;
+            if (recoveryInProgressRef.current || unmountingRef.current) return;
+            if (!socketRef.current?.connected) return;
+            if (recvTransport.connectionState === "connected") return; // recovered on its own
+            iceRestartInProgressRef.current = true;
+            console.warn("[room.js] recv transport disconnected; attempting ICE restart");
+            const ok = await restartTransportIce(recvTransport, recvTransport.id, roomId, userId);
+            iceRestartInProgressRef.current = false;
+            if (!ok && recvTransport.connectionState !== "connected") {
+              // ICE restart didn't help — full rebuild
+              recoveryInProgressRef.current = true;
+              console.warn("[room.js] recv transport ICE restart failed; rebuilding mediasoup transports");
+              try {
+                try { audioProducerRef.current?.close(); } catch { }
+                try { videoProducerRef.current?.close(); } catch { }
+                try { sendTransportRef.current?.close(); } catch { }
+                try { recvTransportRef.current?.close(); } catch { }
+                audioProducerRef.current = null;
+                videoProducerRef.current = null;
+                sendTransportRef.current = null;
+                recvTransportRef.current = null;
+                deviceRef.current = null;
+                consumedProducerIdsRef.current.clear();
+                await initializeMediasoup(roomId, userId);
+              } catch (err) {
+                console.error("[room.js] recv transport recovery failed", err);
+              } finally {
+                recoveryInProgressRef.current = false;
+              }
+            }
+          }, 3500);
+        } else if (state === "failed" && !recoveryInProgressRef.current && !recoveryTimerRef.current) {
+          // Failed is definitive — rebuild after short grace period
           recoveryTimerRef.current = setTimeout(async () => {
             recoveryTimerRef.current = null;
             if (recoveryInProgressRef.current || unmountingRef.current) return;
             if (!socketRef.current?.connected) return;
             recoveryInProgressRef.current = true;
-            console.warn("[room.js] recv transport degraded; rebuilding mediasoup transports");
+            console.warn("[room.js] recv transport failed; rebuilding mediasoup transports");
             try {
-              try { audioProducerRef.current && audioProducerRef.current.close(); } catch { }
-              try { videoProducerRef.current && videoProducerRef.current.close(); } catch { }
-              try { sendTransportRef.current && sendTransportRef.current.close(); } catch { }
-              try { recvTransportRef.current && recvTransportRef.current.close(); } catch { }
+              try { audioProducerRef.current?.close(); } catch { }
+              try { videoProducerRef.current?.close(); } catch { }
+              try { sendTransportRef.current?.close(); } catch { }
+              try { recvTransportRef.current?.close(); } catch { }
               audioProducerRef.current = null;
               videoProducerRef.current = null;
               sendTransportRef.current = null;
@@ -1137,10 +1262,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
             } finally {
               recoveryInProgressRef.current = false;
             }
-          }, 3500);
-        } else if (state === "connected" && recoveryTimerRef.current) {
-          clearTimeout(recoveryTimerRef.current);
-          recoveryTimerRef.current = null;
+          }, 1000);
         }
       });
       socket.mediasoupRecvTransport = recvTransport; // Persist on socket for fetchAndConsumeProducers (survives remounts)
@@ -1148,8 +1270,43 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       // 5) Produce local tracks
       const local = userStream.current;
       if (local) {
-        const audioTrack = local.getAudioTracks()[0];
-        const videoTrack = local.getVideoTracks()[0];
+        let audioTrack = local.getAudioTracks()[0];
+        let videoTrack = local.getVideoTracks()[0];
+
+        // When a transport is closed during recovery, mediasoup-client stops the producer tracks.
+        // Re-acquire any ended tracks so the produce() calls succeed.
+        if (audioTrack?.readyState === "ended") {
+          try {
+            const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            const fresh = s.getAudioTracks()[0];
+            local.removeTrack(audioTrack);
+            local.addTrack(fresh);
+            audioTrack = fresh;
+            console.log("[room.js] re-acquired ended audio track");
+          } catch (e) {
+            console.warn("[room.js] could not re-acquire audio track", e);
+            audioTrack = null;
+          }
+        }
+        if (videoTrack?.readyState === "ended" && !isAudioOnlyCall) {
+          try {
+            const s = await navigator.mediaDevices.getUserMedia({
+              audio: false,
+              video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
+            });
+            const fresh = s.getVideoTracks()[0];
+            local.removeTrack(videoTrack);
+            local.addTrack(fresh);
+            videoTrack = fresh;
+            // Also update the local preview element
+            if (userVideoRef.current) userVideoRef.current.srcObject = local;
+            console.log("[room.js] re-acquired ended video track");
+          } catch (e) {
+            console.warn("[room.js] could not re-acquire video track", e);
+            videoTrack = null;
+          }
+        }
+
         const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
         const isSafariBrowser =
           /Safari/i.test(ua) && !/Chrome|Chromium|Edg|CriOS|FxiOS/i.test(ua);
@@ -2497,6 +2654,7 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
                         isMuted={isMuted}
                         isScreenShare={isScreenSharing}
                         callType={callType}
+                        onFreeze={handleRemoteVideoFreeze}
                       />
                     </VideoBox>
                   );
