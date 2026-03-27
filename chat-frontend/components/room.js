@@ -1310,10 +1310,12 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
         const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
         const isSafariBrowser =
           /Safari/i.test(ua) && !/Chrome|Chromium|Edg|CriOS|FxiOS/i.test(ua);
+        const isMobileBrowser = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
         console.log("[room.js] local tracks before produce", {
           hasAudio: !!audioTrack,
           hasVideo: !!videoTrack,
           isSafariBrowser,
+          isMobileBrowser,
         });
         if (audioTrack) {
           audioProducerRef.current = await sendTransport.produce({
@@ -1330,7 +1332,8 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
           // on lossy links and avoid simulcast layer churn freezes.
           const videoEncodings = [
             {
-              maxBitrate: isSafariBrowser ? 500_000 : 700_000,
+              maxBitrate: isMobileBrowser ? 220_000 : (isSafariBrowser ? 350_000 : 450_000),
+              maxFramerate: isMobileBrowser ? 12 : 15,
               scalabilityMode: "L1T1",
             },
           ];

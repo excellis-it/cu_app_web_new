@@ -39,7 +39,7 @@ function startKeyframeTimer(consumer: types.Consumer): void {
       return;
     }
     try { consumer.requestKeyFrame(); } catch { }
-  }, 4000); // every 4 seconds — allows recovery from a single dropped keyframe
+  }, 2000); // faster recovery on lossy mobile links
   keyframeTimers.set(consumer.id, timer);
 }
 
@@ -183,8 +183,9 @@ export async function createWebRtcTransport(
   const preferTcp = String(process.env.MEDIASOUP_PREFER_TCP || "").toLowerCase() === "true";
   const enableUdp = String(process.env.MEDIASOUP_ENABLE_UDP || "true").toLowerCase() !== "false";
   const enableTcp = String(process.env.MEDIASOUP_ENABLE_TCP || "true").toLowerCase() !== "false";
-  const initialOutgoingBitrate = Number(process.env.MEDIASOUP_INITIAL_OUTGOING_BITRATE || 400000);
-  const maxIncomingBitrate = Number(process.env.MEDIASOUP_MAX_INCOMING_BITRATE || 800000);
+  const initialOutgoingBitrate = Number(process.env.MEDIASOUP_INITIAL_OUTGOING_BITRATE || 300000);
+  const maxIncomingBitrate = Number(process.env.MEDIASOUP_MAX_INCOMING_BITRATE || 600000);
+  const maxOutgoingBitrate = Number(process.env.MEDIASOUP_MAX_OUTGOING_BITRATE || 450000);
 
   const transport = await router.createWebRtcTransport({
     listenIps: [
@@ -248,6 +249,8 @@ export async function createWebRtcTransport(
   // Cap how much the server will push to each receiving client (prevents flooding on slow links)
   if (direction === "recv") {
     await transport.setMaxIncomingBitrate(maxIncomingBitrate);
+    // Cap server -> client stream bitrate so weaker mobile links do not stall on downlink.
+    await transport.setMaxOutgoingBitrate(maxOutgoingBitrate);
   }
 
   peer.transports.set(transport.id, { transport, direction });
