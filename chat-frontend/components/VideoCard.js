@@ -61,6 +61,100 @@ const VideoCard = ({ stream, username, fullName, isMuted, isScreenShare }) => {
     };
   }, [stream, updateShowVideo]);
 
+  // Log when a remote video appears frozen so freezes can be correlated with transport/network logs.
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return undefined;
+
+    let lastFrames = -1;
+    let lastTs = 0;
+    let stuckForMs = 0;
+    const FREEZE_THRESHOLD_MS = 2500;
+
+    const onWaiting = () => {
+      console.warn("[VideoCard] remote video waiting", {
+        username,
+        fullName,
+        currentTime: el.currentTime,
+      });
+    };
+    const onStalled = () => {
+      console.warn("[VideoCard] remote video stalled", {
+        username,
+        fullName,
+        currentTime: el.currentTime,
+      });
+    };
+    const onPlaying = () => {
+      console.log("[VideoCard] remote video resumed", {
+        username,
+        fullName,
+        currentTime: el.currentTime,
+      });
+    };
+
+    el.addEventListener("waiting", onWaiting);
+    el.addEventListener("stalled", onStalled);
+    el.addEventListener("playing", onPlaying);
+
+    const timer = setInterval(() => {
+      const q =
+        typeof el.getVideoPlaybackQuality === "function"
+          ? el.getVideoPlaybackQuality()
+          : null;
+      const totalFrames =
+        q && typeof q.totalVideoFrames === "number" ? q.totalVideoFrames : -1;
+      const now = performance.now();
+
+      if (lastTs === 0) {
+        lastTs = now;
+        lastFrames = totalFrames;
+        return;
+      }
+
+      const dt = now - lastTs;
+      const frameDelta =
+        totalFrames >= 0 && lastFrames >= 0 ? totalFrames - lastFrames : -1;
+      const looksStuck =
+        !el.paused &&
+        !el.ended &&
+        el.readyState >= 2 &&
+        frameDelta === 0;
+
+      if (looksStuck) {
+        stuckForMs += dt;
+        if (stuckForMs >= FREEZE_THRESHOLD_MS) {
+          console.warn("[VideoCard] remote video freeze detected", {
+            username,
+            fullName,
+            currentTime: el.currentTime,
+            readyState: el.readyState,
+            networkState: el.networkState,
+            totalVideoFrames: totalFrames,
+            droppedVideoFrames:
+              q && typeof q.droppedVideoFrames === "number"
+                ? q.droppedVideoFrames
+                : null,
+            timestamp: new Date().toISOString(),
+          });
+          stuckForMs = 0;
+        }
+      } else {
+        stuckForMs = 0;
+      }
+
+      lastTs = now;
+      lastFrames = totalFrames;
+    }, 500);
+
+    return () => {
+      clearInterval(timer);
+      el.removeEventListener("waiting", onWaiting);
+      el.removeEventListener("stalled", onStalled);
+      el.removeEventListener("playing", onPlaying);
+    };
+  }, [stream, username, fullName]);
+
   const displayName = fullName || username;
 
   // Ref callback: set srcObject as soon as video element mounts (handles tracks arriving async)

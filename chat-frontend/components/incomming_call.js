@@ -176,6 +176,20 @@ const IncomingCallButton = ({ socketRef, user_name, userId }) => {
 
   }
 
+  const retryListenersRef = useRef(null);
+
+  const cleanupRetryListeners = () => {
+    if (!retryListenersRef.current) return;
+    const { retryPlay, onVisibilityChange } = retryListenersRef.current;
+    document.removeEventListener("click", retryPlay);
+    document.removeEventListener("keydown", retryPlay);
+    document.removeEventListener("touchstart", retryPlay);
+    document.removeEventListener("pointerdown", retryPlay);
+    window.removeEventListener("focus", retryPlay);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    retryListenersRef.current = null;
+  };
+
   const playRingtone = () => {
     try {
       // Reuse one Audio instance to avoid overlapping loops from duplicate events.
@@ -183,41 +197,64 @@ const IncomingCallButton = ({ socketRef, user_name, userId }) => {
         ringtoneRef.current = new Audio("/ringtone.mp3");
         ringtoneRef.current.loop = true;
       }
+
+      const attemptPlay = () => {
+        const audio = ringtoneRef.current;
+        if (!audio) return;
+        // Try muted first (browsers allow muted autoplay), then unmute once playing.
+        audio.muted = true;
+        audio.play()
+          .then(() => {
+            audio.muted = false;
+            cleanupRetryListeners();
+          })
+          .catch(() => {
+            audio.muted = false;
+            // Still blocked — keep retry listeners active for next interaction.
+          });
+      };
+
       const playPromise = ringtoneRef.current.play();
       if (playPromise && typeof playPromise.catch === "function") {
-        playPromise.catch((err) => {
-          // Autoplay blocked — retry on next user interaction (click/key/touch).
-          console.warn("Ringtone play blocked, will retry on next interaction:", err?.name || err);
-          const retryPlay = () => {
-            if (ringtoneRef.current) {
-              ringtoneRef.current.play().catch(() => {});
-            }
-            // Clean up all retry listeners once any one fires
-            document.removeEventListener("click", retryPlay);
-            document.removeEventListener("keydown", retryPlay);
-            document.removeEventListener("touchstart", retryPlay);
-            window.removeEventListener("focus", retryPlay);
-          };
-          document.addEventListener("click", retryPlay, { once: true });
-          document.addEventListener("keydown", retryPlay, { once: true });
-          document.addEventListener("touchstart", retryPlay, { once: true });
-          // Also retry when the tab gets focused (e.g. user clicks a push notification)
-          window.addEventListener("focus", retryPlay, { once: true });
-        });
+        playPromise
+          .then(() => {
+            cleanupRetryListeners();
+          })
+          .catch((err) => {
+            // Autoplay blocked — set up persistent retry listeners.
+            // Do NOT use { once: true } so retries keep working if the first one also fails.
+            console.warn("Ringtone play blocked, will retry on next interaction:", err?.name || err);
+
+            cleanupRetryListeners(); // Remove any stale listeners first.
+
+            const retryPlay = () => attemptPlay();
+            const onVisibilityChange = () => {
+              if (document.visibilityState === "visible") attemptPlay();
+            };
+
+            retryListenersRef.current = { retryPlay, onVisibilityChange };
+
+            document.addEventListener("click", retryPlay);
+            document.addEventListener("keydown", retryPlay);
+            document.addEventListener("touchstart", retryPlay);
+            document.addEventListener("pointerdown", retryPlay);
+            // Fires when the user clicks a push notification and the tab gets focused.
+            window.addEventListener("focus", retryPlay);
+            // Fires when the tab becomes visible after being hidden.
+            document.addEventListener("visibilitychange", onVisibilityChange);
+          });
       }
-      setIncomingCall((prev) => ({ ...prev, ringtone: ringtoneRef.current }));
     } catch (e) {
       console.warn("Failed to start ringtone:", e);
     }
   };
 
   const stopRingtone = () => {
+    cleanupRetryListeners();
     const audio = ringtoneRef.current;
     if (audio) {
       audio.pause();
       audio.currentTime = 0;
-    } else {
-      console.log("No ringtone to stop.");
     }
   };
 
