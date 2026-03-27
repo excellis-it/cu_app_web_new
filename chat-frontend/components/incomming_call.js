@@ -192,10 +192,17 @@ const IncomingCallButton = ({ socketRef, user_name, userId }) => {
             if (ringtoneRef.current) {
               ringtoneRef.current.play().catch(() => {});
             }
+            // Clean up all retry listeners once any one fires
+            document.removeEventListener("click", retryPlay);
+            document.removeEventListener("keydown", retryPlay);
+            document.removeEventListener("touchstart", retryPlay);
+            window.removeEventListener("focus", retryPlay);
           };
           document.addEventListener("click", retryPlay, { once: true });
           document.addEventListener("keydown", retryPlay, { once: true });
           document.addEventListener("touchstart", retryPlay, { once: true });
+          // Also retry when the tab gets focused (e.g. user clicks a push notification)
+          window.addEventListener("focus", retryPlay, { once: true });
         });
       }
       setIncomingCall((prev) => ({ ...prev, ringtone: ringtoneRef.current }));

@@ -1215,7 +1215,8 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
         console.error("MS-get-producers failed:", err);
       }
 
-      // 7) Listen for new remote producers
+      // 7) Listen for new remote producers (remove stale handler first to prevent duplicates on reconnect)
+      socket.off("MS-new-producer");
       socket.on("MS-new-producer", async ({ producerId, userId: remoteUserId, kind }) => {
         try {
           console.log("[room.js] MS-new-producer received", {
@@ -1309,9 +1310,47 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
       console.error("Socket reconnect error:", err);
     });
 
+    // Re-initialize mediasoup and re-join the room when the socket reconnects
+    // (e.g. brief network drop). The initial connection is handled by initializeMedia above.
+    let isInitialConnect = true;
+    const handleSocketConnect = async () => {
+      if (isInitialConnect) {
+        isInitialConnect = false;
+        return;
+      }
+      console.log("[room.js] socket reconnected — re-initializing mediasoup");
+      // Reset per-call state so stale producer IDs / streams don't block re-consumption
+      remoteStreamsRef.current = {};
+      consumedProducerIdsRef.current.clear();
+      pendingConsumePeerIdsRef.current.clear();
+      hasReceivedInitialUsers.current = false;
+      setRemotePeers([]);
+      setUserVideoAudio({ localUser: { video: true, audio: true } });
+      // Re-join the signalling room so BE restores presence / FE-user-join events
+      try {
+        await callService.joinRoom(socketRef.current, {
+          joinEvent,
+          payload: {
+            roomId,
+            userName: currentUser,
+            fullName: currentUserFullName || globalUser?.data?.user?.name,
+            callType,
+            video: userStream.current?.getVideoTracks().length > 0,
+            audio: userStream.current?.getAudioTracks().length > 0,
+          },
+        });
+      } catch (err) {
+        console.error("[room.js] re-join failed after socket reconnect:", err);
+      }
+      // Rebuild send/recv transports and re-produce/consume
+      await initializeMediasoup(roomId, currentUser);
+    };
+    socketRef.current.on("connect", handleSocketConnect);
+
     window.addEventListener("popstate", goToBack);
 
     return () => {
+      socketRef.current.off("connect", handleSocketConnect);
       socketRef.current.off("FE-user-join");
       socketRef.current.off("FE-user-leave");
       socketRef.current.off("FE-toggle-camera");
