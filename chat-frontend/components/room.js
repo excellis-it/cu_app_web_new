@@ -456,13 +456,27 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
           // and fall back gracefully if it fails or there is no physical camera.
           if (!isAudioOnlyCall) {
             try {
+              const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+              const isMobileBrowser = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+              const effectiveType = navigator?.connection?.effectiveType || "";
+              const lowBandwidthNet =
+                effectiveType === "slow-2g" ||
+                effectiveType === "2g" ||
+                effectiveType === "3g";
+              const mobileVideoConstraints = isMobileBrowser || lowBandwidthNet
+                ? {
+                    width: { ideal: 480, max: 640 },
+                    height: { ideal: 270, max: 360 },
+                    frameRate: { ideal: 10, max: 12 },
+                  }
+                : {
+                    width: { ideal: 960, max: 1280 },
+                    height: { ideal: 540, max: 720 },
+                    frameRate: { ideal: 15, max: 20 },
+                  };
               const videoStream = await navigator.mediaDevices.getUserMedia({
                 audio: false,
-                video: {
-                  width: { ideal: 1280 },
-                  height: { ideal: 720 },
-                  frameRate: { ideal: 30, max: 30 }
-                }
+                video: mobileVideoConstraints,
               });
               videoTrack = videoStream.getVideoTracks()[0];
               console.log("[room.js] Successfully captured video track");
@@ -1290,9 +1304,16 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
         }
         if (videoTrack?.readyState === "ended" && !isAudioOnlyCall) {
           try {
+            const effectiveType = navigator?.connection?.effectiveType || "";
+            const lowBandwidthNet =
+              effectiveType === "slow-2g" ||
+              effectiveType === "2g" ||
+              effectiveType === "3g";
             const s = await navigator.mediaDevices.getUserMedia({
               audio: false,
-              video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
+              video: lowBandwidthNet
+                ? { width: { ideal: 480, max: 640 }, height: { ideal: 270, max: 360 }, frameRate: { ideal: 10, max: 12 } }
+                : { width: { ideal: 960, max: 1280 }, height: { ideal: 540, max: 720 }, frameRate: { ideal: 15, max: 20 } },
             });
             const fresh = s.getVideoTracks()[0];
             local.removeTrack(videoTrack);
@@ -1900,8 +1921,19 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
     const enabledAudio =
       userStream.current?.getAudioTracks()[0]?.enabled ?? true;
 
+    const effectiveType = navigator?.connection?.effectiveType || "";
+    const lowBandwidthNet =
+      effectiveType === "slow-2g" ||
+      effectiveType === "2g" ||
+      effectiveType === "3g";
+
     navigator.mediaDevices
-      .getUserMedia({ video: { deviceId }, audio: enabledAudio })
+      .getUserMedia({
+        video: lowBandwidthNet
+          ? { deviceId, width: { ideal: 480, max: 640 }, height: { ideal: 270, max: 360 }, frameRate: { ideal: 10, max: 12 } }
+          : { deviceId, width: { ideal: 960, max: 1280 }, height: { ideal: 540, max: 720 }, frameRate: { ideal: 15, max: 20 } },
+        audio: enabledAudio,
+      })
       .then(async (newStream) => {
         const newTrack = newStream.getTracks().find((t) => t.kind === "video");
         if (!newTrack || !userStream.current) return;
