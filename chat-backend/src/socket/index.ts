@@ -774,15 +774,20 @@ export default function initializeSocket() {
         );
 
         if (groups && groups[0]?.currentUsers.length > 0) {
+          // Broadcast to room so all clients receive it regardless of socket reconnects
+          io.to(roomId).emit("FE-call-ended", {
+            userSocketId: socket.id,
+            userName: leaver,
+            roomId: roomId,
+            isActive: false
+          });
           groups[0].currentUsers.forEach(async (uid: any) => {
-            const connectedSockets = io.sockets.adapter.rooms.get(uid.toString()) || [];
-            connectedSockets.forEach(socketId => {
-              socket.to(socketId).emit("FE-call-ended", {
-                userSocketId: socket.id,
-                userName: leaver,
-                roomId: roomId,
-                isActive: false
-              });
+            // Also emit to each user's personal room as fallback
+            io.to(uid.toString()).emit("FE-call-ended", {
+              userSocketId: socket.id,
+              userName: leaver,
+              roomId: roomId,
+              isActive: false
             });
 
             // Apple Push

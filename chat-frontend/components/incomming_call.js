@@ -12,9 +12,40 @@ const IncomingCallButton = ({ socketRef, user_name, userId }) => {
   const [err, setErr] = useState(false);
   const timeoutRef = useRef(null);
   const ringtoneRef = useRef(null);
+  const audioUnlockedRef = useRef(false);
   const [user_id, SetUser_id] = useState(null);
   const [group_id, SetGroup_id] = useState(null);
   const [callType, setCallType] = useState("");
+
+  // Unlock audio context on first user interaction.
+  // Chrome blocks audio.play() until the user has clicked/pressed a key.
+  // We pre-create the Audio element and silently play+pause it on first gesture,
+  // which tells the browser "this tab has user interaction → allow audio".
+  useEffect(() => {
+    const unlock = () => {
+      if (audioUnlockedRef.current) return;
+      try {
+        if (!ringtoneRef.current) {
+          ringtoneRef.current = new Audio("/ringtone.mp3");
+          ringtoneRef.current.loop = true;
+        }
+        const p = ringtoneRef.current.play();
+        if (p) {
+          p.then(() => {
+            ringtoneRef.current.pause();
+            ringtoneRef.current.currentTime = 0;
+            audioUnlockedRef.current = true;
+          }).catch(() => {});
+        }
+      } catch (_) {}
+    };
+    document.addEventListener("click", unlock, { once: true });
+    document.addEventListener("keydown", unlock, { once: true });
+    return () => {
+      document.removeEventListener("click", unlock);
+      document.removeEventListener("keydown", unlock);
+    };
+  }, []);
 
 
 

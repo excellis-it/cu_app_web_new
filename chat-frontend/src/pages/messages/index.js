@@ -657,7 +657,20 @@ const GroupMessage = () => {
       process.env.NEXT_PUBLIC_SOCKET_URL || "ws://69.62.84.25:10018";
     socketRef.current = io.connect(socketUrl, {
       transports: ["websocket", "polling"],
-      allowEIO3: true, // Allow the older version (EIO 3) for compatibility
+      allowEIO3: true,
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+    });
+
+    // On reconnect the socket gets a new ID. Re-join the personal user room
+    // so targeted events (incomming_call, waiting_call, FE-call-ended, etc.) are received.
+    socketRef.current.on("reconnect", () => {
+      const userId = globalUser?.data?.user?._id;
+      if (userId) {
+        socketRef.current.emit("joinSelf", userId);
+      }
     });
 
     return () => {
@@ -670,19 +683,17 @@ const GroupMessage = () => {
     const handleServiceWorkerMessage = (event) => {
       const { type, sound, groupId } = event.data || {};
 
-      // Play notification sound
+      // Play notification sound — only works if the tab has had user interaction first.
+      // If blocked by autoplay policy, the error is swallowed silently (no action needed;
+      // the OS system notification itself provides the alert).
       if (type === "PLAY_NOTIFICATION_SOUND" && sound) {
         try {
           const audio = new Audio(sound);
           audio.volume = 0.7;
-          audio
-            .play()
-            .catch((err) =>
-              console.warn("Could not play notification sound:", err),
-            );
-        } catch (err) {
-          console.warn("Audio playback failed:", err);
-        }
+          audio.play().catch(() => {
+            // Silently ignore NotAllowedError — the push notification banner still shows
+          });
+        } catch (_) {}
       }
 
       // Navigate to chat when notification is clicked
@@ -728,32 +739,42 @@ const GroupMessage = () => {
     if (!socketRef.current) return;
 
     // Handle waiting calls
-    socketRef.current.on("waiting_call", (data) => {
+    const handleWaitingCall = (data) => {
       setWaitingCalls((prev) => {
-        // Avoid duplicates
-        if (prev.find((c) => c.roomId === data.roomId)) return prev;
+        // Use String comparison to avoid ObjectId vs string mismatch
+        if (prev.find((c) => String(c.roomId) === String(data.roomId))) return prev;
         return [...prev, data];
       });
-    });
+    };
 
-    // Clear waiting calls when call ends
-    socketRef.current.on("FE-call-ended", (data) => {
+    // Clear waiting calls when call truly ends (isActive: false)
+    const handleCallEnded = (data) => {
       if (data?.roomId) {
-        setWaitingCalls((prev) => prev.filter((c) => c.roomId !== data.roomId));
+        setWaitingCalls((prev) =>
+          prev.filter((c) => String(c.roomId) !== String(data.roomId))
+        );
       }
-    });
+    };
 
-    // Clear waiting calls when user leaves
-    socketRef.current.on("FE-leave", (data) => {
-      if (data?.roomId) {
-        setWaitingCalls((prev) => prev.filter((c) => c.roomId !== data.roomId));
+    // Only clear waiting indicator when call is fully over (isActive false), not on mid-call leaves
+    const handleLeave = (data) => {
+      if (data?.roomId && data?.isActive === false) {
+        setWaitingCalls((prev) =>
+          prev.filter((c) => String(c.roomId) !== String(data.roomId))
+        );
       }
-    });
+    };
+
+    socketRef.current.on("waiting_call", handleWaitingCall);
+    socketRef.current.on("FE-call-ended", handleCallEnded);
+    socketRef.current.on("FE-leave", handleLeave);
 
     return () => {
-      socketRef.current.off("waiting_call");
-      socketRef.current.off("FE-call-ended");
-      socketRef.current.off("FE-leave");
+      // Always pass handler reference to off() — bare off(event) removes ALL listeners
+      // including those registered by child components like SingleTodo
+      socketRef.current.off("waiting_call", handleWaitingCall);
+      socketRef.current.off("FE-call-ended", handleCallEnded);
+      socketRef.current.off("FE-leave", handleLeave);
     };
   }, [socketRef.current]);
 

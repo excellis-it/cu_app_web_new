@@ -299,8 +299,6 @@ const CallButton = ({
 
   // handelState removed as it was only used for Room onClose
 
-  console.warn("calltype ===>>>", callType);
-
   return (
     <>
       {renderTrigger ? (

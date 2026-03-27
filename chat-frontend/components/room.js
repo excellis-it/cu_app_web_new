@@ -169,10 +169,13 @@ const Room = ({ socketRef, room_id, onSendData, callType, joinEvent, leaveEvent,
     // Use refs first; fall back to socket-stored (survives Room remounts)
     const device = deviceRef.current || socket?.mediasoupDevice;
     const recvTransport = recvTransportRef.current || socket?.mediasoupRecvTransport;
-    if (!socket || !device || !recvTransport) {
+    // Also check device.loaded — device object may exist but rtpCapabilities empty
+    // if initializeMediasoup hasn't finished device.load() yet → causes cannot-consume errors
+    if (!socket || !device || !device.loaded || !recvTransport) {
       console.warn("[room.js] fetchAndConsumeProducers: mediasoup not ready", {
         hasSocket: !!socket,
         hasDeviceRef: !!deviceRef.current,
+        deviceLoaded: !!device?.loaded,
         hasDeviceOnSocket: !!socket?.mediasoupDevice,
         hasRecvRef: !!recvTransportRef.current,
         hasRecvOnSocket: !!socket?.mediasoupRecvTransport,

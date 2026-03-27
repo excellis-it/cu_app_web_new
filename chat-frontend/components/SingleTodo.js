@@ -463,14 +463,27 @@ const SingleTodo = ({
         throttledCheckActiveCall(data.groupId.toString());
       }
     };
+    // When a call ends, bypass the throttle and immediately remove from activeCall.
+    // The throttle is meant to debounce rapid incoming-call events, not call-ended events.
+    const handleCallEnded = (data) => {
+      const roomId = data?.roomId?.toString();
+      if (roomId) {
+        setActiveCall((prev) => prev.filter((id) => id !== roomId));
+        // Reset throttle so a fresh check can happen immediately
+        if (socketCheckThrottleRef.current) {
+          socketCheckThrottleRef.current[roomId] = 0;
+        }
+        checkActiveCall(roomId);
+      }
+    };
     socketRef.current.on("incomming_call", updateCalls);
     socketRef.current.on("FE-leave", updateCalls);
-    socketRef.current.on("FE-call-ended", updateCalls);
+    socketRef.current.on("FE-call-ended", handleCallEnded);
     socketRef.current.on("call-status-change", updateCalls);
     return () => {
       socketRef.current.off("incomming_call", updateCalls);
       socketRef.current.off("FE-leave", updateCalls);
-      socketRef.current.off("FE-call-ended", updateCalls);
+      socketRef.current.off("FE-call-ended", handleCallEnded);
       socketRef.current.off("call-status-change", updateCalls);
     };
   }, [socketRef.current]);
