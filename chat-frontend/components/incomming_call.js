@@ -186,8 +186,16 @@ const IncomingCallButton = ({ socketRef, user_name, userId }) => {
       const playPromise = ringtoneRef.current.play();
       if (playPromise && typeof playPromise.catch === "function") {
         playPromise.catch((err) => {
-          // Autoplay may be blocked until user interacts; log and continue.
-          console.warn("Ringtone play blocked or failed:", err?.name || err);
+          // Autoplay blocked — retry on next user interaction (click/key/touch).
+          console.warn("Ringtone play blocked, will retry on next interaction:", err?.name || err);
+          const retryPlay = () => {
+            if (ringtoneRef.current) {
+              ringtoneRef.current.play().catch(() => {});
+            }
+          };
+          document.addEventListener("click", retryPlay, { once: true });
+          document.addEventListener("keydown", retryPlay, { once: true });
+          document.addEventListener("touchstart", retryPlay, { once: true });
         });
       }
       setIncomingCall((prev) => ({ ...prev, ringtone: ringtoneRef.current }));
