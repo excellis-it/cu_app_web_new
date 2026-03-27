@@ -656,12 +656,14 @@ const GroupMessage = () => {
     const socketUrl =
       process.env.NEXT_PUBLIC_SOCKET_URL || "ws://69.62.84.25:10018";
     socketRef.current = io.connect(socketUrl, {
-      transports: ["websocket", "polling"],
+      // Try polling first and upgrade to websocket for mobile-network resiliency.
+      transports: ["polling", "websocket"],
       allowEIO3: true,
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
+      timeout: 20000,
     });
 
     // On reconnect the socket gets a new ID. Re-join the personal user room

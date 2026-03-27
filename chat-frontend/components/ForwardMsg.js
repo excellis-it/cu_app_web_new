@@ -67,7 +67,15 @@ const ForwardMsg = ({ isOpen, setOpenModal, openModal, message }) => {
   };
   useEffect(() => {
     const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || 'ws://69.62.84.25:10018';
-    socketRef.current = io.connect(socketUrl);
+    socketRef.current = io.connect(socketUrl, {
+      transports: ["polling", "websocket"],
+      allowEIO3: true,
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000,
+    });
 
     return () => {
       socketRef.current.disconnect();

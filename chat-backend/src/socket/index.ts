@@ -125,6 +125,9 @@ export default function initializeSocket() {
     },
     allowEIO3: true, // Allow the older version (EIO 3) for compatibility
     transports: ["polling", "websocket"], // Explicitly specify the transports
+    // Keep heartbeat frequent enough for mobile carrier NATs.
+    pingInterval: 10000,
+    pingTimeout: 20000,
   });
 
   if (!io) {
