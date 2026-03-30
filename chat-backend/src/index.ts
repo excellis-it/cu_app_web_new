@@ -34,9 +34,9 @@ setTimeout(() => {
 const app = express();
 const corsOptions: any = {
   origin: [
-"http://134.199.242.61:4000",
-"http://134.199.242.61:3000",
-"http://134.199.242.61:3010",
+    "http://134.199.242.61:4000",
+    "http://134.199.242.61:3000",
+    "http://134.199.242.61:3010",
     "http://localhost:5000",
     "http://localhost:5001",
     "http://localhost:6000",
@@ -61,8 +61,11 @@ const corsOptions: any = {
     "http://103.121.157.203:10016/guest-meeting/",
     "http://134.199.249.149:10016/guest-meeting",
     "http://134.199.249.149:10016/guest-meeting/",
-"http://13.51.47.108:10016",
-"http://13.51.47.108:10018",
+    "http://13.51.47.108:10016",
+    "http://13.51.47.108:10018",
+    "http://13.63.9.45:10016",
+    "http://13.63.9.45:10018",
+    "http://13.63.9.45:10017"
 
   ],
   methods: "GET,PUT,POST,DELETE,EMIT",

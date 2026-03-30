@@ -83,7 +83,7 @@ export default function App({ Component, pageProps }) {
          const isAppSocket = message.includes('10018') ||
             message.includes('10016') ||
             message.includes('10017') ||
-            message.includes('69.62.84.25') ||
+            message.includes('13.63.9.45') ||
             message.includes('extalkapi.excellisit.net');
 
           if (!isAppSocket) {
@@ -116,7 +116,7 @@ export default function App({ Component, pageProps }) {
           !errorMsg.includes('10018') &&
           !errorMsg.includes('10016') &&
           !errorMsg.includes('10017') &&
-          !errorMsg.includes('69.62.84.25') &&
+          !errorMsg.includes('13.63.9.45') &&
           !errorMsg.includes('extalkapi.excellisit.net')
         ) {
           event.preventDefault(); // Suppress the error

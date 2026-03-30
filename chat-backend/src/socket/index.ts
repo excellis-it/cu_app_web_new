@@ -108,36 +108,39 @@ export default function initializeSocket() {
             "http://localhost:5001",
             "http://localhost:6000",
             "http://69.62.84.25:10016",
-              "http://69.62.84.25:10017",
-              "http://103.121.157.203:10016",
-              "http://103.121.157.203:10017",
-              "http://134.199.249.149:10016",
-              "http://134.199.249.149:10017",
-              "http://localhost:10016",
-              "http://localhost:10017",
-              "http://69.62.84.25:10018",
-              "http://103.121.157.203:10018",
-              "http://134.199.249.149:10018",
-              "https://extalk.excellisit.net", // Production frontend domain
-              "https://extalkapi.excellisit.net", // Production API domain (for Socket.io handshake)
-              "https://extalk.excellisit.net/guest-meeting",
-              "https://extalk.excellisit.net/guest-meeting/",
-              "http://69.62.84.25:10016/guest-meeting",
-              "http://69.62.84.25:10016/guest-meeting/",
-              "http://103.121.157.203:10016/guest-meeting",
-              "http://103.121.157.203:10016/guest-meeting/",
-              "http://134.199.249.149:10016/guest-meeting",
-              "http://134.199.249.149:10016/guest-meeting/",
-"http://13.51.47.108:10016",
-"http://134.199.242.61:4000",
-"http://134.199.242.61:3000",
-"http://134.199.242.61:3010",
-            ],
+            "http://69.62.84.25:10017",
+            "http://103.121.157.203:10016",
+            "http://103.121.157.203:10017",
+            "http://134.199.249.149:10016",
+            "http://134.199.249.149:10017",
+            "http://localhost:10016",
+            "http://localhost:10017",
+            "http://69.62.84.25:10018",
+            "http://103.121.157.203:10018",
+            "http://134.199.249.149:10018",
+            "https://extalk.excellisit.net", // Production frontend domain
+            "https://extalkapi.excellisit.net", // Production API domain (for Socket.io handshake)
+            "https://extalk.excellisit.net/guest-meeting",
+            "https://extalk.excellisit.net/guest-meeting/",
+            "http://69.62.84.25:10016/guest-meeting",
+            "http://69.62.84.25:10016/guest-meeting/",
+            "http://103.121.157.203:10016/guest-meeting",
+            "http://103.121.157.203:10016/guest-meeting/",
+            "http://134.199.249.149:10016/guest-meeting",
+            "http://134.199.249.149:10016/guest-meeting/",
+            "http://13.51.47.108:10016",
+            "http://134.199.242.61:4000",
+            "http://134.199.242.61:3000",
+            "http://134.199.242.61:3010",
+            "http://13.63.9.45:10016",
+            "http://13.63.9.45:10018",
+            "http://13.63.9.45:10017"
+          ],
       methods: ["GET", "POST", "PUT", "DELETE", "EMIT"],
       credentials: true,
     },
     allowEIO3: true, // Allow the older version (EIO 3) for compatibility
-    transports: ["websocket","polling",], // Explicitly specify the transports
+    transports: ["websocket", "polling",], // Explicitly specify the transports
     // Keep heartbeat frequent enough for mobile carrier NATs.
     pingInterval: 10000,
     pingTimeout: 20000,
@@ -1886,7 +1889,7 @@ export default function initializeSocket() {
         io.to(data.id).emit("newmsg", {
           msgId: data.id,
         });
-      } catch (error) {}
+      } catch (error) { }
     });
     socket.on("creategroup", (data) => {
       try {
@@ -1895,7 +1898,7 @@ export default function initializeSocket() {
             msgId: data._id,
           });
         });
-      } catch (error) {}
+      } catch (error) { }
     });
 
     socket.on("editgroup", (data) => {
@@ -1906,7 +1909,7 @@ export default function initializeSocket() {
             newData: data.newData,
           });
         });
-      } catch (error) {}
+      } catch (error) { }
     });
 
     socket.on("disconnect", () => {
@@ -1918,7 +1921,7 @@ export default function initializeSocket() {
             break;
           }
         }
-      } catch (error) {}
+      } catch (error) { }
     });
     socket.on("joinSelf", async (userId: any) => {
       try {
@@ -1963,7 +1966,7 @@ export default function initializeSocket() {
             console.error(err);
           }
         }
-      } catch (error) {}
+      } catch (error) { }
     });
     socket.on("deliver", async (data: any) => {
       try {
@@ -1997,7 +2000,7 @@ export default function initializeSocket() {
             });
           }
         }
-      } catch (error) {}
+      } catch (error) { }
     });
     socket.on("read", async (data: any) => {
       try {
@@ -2062,7 +2065,7 @@ export default function initializeSocket() {
             }
           }
         }
-      } catch (error) {}
+      } catch (error) { }
     });
     socket.on("typing", (data) => {
       try {
@@ -2070,7 +2073,7 @@ export default function initializeSocket() {
         receiverId.forEach((rid: any) => {
           socket.to(rid).emit("typing", { userId, typing: isTyping, msgId });
         });
-      } catch (error) {}
+      } catch (error) { }
     });
 
     socket.on("deleteMessage", (data) => {
@@ -2078,13 +2081,13 @@ export default function initializeSocket() {
         data.receiverId.forEach((rid: any) => {
           socket.to(rid).emit("delete-message", { data });
         });
-      } catch (error) {}
+      } catch (error) { }
     });
 
     socket.on("update-group", (data) => {
       try {
         socket.broadcast.emit("updated", { data: data });
-      } catch (error) {}
+      } catch (error) { }
     });
 
     socket.on("addremoveuser", (data) => {
@@ -2092,7 +2095,7 @@ export default function initializeSocket() {
         data.currentUsers.forEach((rid: any) => {
           io.to(rid).emit("addremoveuser2", { data: data });
         });
-      } catch (error) {}
+      } catch (error) { }
     });
 
     // deleteGroup
@@ -2101,20 +2104,20 @@ export default function initializeSocket() {
         data.currentUsers.forEach((rid: any) => {
           socket.to(rid).emit("delete-Group", { data: data });
         });
-      } catch (error) {}
+      } catch (error) { }
     });
 
     socket.on("user_delete", (data) => {
       try {
         socket.broadcast.emit("deleted-User", { data: data.data.delete_user });
-      } catch (error) {}
+      } catch (error) { }
     });
 
     //user_upadate
     socket.on("user_upadate", () => {
       try {
         socket.broadcast.emit("updated-User");
-      } catch (error) {}
+      } catch (error) { }
     });
 
     socket.on("message", async (socketdata) => {
@@ -2181,7 +2184,7 @@ export default function initializeSocket() {
             data,
           });
         });
-      } catch (error) {}
+      } catch (error) { }
     });
 
     socket.on("meeting_created", (data) => {
@@ -2189,7 +2192,7 @@ export default function initializeSocket() {
         data.currentUsers.forEach((rid: any) => {
           io.to(rid).emit("meeting_created", { data: data });
         });
-      } catch (error) {}
+      } catch (error) { }
     });
   });
 }
