@@ -125,12 +125,13 @@ export default function initializeSocket() {
               "http://103.121.157.203:10016/guest-meeting/",
               "http://134.199.249.149:10016/guest-meeting",
               "http://134.199.249.149:10016/guest-meeting/",
+"http://13.51.47.108:10016",
             ],
       methods: ["GET", "POST", "PUT", "DELETE", "EMIT"],
       credentials: true,
     },
     allowEIO3: true, // Allow the older version (EIO 3) for compatibility
-    transports: ["polling", "websocket"], // Explicitly specify the transports
+    transports: ["websocket","polling",], // Explicitly specify the transports
     // Keep heartbeat frequent enough for mobile carrier NATs.
     pingInterval: 10000,
     pingTimeout: 20000,

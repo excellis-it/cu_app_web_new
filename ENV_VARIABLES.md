@@ -68,6 +68,22 @@ GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account-key.json
 # Web Push Notifications
 WEB_PUSH_PUBLIC_KEY=your_vapid_public_key
 WEB_PUSH_PRIVATE_KEY=your_vapid_private_key
+
+# mediasoup / WebRTC (required for group call in production)
+# Public IPv4 of backend host (must be reachable by clients)
+MEDIASOUP_ANNOUNCED_IP=your_public_server_ip
+# Keep both enabled unless you have a strict network policy
+MEDIASOUP_ENABLE_UDP=true
+MEDIASOUP_ENABLE_TCP=true
+MEDIASOUP_PREFER_TCP=false
+# ICE policy returned to browser transports: all | relay
+ICE_POLICY=all
+# Optional STUN/TURN
+STUN_URL=stun:stun.l.google.com:19302
+TURN_URL_UDP=turn:your-turn-host:3478?transport=udp
+TURN_URL_TCP=turn:your-turn-host:3478?transport=tcp
+TURN_USERNAME=your_turn_username
+TURN_CREDENTIAL=your_turn_credential
 ```
 
 ---
@@ -176,6 +192,8 @@ The `docker-compose.yaml` file automatically sets some environment variables, bu
 - ⚠️ S3 credentials - Required for file uploads
 - ⚠️ Firebase credentials - Required for push notifications
 - ⚠️ `NEXTAUTH_SECRET` - Required for admin authentication
+- ⚠️ `MEDIASOUP_ANNOUNCED_IP` - Required for mediasoup calls from external clients
+- ⚠️ TURN credentials (`TURN_*`) - Strongly recommended for restricted networks
 
 ---
 
@@ -212,4 +230,3 @@ docker-compose exec chat-admin env | grep -E "NEXTAUTH|NEXT_PUBLIC"
 1. Create the `.env` files for each service with the required variables
 2. Ensure sensitive values are not committed to version control
 3. For production, use a secrets management system (AWS Secrets Manager, HashiCorp Vault, etc.)
-

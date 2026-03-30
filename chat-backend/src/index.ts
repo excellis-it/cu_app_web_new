@@ -1,3 +1,7 @@
+import dotenv from "dotenv";
+
+
+
 import express, { Router } from "express";
 import cookieParser from "cookie-parser";
 import connectDB from "./db";
@@ -11,7 +15,7 @@ import path, { join } from "path";
 import { cleanupOrphanedCalls } from "./app";
 import googleRouter from "./routes/google.routes";
 
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 10018;
 const morgan = require("morgan");
 
 connectDB();
@@ -54,6 +58,8 @@ const corsOptions: any = {
     "http://103.121.157.203:10016/guest-meeting/",
     "http://134.199.249.149:10016/guest-meeting",
     "http://134.199.249.149:10016/guest-meeting/",
+"http://13.51.47.108:10016",
+"http://13.51.47.108:10018",
 
   ],
   methods: "GET,PUT,POST,DELETE,EMIT",
@@ -87,3 +93,10 @@ app.get("/", (req, res) => {
 });
 
 initializeSocket();
+
+console.log("ENV CHECK:", process.env.MONGO_URI);
+console.log("PORT:", process.env.PORT);
+
+console.log("ENV CHECK:", process.env.MONGO_URI);
+console.log("MONGO_URI:", process.env.MONGO_URI);
+console.log("PORT:", process.env.PORT);

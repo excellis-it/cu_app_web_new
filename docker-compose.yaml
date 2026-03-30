@@ -28,8 +28,18 @@ services:
       - NODE_ENV=production
       - PORT=10018
       - TZ=UTC
+      # mediasoup/WebRTC networking
+      # IMPORTANT: set this to your public server IP or DNS A-record IP
+      - MEDIASOUP_ANNOUNCED_IP=69.62.84.25
+      - MEDIASOUP_ENABLE_UDP=true
+      - MEDIASOUP_ENABLE_TCP=true
+      - MEDIASOUP_PREFER_TCP=false
+      - ICE_POLICY=all
     ports:
       - "10018:10018"
+      # mediasoup RTP/RTCP ports used by WebRTC transports
+      - "40000-49999:40000-49999/udp"
+      - "40000-49999:40000-49999/tcp"
     depends_on:
       - mongo
     networks:
