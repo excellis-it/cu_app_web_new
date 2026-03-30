@@ -134,7 +134,9 @@ export default function initializeSocket() {
             "http://134.199.242.61:3010",
             "http://13.63.9.45:10016",
             "http://13.63.9.45:10018",
-            "http://13.63.9.45:10017"
+            "http://13.63.9.45:10017",
+            "https://api.cu-app.us",
+            "https://cu-app.us",
           ],
       methods: ["GET", "POST", "PUT", "DELETE", "EMIT"],
       credentials: true,

@@ -84,7 +84,9 @@ export default function App({ Component, pageProps }) {
             message.includes('10016') ||
             message.includes('10017') ||
             message.includes('13.63.9.45') ||
-            message.includes('extalkapi.excellisit.net');
+            message.includes('extalkapi.excellisit.net') ||
+            message.includes('api.cu-app.us') ||
+            message.includes('cu-app.us');
 
           if (!isAppSocket) {
             return true; // Suppress this error
@@ -117,7 +119,9 @@ export default function App({ Component, pageProps }) {
           !errorMsg.includes('10016') &&
           !errorMsg.includes('10017') &&
           !errorMsg.includes('13.63.9.45') &&
-          !errorMsg.includes('extalkapi.excellisit.net')
+          !errorMsg.includes('extalkapi.excellisit.net') ||
+          !errorMsg.includes('api.cu-app.us') ||
+          !errorMsg.includes('cu-app.us')
         ) {
           event.preventDefault(); // Suppress the error
           return;
