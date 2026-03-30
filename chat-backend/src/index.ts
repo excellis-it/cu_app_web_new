@@ -34,6 +34,9 @@ setTimeout(() => {
 const app = express();
 const corsOptions: any = {
   origin: [
+    "http://134.199.242.61:4000",
+"http://134.199.242.61:3000",
+"http://134.199.242.61:3010",
     "http://localhost:5000",
     "http://localhost:5001",
     "http://localhost:6000",

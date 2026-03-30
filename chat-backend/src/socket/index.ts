@@ -101,10 +101,13 @@ export default function initializeSocket() {
         process.env.NODE_ENV === "development"
           ? true
           : [
-              "http://localhost:5000",
-              "http://localhost:5001",
-              "http://localhost:6000",
-              "http://69.62.84.25:10016",
+            "http://134.199.242.61:4000",
+            "http://134.199.242.61:3000",
+            "http://134.199.242.61:3010",
+            "http://localhost:5000",
+            "http://localhost:5001",
+            "http://localhost:6000",
+            "http://69.62.84.25:10016",
               "http://69.62.84.25:10017",
               "http://103.121.157.203:10016",
               "http://103.121.157.203:10017",

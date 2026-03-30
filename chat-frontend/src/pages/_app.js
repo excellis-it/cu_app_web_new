@@ -80,11 +80,10 @@ export default function App({ Component, pageProps }) {
         ) {
           // Only suppress if it's not from our app's socket connections
           // Our app uses ports like 10018, 10016, etc., not random ports like 63873
-          const isAppSocket = message.includes('10018') ||
-            message.includes('10016') ||
-            message.includes('10017') ||
-            message.includes('69.62.84.25') ||
-            message.includes('extalkapi.excellisit.net');
+          const isAppSocket = message.includes('3000') ||
+            message.includes('3010') ||
+            message.includes('4000') ||
+            message.includes('134.199.242.61');
 
           if (!isAppSocket) {
             return true; // Suppress this error
@@ -113,11 +112,10 @@ export default function App({ Component, pageProps }) {
         if (
           errorMsg.includes('WebSocket') &&
           errorMsg.includes('ERR_CONNECTION_REFUSED') &&
-          !errorMsg.includes('10018') &&
-          !errorMsg.includes('10016') &&
-          !errorMsg.includes('10017') &&
-          !errorMsg.includes('69.62.84.25') &&
-          !errorMsg.includes('extalkapi.excellisit.net')
+          !errorMsg.includes('3000') &&
+          !errorMsg.includes('3010') &&
+          !errorMsg.includes('4000') &&
+          !errorMsg.includes('134.199.242.61')
         ) {
           event.preventDefault(); // Suppress the error
           return;
