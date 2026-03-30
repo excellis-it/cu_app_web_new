@@ -1526,7 +1526,8 @@ export default function initializeSocket() {
     // Return ICE servers (STUN/TURN) for client-side transport creation
     socket.on(
       "MS-get-ice-servers",
-      (cb: (payload: any) => void) => {
+      (...args: any[]) => {
+        const cb = typeof args[args.length - 1] === "function" ? args[args.length - 1] : undefined;
         try {
           const iceServers: { urls: string | string[]; username?: string; credential?: string }[] = [];
 
