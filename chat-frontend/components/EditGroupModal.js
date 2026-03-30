@@ -539,7 +539,7 @@ const EditGroupModal = ({
                       {otherUser?.image ? (
                         <img src={otherUser?.image} className={styles.personal_info_img} onClick={() => SEOsetModalIsOpen(true)} />
                       ) : (
-                        <div className={styles.personal_info_img + " d-flex align-items-center justify-content-center"} style={{ fontSize: '40px', backgroundColor: '#f37e20', color: '#fff' }}>
+                        <div className={styles.personal_info_img + " d-flex align-items-center justify-content-center"} style={{ fontSize: '40px', backgroundColor: '#1da678', color: '#fff' }}>
                           {otherUser?.name?.substring(0, 1)}
                         </div>
                       )}
@@ -623,7 +623,7 @@ const EditGroupModal = ({
                                   width: '36px',
                                   height: '36px',
                                   borderRadius: '50%',
-                                  background: '#f37e20',
+                                  background: '#1da678',
                                   color: 'white',
                                   display: 'flex',
                                   alignItems: 'center',
@@ -659,7 +659,7 @@ const EditGroupModal = ({
                       <Button
                         size="small"
                         onClick={() => setMeetingEditOpen(true)}
-                        sx={{ color: '#f37e20', fontWeight: 'bold' }}
+                        sx={{ color: '#1da678', fontWeight: 'bold' }}
                       >
                         Change Time
                       </Button>
@@ -677,7 +677,7 @@ const EditGroupModal = ({
                     <Button
                       variant="contained"
                       onClick={handleGuestSave}
-                      sx={{ bgcolor: '#f37e20 !important', '&:hover': { bgcolor: '#e06d10' } }}
+                      sx={{ bgcolor: '#1da678 !important', '&:hover': { bgcolor: '#178f5e' } }}
                     >
                       Save Changes
                     </Button>

@@ -296,13 +296,13 @@ pin: ${meeting?.pin || ''}
                     </Typography>
                     <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', minWidth: 60, justifyContent: 'center' }}>
                         {isLoading ? (
-                            <CircularProgress size={20} sx={{ color: '#f37e20' }} />
+                            <CircularProgress size={20} sx={{ color: '#1da678' }} />
                         ) : (
                             <>
-                                <IconButton onClick={prevMonth} size="small" sx={{ border: '1px solid #f37e20', color: '#f37e20', p: 0.5 }}>
+                                <IconButton onClick={prevMonth} size="small" sx={{ border: '1px solid #1da678', color: '#1da678', p: 0.5 }}>
                                     <ChevronLeftIcon fontSize="small" />
                                 </IconButton>
-                                <IconButton onClick={nextMonth} size="small" sx={{ border: '1px solid #f37e20', color: '#f37e20', p: 0.5 }}>
+                                <IconButton onClick={nextMonth} size="small" sx={{ border: '1px solid #1da678', color: '#1da678', p: 0.5 }}>
                                     <ChevronRightIcon fontSize="small" />
                                 </IconButton>
                             </>
@@ -406,7 +406,7 @@ pin: ${meeting?.pin || ''}
                                     alignItems: 'center',
                                     justifyContent: 'center',
                                     borderRadius: '50%',
-                                    bgcolor: isTodayDay ? '#f37e20' : isSelected ? 'rgba(243, 126, 32, 0.2)' : 'transparent',
+                                    bgcolor: isTodayDay ? '#1da678' : isSelected ? 'rgba(243, 126, 32, 0.2)' : 'transparent',
                                     fontSize: '0.7rem',
                                     mb: 0.2
                                 }}
@@ -417,7 +417,7 @@ pin: ${meeting?.pin || ''}
                             <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
                                 {isLoading ? (
                                     <Box sx={{ width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                        <CircularProgress size={14} sx={{ color: '#f37e20' }} />
+                                        <CircularProgress size={14} sx={{ color: '#1da678' }} />
                                     </Box>
                                 ) : (
                                     <>
@@ -427,7 +427,7 @@ pin: ${meeting?.pin || ''}
                                                     width: meetingsOnThisDay.some(m => m.isGoogleEvent) ? 18 : 22,
                                                     height: meetingsOnThisDay.some(m => m.isGoogleEvent) ? 18 : 22,
                                                     borderRadius: '50%',
-                                                    bgcolor: '#f37e20',
+                                                    bgcolor: '#1da678',
                                                     display: 'flex',
                                                     alignItems: 'center',
                                                     justifyContent: 'center',
@@ -459,7 +459,7 @@ pin: ${meeting?.pin || ''}
                             </Box>
 
                             {isSelected && (
-                                <Box sx={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, bgcolor: '#f37e20' }} />
+                                <Box sx={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, bgcolor: '#1da678' }} />
                             )}
                         </Box>
                     );
@@ -501,7 +501,7 @@ pin: ${meeting?.pin || ''}
 
                 <Box sx={{ mb: 2 }}>
                     <Typography variant="subtitle1" sx={{ fontWeight: 800, color: 'text.primary', mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <TodayIcon sx={{ fontSize: 18, color: '#f37e20' }} />
+                        <TodayIcon sx={{ fontSize: 18, color: '#1da678' }} />
                         {format(selectedDate, "MMM do")} Agenda
                     </Typography>
 
@@ -513,7 +513,7 @@ pin: ${meeting?.pin || ''}
                             borderRadius: '8px',
                             p: 0.3,
                             '& .MuiTab-root': { minHeight: 'auto', py: 0.5, px: 1.5, fontSize: '0.7rem', textTransform: 'none', fontWeight: 700, borderRadius: '6px', bgcolor: '#f3f5f7', color: '#404d63', marginRight: 1 },
-                            '& .Mui-selected': { color: '#fff !important', bgcolor: '#f37e20' },
+                            '& .Mui-selected': { color: '#fff !important', bgcolor: '#1da678' },
                             '& .MuiTabs-indicator': { display: 'none' }
                         }}
                     >
@@ -545,7 +545,7 @@ pin: ${meeting?.pin || ''}
                                             cursor: 'pointer',
                                             bgcolor: isLive ? 'rgba(243, 126, 32, 0.02)' : 'background.paper',
                                             '&:hover': {
-                                                borderColor: '#f37e20',
+                                                borderColor: '#1da678',
                                                 bgcolor: 'rgba(243, 126, 32, 0.01)',
                                                 transform: 'translateY(-2px)',
                                                 boxShadow: '0 4px 12px rgba(0,0,0,0.05)'
@@ -559,7 +559,7 @@ pin: ${meeting?.pin || ''}
                                                 sx={{
                                                     width: 36,
                                                     height: 36,
-                                                    bgcolor: meeting.isHoliday ? '#4caf50' : '#f37e20',
+                                                    bgcolor: meeting.isHoliday ? '#4caf50' : '#1da678',
                                                     fontSize: '0.9rem',
                                                     fontWeight: 800
                                                 }}
@@ -577,10 +577,10 @@ pin: ${meeting?.pin || ''}
                                                 </Box>
                                                 {!meeting.isHoliday && (
                                                     <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
-                                                        <AccessTimeIcon sx={{ fontSize: 13, color: '#f37e20' }} />
+                                                        <AccessTimeIcon sx={{ fontSize: 13, color: '#1da678' }} />
                                                         {format(startTime, "h:mm a")}
                                                         {meeting.link && meeting.isGoogleEvent && !meeting.isHoliday && (
-                                                            <a href={meeting.link} target="_blank" rel="noopener noreferrer" style={{ color: '#f37e20', marginLeft: '5px', textDecoration: 'none' }}>
+                                                            <a href={meeting.link} target="_blank" rel="noopener noreferrer" style={{ color: '#1da678', marginLeft: '5px', textDecoration: 'none' }}>
                                                                 [Join]
                                                             </a>
                                                         )}
@@ -594,7 +594,7 @@ pin: ${meeting?.pin || ''}
                                                             size="small"
                                                             onClick={(e) => handleCopyLink(e, meeting)}
                                                             sx={{
-                                                                color: '#f37e20',
+                                                                color: '#1da678',
                                                                 bgcolor: 'rgba(243, 126, 32, 0.05)',
                                                                 '&:hover': { bgcolor: 'rgba(243, 126, 32, 0.15)' }
                                                             }}
@@ -632,7 +632,7 @@ pin: ${meeting?.pin || ''}
     //     return (
     //         <Box className="chat_cu_logo" sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', p: 4, textAlign: 'center' }}>
     //             <img src="cu-logo-2.svg" alt="cu-logo" style={{ width: '180px', marginBottom: '20px' }} />
-    //             <Typography variant="h4" sx={{ color: '#f37e20', fontWeight: 900, mb: 1 }}>Chats</Typography>
+    //             <Typography variant="h4" sx={{ color: '#1da678', fontWeight: 900, mb: 1 }}>Chats</Typography>
     //             <Typography variant="body2" color="text.secondary">Select a conversation to start messaging</Typography>
     //         </Box>
     //     );
@@ -642,7 +642,7 @@ pin: ${meeting?.pin || ''}
     //     return (
     //         <Box className="chat_cu_logo" sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', p: 4, textAlign: 'center' }}>
     //             <img src="cu-logo-2.svg" alt="cu-logo" style={{ width: '180px', marginBottom: '20px' }} />
-    //             <Typography variant="h4" sx={{ color: '#f37e20', fontWeight: 900, mb: 1 }}>Call History</Typography>
+    //             <Typography variant="h4" sx={{ color: '#1da678', fontWeight: 900, mb: 1 }}>Call History</Typography>
     //             <Typography variant="body2" color="text.secondary">Review your recent voice and video calls</Typography>
     //         </Box>
     //     );
@@ -718,7 +718,7 @@ pin: ${meeting?.pin || ''}
     return (
         <Box className="chat_cu_logo" sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', p: 4, textAlign: 'center' }}>
             <img src="cu-logo-2.svg" alt="cu-logo" style={{ width: '220px', marginBottom: '30px' }} />
-            <Typography variant="h3" sx={{ color: '#f37e20', fontWeight: 900, mb: 1 }}>Welcome to ExTalk</Typography>
+            <Typography variant="h3" sx={{ color: '#1da678', fontWeight: 900, mb: 1 }}>Welcome to ExTalk</Typography>
             <Typography variant="body1" color="text.secondary">Collaborate and communicate with your team effortlessly</Typography>
         </Box>
     );

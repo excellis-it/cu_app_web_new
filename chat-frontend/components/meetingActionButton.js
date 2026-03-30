@@ -178,7 +178,7 @@ const MeetingActionButton = ({ meetingId, initialAction }) => {
                     sx: { overflow: 'hidden' }
                 }}
             >
-                <DialogTitle sx={{ fontWeight: 800, color: '#f37e20' }}>Decline Meeting</DialogTitle>
+                <DialogTitle sx={{ fontWeight: 800, color: '#1da678' }}>Decline Meeting</DialogTitle>
                 <DialogContent sx={{ overflow: 'hidden' }}>
                     <TextField
                         autoFocus

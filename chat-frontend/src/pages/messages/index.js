@@ -3648,7 +3648,7 @@ const GroupMessage = () => {
           showCancelButton: true,
           confirmButtonText: "Yes, create user",
           cancelButtonText: "No, cancel",
-          confirmButtonColor: "#f37e20",
+          confirmButtonColor: "#1da678",
           cancelButtonColor: "#ff8500",
           customClass: {
             confirmButton: "swal-confirm-btn",
@@ -3963,7 +3963,7 @@ const GroupMessage = () => {
       showCancelButton: false,
       // confirmButtonText: "Guest Meeting",
       confirmButtonText: "Group Meeting",
-      confirmButtonColor: "#f37e20",
+      confirmButtonColor: "#1da678",
       cancelButtonColor: "#ad1e23",
       reverseButtons: true,
       customClass: {
@@ -3975,7 +3975,7 @@ const GroupMessage = () => {
         const cancelBtn = document.querySelector(".swal-normal-btn");
 
         if (confirmBtn) {
-          confirmBtn.style.backgroundColor = "#f37e20";
+          confirmBtn.style.backgroundColor = "#1da678";
           confirmBtn.style.color = "#fff";
           confirmBtn.style.border = "none";
           confirmBtn.style.padding = "10px 24px";
@@ -4076,7 +4076,7 @@ const GroupMessage = () => {
           showCancelButton: true,
           confirmButtonText: "Guest Meeting",
           cancelButtonText: "Group Meeting",
-          confirmButtonColor: "#f37e20",
+          confirmButtonColor: "#1da678",
           cancelButtonColor: "#ad1e23",
           reverseButtons: true,
           customClass: {
@@ -4088,7 +4088,7 @@ const GroupMessage = () => {
             const cancelBtn = document.querySelector(".swal-normal-btn");
 
             if (confirmBtn) {
-              confirmBtn.style.backgroundColor = "#f37e20";
+              confirmBtn.style.backgroundColor = "#1da678";
               confirmBtn.style.color = "#fff";
               confirmBtn.style.border = "none";
               confirmBtn.style.padding = "10px 24px";
@@ -4576,7 +4576,7 @@ const GroupMessage = () => {
                               position: "absolute",
                               bottom: "20px",
                               right: "20px",
-                              backgroundColor: "#f37e20",
+                              backgroundColor: "#1da678",
                               zIndex: 1000,
                             }}
                           >
@@ -4827,7 +4827,7 @@ const GroupMessage = () => {
                   href="https://excellisit.com/"
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ color: "#f37e20", textDecoration: "none" }}
+                  style={{ color: "#1da678", textDecoration: "none" }}
                 >
                   ExcellisIT
                 </a>

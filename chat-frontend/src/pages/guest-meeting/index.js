@@ -700,7 +700,7 @@ export default function GuestMeeting() {
                         <IconButton
                             onClick={toggleMic}
                             sx={{
-                                bgcolor: micOn ? "#f37e20" : "#d32f2f",
+                                bgcolor: micOn ? "#1da678" : "#d32f2f",
                                 color: "white",
                                 "&:hover": { bgcolor: micOn ? "#d86b16" : "#b71c1c" }
                             }}
@@ -710,7 +710,7 @@ export default function GuestMeeting() {
                         <IconButton
                             onClick={toggleCamera}
                             sx={{
-                                bgcolor: cameraOn ? "#f37e20" : "#d32f2f",
+                                bgcolor: cameraOn ? "#1da678" : "#d32f2f",
                                 color: "white",
                                 "&:hover": { bgcolor: cameraOn ? "#d86b16" : "#b71c1c" }
                             }}
@@ -724,7 +724,7 @@ export default function GuestMeeting() {
                         onClick={handleStartCall}
                         fullWidth
                         sx={{
-                            background: 'linear-gradient(135deg, #f37e20 0%, #ad1e23 100%)',
+                            background: 'linear-gradient(135deg, #1da678 0%, #ad1e23 100%)',
                             color: "white",
                             padding: "12px",
                             fontSize: "16px",
@@ -760,7 +760,7 @@ const styles = {
         overflow: 'hidden',
     },
     header: {
-        background: 'linear-gradient(135deg, #f37e20 0%, #ad1e23 100%)',
+        background: 'linear-gradient(135deg, #1da678 0%, #ad1e23 100%)',
         padding: '40px 30px',
         textAlign: 'center',
     },
@@ -775,7 +775,7 @@ const styles = {
     },
     topic: {
         margin: '0 0 30px 0',
-        color: '#f37e20',
+        color: '#1da678',
         fontSize: '24px',
         fontWeight: '600',
     },
@@ -807,7 +807,7 @@ const styles = {
     joinButton: {
         width: '100%',
         padding: '16px 40px',
-        background: 'linear-gradient(135deg, #f37e20 0%, #ad1e23 100%)',
+        background: 'linear-gradient(135deg, #1da678 0%, #ad1e23 100%)',
         color: '#ffffff',
         border: 'none',
         borderRadius: '6px',
@@ -847,7 +847,7 @@ const styles = {
     },
     button: {
         padding: '12px 30px',
-        background: '#f37e20',
+        background: '#1da678',
         color: '#ffffff',
         border: 'none',
         borderRadius: '6px',
@@ -859,7 +859,7 @@ const styles = {
     },
     loader: {
         border: '4px solid #f3f3f3',
-        borderTop: '4px solid #f37e20',
+        borderTop: '4px solid #1da678',
         borderRadius: '50%',
         width: '40px',
         height: '40px',

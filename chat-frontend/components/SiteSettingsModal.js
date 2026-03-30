@@ -21,7 +21,7 @@ const SiteSettingsModal = ({ show, onHide }) => {
         siteDescription: '',
         siteLogo: null, // File or URL
         siteMainImage: null, // File or URL
-        primaryColor: '#f37e20',
+        primaryColor: '#1da678',
         secondaryColor: '#35a200',
         accentColor: '#ff6b6b',
         backgroundColor: '#ffffff'
@@ -72,7 +72,7 @@ const SiteSettingsModal = ({ show, onHide }) => {
                 siteDescription,
                 siteLogo,
                 siteMainImage,
-                primaryColor: data.primaryColor || '#f37e20',
+                primaryColor: data.primaryColor || '#1da678',
                 secondaryColor: data.secondaryColor || '#35a200',
                 accentColor: data.accentColor || '#ff6b6b',
                 backgroundColor: data.backgroundColor || '#ffffff'
@@ -186,7 +186,7 @@ const SiteSettingsModal = ({ show, onHide }) => {
         <Modal show={show} onHide={onHide} centered size="lg" backdrop="static">
             <Modal.Header closeButton style={{ borderBottom: '1px solid #eee' }}>
                 <Modal.Title style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <SettingsIcon sx={{ color: '#f37e20' }} />
+                    <SettingsIcon sx={{ color: '#1da678' }} />
                     Site Settings
                 </Modal.Title>
             </Modal.Header>
@@ -241,13 +241,13 @@ const SiteSettingsModal = ({ show, onHide }) => {
                         {/* Color Customization Section */}
                         <Grid item xs={12}>
                             <div style={{
-                                border: '2px solid #f37e20',
+                                border: '2px solid #1da678',
                                 borderRadius: '8px',
                                 padding: '20px',
                                 backgroundColor: '#fef9f5'
                             }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                                    <PaletteIcon sx={{ color: '#f37e20' }} />
+                                    <PaletteIcon sx={{ color: '#1da678' }} />
                                     <h5 style={{ margin: 0, color: '#333' }}>Theme Customization</h5>
                                 </div>
                                 <Grid container spacing={2}>
@@ -274,7 +274,7 @@ const SiteSettingsModal = ({ show, onHide }) => {
                                                 onChange={handleChange}
                                                 name="primaryColor"
                                                 size="small"
-                                                placeholder="#f37e20"
+                                                placeholder="#1da678"
                                                 sx={{ flex: 1 }}
                                             />
                                         </div>
@@ -440,7 +440,7 @@ const SiteSettingsModal = ({ show, onHide }) => {
                     disabled={saving || loading || !settings.siteName}
                     startIcon={saving ? null : <SaveIcon />}
                     style={{
-                        backgroundColor: '#f37e20',
+                        backgroundColor: '#1da678',
                         color: 'white',
                         boxShadow: 'none',
                         textTransform: 'none',

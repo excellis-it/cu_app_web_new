@@ -329,18 +329,18 @@ pin: ${values?.pin || ""}
                 ? `Ended: ${moment(values?.meetingEndTime).format("MM/DD/YYYY hh:mm A")}`
                 : `Scheduled: ${moment(values?.meetingStartTime).format("MM/DD/YYYY hh:mm A")}`}
             </span>
-            {moment(values.meetingEndTime) >= moment() && (
+            {/* {moment(values.meetingEndTime) >= moment() && (
               <ContentCopyIcon
                 onClick={handleCopyLink}
                 style={{
                   fontSize: "18px",
                   cursor: "pointer",
                   marginLeft: "10px",
-                  color: "#f37e20",
+                  color: "#1da678",
                 }}
                 titleAccess="Copy Meeting Link"
               />
-            )}
+            )} */}
           </div>
         )}
       </div>

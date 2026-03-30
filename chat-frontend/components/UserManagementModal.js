@@ -134,7 +134,7 @@ const UserManagementModal = ({
                                         </div>
                                         <div className="participant_checkbox" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                                             {/* Chat Icon - Start 1:1 chat (only show for other users, not self) */}
-                                            {e._id !== globalUser?.data?.user?._id && onStartDirectChat && (
+                                            {/* {e._id !== globalUser?.data?.user?._id && onStartDirectChat && (
                                                 <ChatIcon
                                                     style={{
                                                         cursor: "pointer",
@@ -144,7 +144,7 @@ const UserManagementModal = ({
                                                     titleAccess="Start chat"
                                                     onClick={() => handleChatClick(e)}
                                                 />
-                                            )}
+                                            )} */}
                                             {globalUser?.data?.user?.userType === "admin" ? (
                                                 e.userType === "Member" && (
                                                     <EditIcon

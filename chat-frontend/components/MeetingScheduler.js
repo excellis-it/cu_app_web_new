@@ -155,7 +155,7 @@ const MeetingScheduler = ({ onTimeChange, initialStartTime, initialDurationMin }
                 transition: 'border-color 0.2s',
                 fontWeight: '500'
               }}
-              onFocus={(e) => e.target.style.borderColor = '#f37e20'}
+              onFocus={(e) => e.target.style.borderColor = '#1da678'}
               onBlur={(e) => e.target.style.borderColor = '#ccc'}
             >
               {durationOptions.map((min) => (

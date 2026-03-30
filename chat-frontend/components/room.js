@@ -3450,7 +3450,7 @@ const pulseAnimation = keyframes`
 `;
 
 const PulsingAlert = styled.div`
-  background-color: #e65100;
+  background-color: #15724c;
   padding: 8px 12px;
   border-radius: 5px;
   margin-bottom: 10px;

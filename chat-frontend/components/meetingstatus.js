@@ -599,13 +599,13 @@ const MeetingStatusBanner = ({ selected, globalUser, socketRef, onStartCall, use
               startIcon={<CallIcon />}
               onClick={clickJoinCall}
               sx={{
-                backgroundColor: "#f37e20 !important",
+                backgroundColor: "#1da678 !important",
                 color: "white",
                 borderRadius: "30px",
                 py: 1.5,
                 fontSize: '16px',
                 fontWeight: 700,
-                '&:hover': { backgroundColor: "#e06d10" }
+                '&:hover': { backgroundColor: "#178f5e" }
               }}
             >
               {activeCall ? "Join Meeting" : "Start Meeting"}
@@ -628,7 +628,7 @@ const MeetingStatusBanner = ({ selected, globalUser, socketRef, onStartCall, use
   }
 
   return (
-    <Alert severity="error" sx={{ mt: 2, borderRadius: 2, backgroundColor: theme.palette.mode === 'dark' ? '#1a237e' : '#f2f2f2', border: theme.palette.mode === 'dark' ? '1px solid #f37e20' : '1px solid #f37e20' }}>
+    <Alert severity="error" sx={{ mt: 2, borderRadius: 2, backgroundColor: theme.palette.mode === 'dark' ? '#1a237e' : '#f2f2f2', border: theme.palette.mode === 'dark' ? '1px solid #1da678' : '1px solid #1da678' }}>
       <Typography variant="body1" fontWeight="medium">
         📴 Meeting has ended
       </Typography>

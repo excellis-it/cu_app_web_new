@@ -108,8 +108,8 @@ const CreateGuestMeetingModal = ({
                                 variant="outlined"
                                 onClick={addGuest}
                                 style={{
-                                    borderColor: '#f37e20',
-                                    color: '#f37e20',
+                                    borderColor: '#1da678',
+                                    color: '#1da678',
                                     borderRadius: '8px',
                                     height: '40px',
                                     textTransform: 'none',
@@ -148,7 +148,7 @@ const CreateGuestMeetingModal = ({
                                             deleteIcon={<CloseIcon />}
                                             style={{
                                                 backgroundColor: '#fff',
-                                                border: '1px solid #f37e20',
+                                                border: '1px solid #1da678',
                                                 color: '#333'
                                             }}
                                         />
@@ -168,7 +168,7 @@ const CreateGuestMeetingModal = ({
                     onClick={handleCreate}
                     disabled={isLoading || guests.length === 0}
                     style={{
-                        backgroundColor: '#f37e20',
+                        backgroundColor: '#1da678',
                         color: 'white',
                         boxShadow: 'none'
                     }}

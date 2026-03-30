@@ -101,7 +101,7 @@ const BottomBar = ({
           style={{
             opacity: (currentScreenSharer && !screenShare) ? 0.5 : 1,
             cursor: (currentScreenSharer && !screenShare) ? 'not-allowed' : 'pointer',
-            background: (currentScreenSharer && !screenShare) ? '#f37e20' : '#f37e20',
+            background: (currentScreenSharer && !screenShare) ? '#1da678' : '#1da678',
             borderRadius: '15px'
           }}
           title={

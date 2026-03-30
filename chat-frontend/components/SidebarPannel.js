@@ -161,7 +161,7 @@ const SidebarPanel = ({
           <li className="sidebar-item" onClick={() => setShowSettings(true)}>
             <div className="sidebar-content text-center">
               <span className="sidebar-icon m-0">
-                <SettingsIcon sx={{ color: "#f37e20" }} />
+                <SettingsIcon sx={{ color: "#1da678" }} />
               </span>
               <span className="sidebar-label">Site Settings</span>
             </div>

@@ -17,7 +17,7 @@ const TermsAndCondition = () => {
                                 <div className="row align-items-center" style={{ color: "#000" }}>
 
 
-                                    <h1 style={{ color: "#f37e20" }}>Terms and Conditions</h1>
+                                    <h1 style={{ color: "#1da678" }}>Terms and Conditions</h1>
                                     <p style={{ color: "#000" }}>Last updated: June 18, 2025</p>
 
                                     <p style={{ color: "#000" }}>Please read these terms and conditions carefully before using Our Service.</p>

@@ -48,7 +48,7 @@ const forgetPassword = () => {
                   <div className="col-md-6">
                     <div className="login_fomr">
                       <img src="cu-logo-2.svg" />
-                      <h2 style={{ color: "#f37e20" }}>Enter your registered Email</h2>
+                      <h2 style={{ color: "#1da678" }}>Enter your registered Email</h2>
                       <form className="mt-3" onSubmit={sendOtp}>
                         <div className="relative">
                           <input
@@ -65,7 +65,7 @@ const forgetPassword = () => {
                         <button className="mt-3" type="submit" >
                             <span>Send One Time Password</span>
                         </button>
-                        <Link style={{ color: "#f37e20" }} className="back_to_login_link" href="/login">Back to Login</Link>
+                        <Link style={{ color: "#1da678" }} className="back_to_login_link" href="/login">Back to Login</Link>
 
                         <small className="mt-3" style={{color: "#858596", lineHeight: "14px", display: "block", fontSize: "11px"}}>
                           One time password will be sent to your email address.please check your spam folder also or you can contact the adminastrator.</small>

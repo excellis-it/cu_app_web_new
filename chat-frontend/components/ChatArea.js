@@ -110,8 +110,8 @@ const GuestJoinButton = ({ startTime, endTime, onJoin }) => {
                 px: 4,
                 py: 1,
                 fontWeight: 700,
-                backgroundColor: '#f37e20 !important',
-                '&:hover': { backgroundColor: '#e06d10 !important' }
+                backgroundColor: '#1da678 !important',
+                '&:hover': { backgroundColor: '#178f5e !important' }
             }}
             onClick={onJoin}
         >
@@ -274,10 +274,10 @@ const ChatArea = ({
             // Meeting hasn't started yet and it's before scheduled start
             return {
                 text: `Starts ${start.fromNow()}`,
-                color: '#f37e20',
+                color: '#1da678',
                 bgColor: 'rgba(243, 126, 32, 0.08)',
                 borderColor: 'rgba(243, 126, 32, 0.3)',
-                dotColor: '#f37e20',
+                dotColor: '#1da678',
                 animate: true
             };
         } else if ((hasStarted && !hasEnded) || (!hasStarted && isPastScheduledStart && !isPastScheduledEnd)) {
@@ -479,11 +479,11 @@ const ChatArea = ({
                                     {selected?.isGuestMeeting ? "Guest Meeting Info" : selected?.isTemp ? "Meeting Info" : selected?.isDirect ? "Personal Information" : "Group Info"}
                                 </Dropdown.Item>
 
-                                {(selected?.isTemp || selected?.isGuestMeeting) && !isMeetingEnded() && (
+                                {/* {(selected?.isTemp || selected?.isGuestMeeting) && !isMeetingEnded() && (
                                     <Dropdown.Item href="#" onClick={handleCopyLink}>
                                         Copy Meeting Link
                                     </Dropdown.Item>
-                                )}
+                                )} */}
 
                                 {!selected?.isDirect && (
                                     <Dropdown.Item
@@ -561,7 +561,7 @@ const ChatArea = ({
                     height: '100%'
                 }}>
                     <div style={{
-                        background: 'linear-gradient(135deg, #fb923c 0%, #f37e20 100%)',
+                        background: 'linear-gradient(135deg, #3dbf8a 0%, #1da678 100%)',
                         borderRadius: '24px',
                         padding: '1px',
                         maxWidth: '630px',
@@ -596,7 +596,7 @@ const ChatArea = ({
                                     marginBottom: '28px'
                                 }}>
                                     <div style={{
-                                        background: 'linear-gradient(135deg, #f37e20, #e06d10)',
+                                        background: 'linear-gradient(135deg, #1da678, #178f5e)',
                                         width: '52px',
                                         height: '52px',
                                         borderRadius: '16px',
@@ -622,20 +622,20 @@ const ChatArea = ({
                                         }}>
                                             Meeting Details
                                         </h2>
-                                        {!isMeetingEnded() && (
+                                        {/* {!isMeetingEnded() && (
                                             <Tooltip title="Copy Meeting Link" arrow>
                                                 <IconButton
                                                     onClick={handleCopyLink}
                                                     sx={{
                                                         bgcolor: 'rgba(243, 126, 32, 0.1)',
-                                                        color: '#f37e20',
+                                                        color: '#1da678',
                                                         '&:hover': { bgcolor: 'rgba(243, 126, 32, 0.2)' }
                                                     }}
                                                 >
                                                     <ContentCopyIcon fontSize="small" />
                                                 </IconButton>
                                             </Tooltip>
-                                        )}
+                                        )} */}
                                         <p style={{ color: '#718096', margin: '4px 0 0', fontSize: '14px', fontWeight: '500' }}>
                                             Check schedule and participants
                                         </p>
@@ -652,7 +652,7 @@ const ChatArea = ({
                                             border: '1px solid #edf2f7',
                                             transition: 'all 0.3s ease'
                                         }}>
-                                            <div style={{ fontSize: '11px', fontWeight: '700', color: '#f37e20', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>
+                                            <div style={{ fontSize: '11px', fontWeight: '700', color: '#1da678', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>
                                                 Meeting Name
                                             </div>
                                             <div style={{ fontSize: '18px', fontWeight: '700', color: '#2d3748' }}>
@@ -689,7 +689,7 @@ const ChatArea = ({
                                                 alignItems: 'center',
                                                 marginBottom: '16px'
                                             }}>
-                                                <div style={{ fontSize: '11px', fontWeight: '700', color: '#f37e20', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                                                <div style={{ fontSize: '11px', fontWeight: '700', color: '#1da678', textTransform: 'uppercase', letterSpacing: '1px' }}>
                                                     Participants ({groupDataDetails?.currentUsers?.filter(user => user?.userType !== "SuperAdmin").length || 0})
                                                 </div>
                                             </div>
@@ -779,7 +779,7 @@ const ChatArea = ({
                                             padding: '20px',
                                             border: '1px solid #edf2f7'
                                         }}>
-                                            <div style={{ fontSize: '11px', fontWeight: '700', color: '#f37e20', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '16px' }}>
+                                            <div style={{ fontSize: '11px', fontWeight: '700', color: '#1da678', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '16px' }}>
                                                 Guest Participants ({selected?.guest?.length || 0})
                                             </div>
                                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
@@ -800,7 +800,7 @@ const ChatArea = ({
                                                                 width: '32px',
                                                                 height: '32px',
                                                                 borderRadius: '50%',
-                                                                background: '#f37e20',
+                                                                background: '#1da678',
                                                                 color: '#fff',
                                                                 display: 'flex',
                                                                 alignItems: 'center',
@@ -858,7 +858,7 @@ const ChatArea = ({
                                             <div style={{ fontSize: '14px', color: '#4a5568', fontWeight: '500' }}>
                                                 {moment(selected?.isGuestMeeting ? selected?.meetingStartTime : (groupDataDetails?.meetingStartTime || selected?.meetingStartTime)).format("ddd, MMM DD")}
                                             </div>
-                                            <div style={{ fontSize: '24px', fontWeight: '800', color: '#f37e20', marginTop: '4px' }}>
+                                            <div style={{ fontSize: '24px', fontWeight: '800', color: '#1da678', marginTop: '4px' }}>
                                                 {moment(selected?.isGuestMeeting ? selected?.meetingStartTime : (groupDataDetails?.meetingStartTime || selected?.meetingStartTime)).format("hh:mm A")}
                                             </div>
                                         </div>
@@ -913,14 +913,14 @@ const ChatArea = ({
                                         display: 'flex',
                                         justifyContent: 'center'
                                     }}>
-                                        {!selected?.isGoogleEvent && !selected?.isGuestMeeting && (
+                                        {/* {!selected?.isGoogleEvent && !selected?.isGuestMeeting && (
                                             <MeetingActionButton
                                                 meetingId={selected?._id}
                                                 initialAction={groupDataDetails?.participantActions?.find(
                                                     action => String(action.userId) === String(globalUser?.data?.user?._id)
                                                 )}
                                             />
-                                        )}
+                                        )} */}
                                         {selected?.isGuestMeeting && (
                                             <CallButton
                                                 user_id={globalUser?.data?.user?._id}
@@ -1008,7 +1008,7 @@ const ChatArea = ({
                                             display: "flex",
                                             justifyContent: "center",
                                             alignItems: "center",
-                                            color: "#f37e20",
+                                            color: "#1da678",
                                             fontSize: "20px",
                                         }}
                                     >
@@ -1074,7 +1074,7 @@ const ChatArea = ({
                                 <div
                                     style={{
                                         width: `${progress}%`,
-                                        background: progress === 100 ? "green" : "#f37e20",
+                                        background: progress === 100 ? "green" : "#1da678",
                                         transition: "width 1s ease",
                                         display: "flex",
                                         alignItems: "center",
@@ -1115,7 +1115,7 @@ const ChatArea = ({
                             padding: "8px 12px",
                             fontSize: "14px",
                             marginBottom: "8px",
-                            borderLeft: "4px solid #f37e20",
+                            borderLeft: "4px solid #1da678",
                             position: "relative",
                         }}
                     >
@@ -1130,7 +1130,7 @@ const ChatArea = ({
                             <span
                                 style={{
                                     fontWeight: "600",
-                                    color: "#f37e20",
+                                    color: "#1da678",
                                     fontSize: "12px",
                                 }}
                             >
@@ -1218,7 +1218,7 @@ const ChatArea = ({
                                 <svg className="border-svg" viewBox="0 0 318 39" preserveAspectRatio="none">
                                     <defs>
                                         <filter id="glow" x="-100%" y="-100%" width="300%" height="300%">
-                                            <feDropShadow dx="0" dy="0" stdDeviation="6" floodColor="orange" floodOpacity="0.9" />
+                                            <feDropShadow dx="0" dy="0" stdDeviation="6" floodColor="#1da678" floodOpacity="0.9" />
                                         </filter>
                                     </defs>
                                     <path className="border-glow" d="M3 3 H315 Q318 3 318 6 V33 Q318 36 315 36 H3 Q0 36 0 33 V6 Q0 3 3 3 Z" filter="url(#glow)"></path>
@@ -1299,7 +1299,7 @@ const ChatArea = ({
                                                 ) : (
                                                     <SendIcon
                                                         sx={{
-                                                            color: "#f37e20",
+                                                            color: "#1da678",
                                                             transform: "rotate(-40deg) translateX(5px)",
                                                         }}
                                                     />
@@ -1317,7 +1317,7 @@ const ChatArea = ({
                             // <svg className="border-svg" viewBox="0 0 318 39" preserveAspectRatio="none">
                             //     <defs>
                             //         <filter id="glow-2" x="-100%" y="-100%" width="300%" height="300%">
-                            //             <feDropShadow dx="0" dy="0" stdDeviation="6" floodColor="orange" floodOpacity="0.9" />
+                            //             <feDropShadow dx="0" dy="0" stdDeviation="6" floodColor="#1da678" floodOpacity="0.9" />
                             //         </filter>
                             //     </defs>
                             //     <path className="border-glow" d="M3 3 H315 Q318 3 318 6 V33 Q318 36 315 36 H3 Q0 36 0 33 V6 Q0 3 3 3 Z" filter="url(#glow-2)"></path>
@@ -1398,7 +1398,7 @@ const ChatArea = ({
                                             ) : (
                                                 <SendIcon
                                                     sx={{
-                                                        color: "#f37e20",
+                                                        color: "#1da678",
                                                         transform: "rotate(-40deg) translateX(5px)",
                                                     }}
                                                 />

@@ -154,7 +154,7 @@ const MinuteStepDateTimePicker = ({
           }}
           disabled={disabled}
           aria-label="Date"
-          onFocus={(e) => e.target.style.borderColor = '#f37e20'}
+          onFocus={(e) => e.target.style.borderColor = '#1da678'}
           onBlur={(e) => e.target.style.borderColor = '#ccc'}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -176,7 +176,7 @@ const MinuteStepDateTimePicker = ({
             }}
             disabled={disabled}
             aria-label="Hour"
-            onFocus={(e) => e.target.style.borderColor = '#f37e20'}
+            onFocus={(e) => e.target.style.borderColor = '#1da678'}
             onBlur={(e) => e.target.style.borderColor = '#ccc'}
           >
             {hourOptions.map((h) => (
@@ -204,7 +204,7 @@ const MinuteStepDateTimePicker = ({
             }}
             disabled={disabled}
             aria-label="Minute"
-            onFocus={(e) => e.target.style.borderColor = '#f37e20'}
+            onFocus={(e) => e.target.style.borderColor = '#1da678'}
             onBlur={(e) => e.target.style.borderColor = '#ccc'}
           >
             {minuteOptions.map((m) => (
@@ -232,7 +232,7 @@ const MinuteStepDateTimePicker = ({
           }}
           disabled={disabled}
           aria-label="AM/PM"
-          onFocus={(e) => e.target.style.borderColor = '#f37e20'}
+          onFocus={(e) => e.target.style.borderColor = '#1da678'}
           onBlur={(e) => e.target.style.borderColor = '#ccc'}
         >
           <option value="AM">AM</option>

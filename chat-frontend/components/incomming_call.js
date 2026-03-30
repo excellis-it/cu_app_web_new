@@ -160,7 +160,7 @@ const IncomingCallButton = ({ socketRef, user_name, userId, onAcceptIncomingCall
         title: 'Already in a Call',
         text: 'You are already in an active call. Please end the current call before joining another one.',
         confirmButtonText: 'OK',
-        confirmButtonColor: '#f37e20 !important'
+        confirmButtonColor: '#1da678 !important'
       });
       // Reject the incoming call
       stopCall();
