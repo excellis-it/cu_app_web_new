@@ -240,6 +240,19 @@ const CallButton = ({
     }
   };
 
+  // Auto-open preview when navigating from an accepted incoming call
+  useEffect(() => {
+    const pending = sessionStorage.getItem("pendingCallPreview");
+    if (pending && pending === group_id?.toString()) {
+      sessionStorage.removeItem("pendingCallPreview");
+      // Small delay to let the component fully mount and activeCall state settle
+      const timer = setTimeout(() => {
+        openModal();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [group_id]);
+
   useEffect(() => {
     if (open && stream && localVideoRef.current) {
       localVideoRef.current.srcObject = stream;
