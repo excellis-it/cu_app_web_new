@@ -653,6 +653,18 @@ const GroupMessage = () => {
     setIcon(<MenuIcon />);
   };
 
+  // On page load (including reload), clear stale call session state.
+  // After a reload the Room component is not mounted, so the user is no longer
+  // in the call — but sessionStorage still has the old values which would
+  // incorrectly suppress incoming-call ringtones or confuse other logic.
+  useEffect(() => {
+    if (!showRoom) {
+      sessionStorage.removeItem("userInActiveCall");
+      sessionStorage.removeItem("activeCallId");
+      sessionStorage.removeItem("callStatus");
+    }
+  }, []);
+
   //socket connection
   useEffect(() => {
     const socketUrl =
@@ -790,6 +802,8 @@ const GroupMessage = () => {
 
       // Route UI to chat view and mark this as a navigation that should auto-open join preview.
       sessionStorage.setItem("isDeepLinkNavigation", "true");
+      // Signal CallButton to auto-open the call preview for this group.
+      sessionStorage.setItem("pendingCallPreview", targetRoomId);
       setShowActivity(true);
       setCallHistoryActivity(false);
       setMeetingsActivity(false);

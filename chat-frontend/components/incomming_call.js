@@ -54,6 +54,14 @@ const IncomingCallButton = ({ socketRef, user_name, userId, onAcceptIncomingCall
     if (!socketRef.current) return;
 
     const handleIncomingCall = async (data) => {
+      // If the user was already in this call (e.g. page reload during an active call),
+      // don't show the incoming call modal or play the ringtone again.
+      const userInActiveCall = sessionStorage.getItem("userInActiveCall");
+      const activeCallId = sessionStorage.getItem("activeCallId");
+      if (userInActiveCall === "true" && activeCallId === data.roomId?.toString()) {
+        return;
+      }
+
       const userStorage = localStorage.getItem('user');
       const token = userStorage ? JSON.parse(userStorage).data?.token : '';
       const response = await fetch(`/api/groups/check-active-call?group_id=${data.roomId}`, {
