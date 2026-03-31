@@ -199,14 +199,18 @@ export default function initializeSocket() {
 
       // Cleanup mediasoup peer state for this user/room
       try {
-        if (roomId && userId) {
-          await removePeer(roomId.toString(), userId.toString());
+        const effectiveUserId = userId || connectedUser?.userId || socketUserInfo?.userName;
+        const effectiveRoomId = roomId || connectedUser?.roomId;
+        
+        if (effectiveRoomId && effectiveUserId) {
+          await removePeer(effectiveRoomId.toString(), effectiveUserId.toString());
+        }
+
+        if (effectiveUserId && mongoose.Types.ObjectId.isValid(effectiveUserId)) {
+          await USERS.findByIdAndUpdate(effectiveUserId, { isActiveInCall: false });
         }
       } catch (err) {
-        console.error("Error removing mediasoup peer on disconnect:", err);
-      }
-      if (userId && mongoose.Types.ObjectId.isValid(userId)) {
-        await USERS.findByIdAndUpdate(userId, { isActiveInCall: false });
+        console.error("Error cleaning up user state on disconnect:", err);
       }
 
       // ... existing group notification logic ...
@@ -419,6 +423,7 @@ export default function initializeSocket() {
 
         connectedUser = { roomId, userId: userName };
         socketRoomMap.set(socket.id, roomId);
+        socketUserMap.set(socket.id, userName);
         socket.join(roomId);
 
         // Debug: log current clients in this room whenever someone joins
@@ -712,6 +717,7 @@ export default function initializeSocket() {
         try {
           connectedUser = { roomId, userId: userName };
           socketRoomMap.set(socket.id, roomId);
+          socketUserMap.set(socket.id, userName);
           socket.join(roomId);
 
           // Resolve a human-readable name when possible
