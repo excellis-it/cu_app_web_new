@@ -75,8 +75,7 @@ export default function App({ Component, pageProps }) {
         // Check if it's a WebSocket connection refused error from a non-app source
         if (
           message.includes('WebSocket connection to') &&
-          message.includes('failed') &&
-          (message.includes('ERR_CONNECTION_REFUSED') || message.includes('connection establishment'))
+          message.includes('failed')
         ) {
           // Only suppress if it's not from our app's socket connections
           // Our app uses ports like 10018, 10016, etc., not random ports like 63873
@@ -84,6 +83,7 @@ export default function App({ Component, pageProps }) {
             message.includes('10016') ||
             message.includes('10017') ||
             message.includes('13.63.9.45') ||
+            message.includes('localhost') ||
             message.includes('extalkapi.excellisit.net') ||
             message.includes('api.cu-app.us') ||
             message.includes('cu-app.us');

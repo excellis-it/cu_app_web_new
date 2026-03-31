@@ -10,6 +10,7 @@ import sendWebPush from "../helpers/webpush";
 import Group from "../db/schemas/group.schema";
 import videoCall from "../db/schemas/videocall.schema";
 import CallRecording from "../db/schemas/callrecording.schema";
+import ScreenRecording from "../db/schemas/screen-recording.schema";
 import GuestMeeting from "../db/schemas/guest-meeting.schema";
 import mongoose from "mongoose";
 import GuestMeetingMessage from "../db/schemas/guest-meeting-message.schema";
@@ -37,6 +38,7 @@ import {
   stopServerRecording,
 } from "../mediasoup/recordingManager";
 import { processRecordingInBackground } from "../helpers/recordingProcessor";
+import { processScreenRecordingInBackground } from "../helpers/screenRecordingProcessor";
 import type { types as MediasoupTypes } from "mediasoup";
 
 // Define a more comprehensive interface for GroupCall with all required fields
@@ -1334,6 +1336,222 @@ export default function initializeSocket() {
         socket.emit("FE-recording-error", {
           roomId,
           message: error?.message || "Failed to stop recording.",
+        });
+      }
+    });
+
+    // =====================================================
+    // Screen recording control (server-side via mediasoup)
+    // =====================================================
+    socket.on("BE-start-screen-recording", async ({ roomId, userId: clientUserId }: any) => {
+      const userId = socketUserMap.get(socket.id) || clientUserId;
+      if (!roomId || !userId) {
+        socket.emit("FE-screen-recording-error", {
+          roomId,
+          message: "Missing roomId or user context.",
+        });
+        return;
+      }
+
+      try {
+        // Role check: SuperAdmin / admin only
+        const userDoc: any = await USERS.findById(userId, { userType: 1 }).lean();
+        if (!userDoc || (userDoc.userType !== "SuperAdmin" && userDoc.userType !== "admin")) {
+          socket.emit("FE-screen-recording-error", {
+            roomId,
+            message: "Only SuperAdmin and Admin can start screen recording.",
+          });
+          return;
+        }
+
+        // Check active call
+        const activeCall = await videoCall
+          .findOne({ groupId: roomId, status: "active" }, { _id: 1 })
+          .lean();
+        if (!activeCall?._id) {
+          socket.emit("FE-screen-recording-error", {
+            roomId,
+            message: "No active call found for this room.",
+          });
+          return;
+        }
+
+        // Check no existing recording in progress
+        const existing = await ScreenRecording.findOne({
+          groupId: roomId,
+          status: { $in: ["recording", "uploading", "processing"] },
+        }).lean();
+        if (existing?._id) {
+          socket.emit("FE-screen-recording-error", {
+            roomId,
+            message: "A screen recording is already in progress.",
+          });
+          return;
+        }
+
+        // Create ScreenRecording document
+        const newRecording = await ScreenRecording.create({
+          groupId: roomId,
+          startedBy: userId.toString(),
+          status: "recording",
+        });
+
+        const recordingId = newRecording._id.toString();
+
+        console.log("[BE-start-screen-recording] created", {
+          roomId,
+          recordingId,
+          startedBy: userId.toString(),
+        });
+
+        // Notify all participants
+        io.in(roomId).emit("FE-screen-recording-started", {
+          roomId,
+          recordingId,
+          startedBy: userId.toString(),
+        });
+
+        // Start server-side mediasoup recording (FFmpeg captures RTP streams)
+        const producersNow = getRoomProducers(roomId);
+        const isAudioOnly = !producersNow.some((p) => p.kind === "video");
+
+        startServerRecording({
+          roomId,
+          recordingId,
+          isAudioOnly,
+        }).catch(async (e: any) => {
+          console.error("[BE-start-screen-recording] server recording failed", {
+            roomId,
+            recordingId,
+            error: e?.message || String(e),
+          });
+          await ScreenRecording.findByIdAndUpdate(newRecording._id, {
+            $set: { status: "failed", errorMessage: e?.message || String(e) },
+          });
+          io.in(roomId).emit("FE-screen-recording-error", {
+            roomId,
+            message: e?.message || "Failed to start server-side recording.",
+          });
+          io.in(roomId).emit("FE-screen-recording-stopped", {
+            roomId,
+            recordingId,
+            stoppedBy: userId.toString(),
+          });
+        });
+      } catch (error: any) {
+        console.error("BE-start-screen-recording error:", error);
+        socket.emit("FE-screen-recording-error", {
+          roomId,
+          message: error?.message || "Failed to start screen recording.",
+        });
+      }
+    });
+
+    socket.on("BE-stop-screen-recording", async ({ roomId, userId: clientUserId }: any) => {
+      const userId = socketUserMap.get(socket.id) || clientUserId;
+      if (!roomId || !userId) {
+        socket.emit("FE-screen-recording-error", {
+          roomId,
+          message: "Missing roomId or user context.",
+        });
+        return;
+      }
+
+      try {
+        // Role check
+        const userDoc: any = await USERS.findById(userId, { userType: 1 }).lean();
+        if (!userDoc || (userDoc.userType !== "SuperAdmin" && userDoc.userType !== "admin")) {
+          socket.emit("FE-screen-recording-error", {
+            roomId,
+            message: "Only SuperAdmin and Admin can stop screen recording.",
+          });
+          return;
+        }
+
+        // Find the active recording
+        const recording = await ScreenRecording.findOneAndUpdate(
+          { groupId: roomId, status: "recording" },
+          { $set: { status: "processing" } },
+          { new: true },
+        );
+
+        if (!recording?._id) {
+          socket.emit("FE-screen-recording-error", {
+            roomId,
+            message: "No active screen recording found to stop.",
+          });
+          return;
+        }
+
+        const recordingId = recording._id.toString();
+        const createdAt = recording.createdAt ? new Date(recording.createdAt) : null;
+        const durationSec = createdAt
+          ? Math.max(0, Math.round((Date.now() - createdAt.getTime()) / 1000))
+          : 0;
+
+        await ScreenRecording.findByIdAndUpdate(recordingId, {
+          $set: { durationSec },
+        });
+
+        console.log("[BE-stop-screen-recording] stopping", {
+          roomId,
+          recordingId,
+          durationSec,
+        });
+
+        // Notify all participants immediately
+        io.in(roomId).emit("FE-screen-recording-stopped", {
+          roomId,
+          recordingId,
+          stoppedBy: userId.toString(),
+        });
+
+        // Stop FFmpeg and process in background
+        (async () => {
+          let outputWebmPath = "";
+          try {
+            const stopped = await stopServerRecording(recordingId);
+            outputWebmPath = stopped.outputWebmPath;
+          } catch (e: any) {
+            console.error("[BE-stop-screen-recording] failed to stop ffmpeg", {
+              roomId,
+              recordingId,
+              error: e?.message || String(e),
+            });
+            await ScreenRecording.findByIdAndUpdate(recordingId, {
+              $set: { status: "failed", errorMessage: e?.message || String(e) },
+            });
+            io.in(roomId).emit("FE-screen-recording-error", {
+              roomId,
+              message: e?.message || "Failed to stop server-side recording.",
+            });
+            return;
+          }
+
+          // Save the raw webm path and trigger processing
+          await ScreenRecording.findByIdAndUpdate(recordingId, {
+            $set: { rawFilePath: outputWebmPath },
+          });
+
+          console.log("[BE-stop-screen-recording] processing", {
+            roomId,
+            recordingId,
+            outputWebmPath,
+          });
+
+          processScreenRecordingInBackground(recordingId).catch((e: any) => {
+            console.error("[BE-stop-screen-recording] processing failed", {
+              roomId,
+              recordingId,
+              error: e?.message || String(e),
+            });
+          });
+        })();
+      } catch (error: any) {
+        console.error("BE-stop-screen-recording error:", error);
+        socket.emit("FE-screen-recording-error", {
+          roomId,
+          message: error?.message || "Failed to stop screen recording.",
         });
       }
     });

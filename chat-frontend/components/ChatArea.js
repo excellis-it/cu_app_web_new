@@ -1148,15 +1148,18 @@ const ChatArea = ({
                                     ? `Photo : ${rplyMsg.fileName}`
                                     : rplyMsg.textFileType === "video"
                                         ? `Video : ${rplyMsg.fileName}`
-                                        : rplyMsg.textFileType === "doc"
-                                            ? `Document : ${rplyMsg.fileName}`
-                                            : rplyMsg.message}
+                                        : rplyMsg.textFileType === "screen_recording"
+                                            ? `Screen Recording : ${rplyMsg.fileName}`
+                                            : rplyMsg.textFileType === "doc"
+                                                ? `Document : ${rplyMsg.fileName}`
+                                                : rplyMsg.message}
                             </span>
                         </div>
 
                         <div style={{ display: "flex", alignItems: "center" }}>
                             {(rplyMsg.textFileType === "image" ||
                                 rplyMsg.textFileType === "video" ||
+                                rplyMsg.textFileType === "screen_recording" ||
                                 rplyMsg.textFileType === "doc") && (
                                     <div style={{ marginRight: "10px", flexShrink: 0 }}>
                                         {rplyMsg.textFileType === "image" ? (

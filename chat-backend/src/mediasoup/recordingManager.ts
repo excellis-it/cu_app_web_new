@@ -115,21 +115,84 @@ function buildSdpForConsumer(params: {
   return sdp;
 }
 
+/**
+ * Build an FFmpeg filter_complex snippet that arranges multiple video inputs
+ * into a grid layout (1=full, 2=side-by-side, 3-4=2x2, 5-6=3x2, etc.).
+ * Each cell is scaled to equal size; empty cells are filled with black.
+ */
+function buildVideoGridFilter(params: {
+  videoInputIndices: number[];
+  targetWidth: number;
+  targetHeight: number;
+}): { filterParts: string[]; videoOutputLabel: string } {
+  const { videoInputIndices, targetWidth, targetHeight } = params;
+  const n = videoInputIndices.length;
+
+  if (n === 0) return { filterParts: [], videoOutputLabel: "" };
+
+  const cols = Math.ceil(Math.sqrt(n));
+  const rows = Math.ceil(n / cols);
+  // Make cell dimensions even (required by most codecs)
+  const cellW = Math.floor(targetWidth / cols) & ~1;
+  const cellH = Math.floor(targetHeight / rows) & ~1;
+
+  const filterParts: string[] = [];
+  const stackInputLabels: string[] = [];
+
+  // Scale each video input to the cell size (with padding to maintain aspect ratio)
+  for (let i = 0; i < n; i++) {
+    const idx = videoInputIndices[i];
+    const label = `sv${i}`;
+    filterParts.push(
+      `[${idx}:v]scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease,` +
+      `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black,setpts=PTS-STARTPTS[${label}]`
+    );
+    stackInputLabels.push(`[${label}]`);
+  }
+
+  // Single video — no stacking needed
+  if (n === 1) {
+    return { filterParts, videoOutputLabel: "sv0" };
+  }
+
+  // Pad empty grid cells with black
+  const totalCells = cols * rows;
+  for (let i = n; i < totalCells; i++) {
+    const label = `blk${i}`;
+    filterParts.push(`color=black:s=${cellW}x${cellH}:r=1[${label}]`);
+    stackInputLabels.push(`[${label}]`);
+  }
+
+  // Build xstack layout string: "x0_y0|x1_y1|..."
+  const layoutParts: string[] = [];
+  for (let i = 0; i < totalCells; i++) {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    layoutParts.push(`${col * cellW}_${row * cellH}`);
+  }
+
+  filterParts.push(
+    `${stackInputLabels.join("")}xstack=inputs=${totalCells}:layout=${layoutParts.join("|")}[vout]`
+  );
+
+  return { filterParts, videoOutputLabel: "vout" };
+}
+
 function buildFfmpegArgs(params: {
   outputWebmPath: string;
-  videoInputIndex: number | null;
-  filterComplex: string;
-  audioCodec: string;
-  videoCopy: boolean;
+  videoInputIndices: number[];
+  audioInputIndices: number[];
   sdpPathsInOrder: string[];
+  targetWidth: number;
+  targetHeight: number;
 }) {
   const {
     outputWebmPath,
-    videoInputIndex,
-    filterComplex,
-    audioCodec,
-    videoCopy,
+    videoInputIndices,
+    audioInputIndices,
     sdpPathsInOrder,
+    targetWidth,
+    targetHeight,
   } = params;
 
   const args: string[] = [
@@ -142,42 +205,52 @@ function buildFfmpegArgs(params: {
   ];
 
   for (const sdpPath of sdpPathsInOrder) {
-    // ffmpeg's -protocol_whitelist is effectively input-scoped for certain demuxers,
-    // so repeat it before each SDP input.
     args.push("-protocol_whitelist", "file,udp,rtp,rtcp");
     args.push("-i", sdpPath);
   }
 
-  args.push("-filter_complex", filterComplex);
+  // --- Build filter_complex ---
+  const filterParts: string[] = [];
 
-  if (videoInputIndex !== null) {
+  // Video grid
+  const hasVideo = videoInputIndices.length > 0;
+  let videoOutputLabel = "";
+  if (hasVideo) {
+    const grid = buildVideoGridFilter({ videoInputIndices, targetWidth, targetHeight });
+    filterParts.push(...grid.filterParts);
+    videoOutputLabel = grid.videoOutputLabel;
+  }
+
+  // Audio mix
+  const audioLabels = audioInputIndices.map((i) => `[${i}:a]`).join("");
+  filterParts.push(
+    `${audioLabels}amix=inputs=${audioInputIndices.length}:duration=longest[aout]`
+  );
+
+  args.push("-filter_complex", filterParts.join(";"));
+
+  // --- Mapping & codecs ---
+  if (hasVideo) {
     args.push(
-      "-map",
-      `${videoInputIndex}:v`,
-      "-map",
-      "[aout]",
-      "-c:v",
-      videoCopy ? "copy" : "libvpx",
-      "-c:a",
-      audioCodec,
-      "-b:a",
-      "128k",
+      "-map", `[${videoOutputLabel}]`,
+      "-map", "[aout]",
+      // Must encode since we're compositing (can't copy)
+      "-c:v", "libvpx",
+      "-b:v", "1M",
+      "-deadline", "realtime",
+      "-cpu-used", "4",
+      "-c:a", "libopus",
+      "-b:a", "128k",
     );
   } else {
-    // audio only
     args.push(
-      "-map",
-      "[aout]",
-      "-c:a",
-      audioCodec,
-      "-b:a",
-      "128k",
+      "-map", "[aout]",
+      "-c:a", "libopus",
+      "-b:a", "128k",
     );
   }
 
-  // Output container
   args.push("-f", "webm", "-y", outputWebmPath);
-
   return args;
 }
 
@@ -214,10 +287,11 @@ export async function startServerRecording(params: {
   const audioProducers = producers.filter((p) => p.kind === "audio");
   const videoProducers = producers.filter((p) => p.kind === "video");
 
-  const selectedVideoProducer = !isAudioOnly ? videoProducers[0] : undefined;
-
+  // Capture ALL video producers (one per participant) for grid layout
+  const selectedVideoProducers = !isAudioOnly ? videoProducers : [];
   const selectedAudioProducers = audioProducers;
-  if (selectedAudioProducers.length === 0 && !selectedVideoProducer) {
+
+  if (selectedAudioProducers.length === 0 && selectedVideoProducers.length === 0) {
     throw new Error("No audio/video producers found for server-side recording.");
   }
 
@@ -226,8 +300,9 @@ export async function startServerRecording(params: {
   const streams: ServerStream[] = [];
 
   // Consume each selected producer and send its RTP to a dedicated localhost port for FFmpeg.
+  // Video producers first, then audio — so FFmpeg input indices are predictable.
   const selectedStreams: { producerId: string; kind: types.MediaKind }[] = [
-    ...(selectedVideoProducer ? [{ producerId: selectedVideoProducer.producerId, kind: "video" as const }] : []),
+    ...selectedVideoProducers.map((p) => ({ producerId: p.producerId, kind: "video" as const })),
     ...selectedAudioProducers.map((p) => ({ producerId: p.producerId, kind: "audio" as const })),
   ];
 
@@ -265,31 +340,32 @@ export async function startServerRecording(params: {
     });
   }
 
-  // Build filter_complex: mix all audio inputs into [aout]
-  const videoInputIndex = streams[0]?.kind === "video" ? 0 : null;
-
+  // Separate video and audio input indices (video first, then audio — matches selectedStreams order)
   const sdpPathsInOrder = streams.map((st) => st.sdpPath);
+  const videoInputIndices: number[] = [];
   const audioInputIndices: number[] = [];
   for (let i = 0; i < streams.length; i++) {
-    if (streams[i].kind === "audio") audioInputIndices.push(i);
+    if (streams[i].kind === "video") videoInputIndices.push(i);
+    else audioInputIndices.push(i);
   }
 
-  // We always require at least one audio for this phase (audio mixing in phase 1).
-  // If the session is video-only, we still need audio to define [aout].
   if (audioInputIndices.length === 0) {
     throw new Error("Server-side recording currently requires at least one audio producer.");
   }
 
-  const audioLabels = audioInputIndices.map((i) => `[${i}:a]`).join("");
-  const filterComplex = `${audioLabels}amix=inputs=${audioInputIndices.length}:duration=longest[aout]`;
+  console.log("[recording:server] grid layout", {
+    recordingId,
+    videoStreams: videoInputIndices.length,
+    audioStreams: audioInputIndices.length,
+  });
 
   const args = buildFfmpegArgs({
     outputWebmPath,
-    videoInputIndex,
-    filterComplex,
-    audioCodec: "libopus",
-    videoCopy: true,
+    videoInputIndices,
+    audioInputIndices,
     sdpPathsInOrder,
+    targetWidth: 1280,
+    targetHeight: 720,
   });
 
   const ffmpegStderrPrefix = `[recording:${recordingId}] ffmpeg`;
@@ -330,7 +406,9 @@ export async function startServerRecording(params: {
     for (const st of streams) {
       if (st.kind !== "video") continue;
       try {
-        (st.consumer as any).requestKeyFrame?.();
+        if (!st.consumer.closed) {
+          (st.consumer as any).requestKeyFrame?.()?.catch?.(() => {});
+        }
       } catch {
         // ignore
       }

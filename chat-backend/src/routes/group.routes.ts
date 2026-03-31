@@ -8,6 +8,13 @@ import {
   initRecordingUpload,
   uploadRecordingChunk,
 } from "../controller/group/recordingController";
+import {
+  initScreenRecording,
+  uploadScreenRecordingChunk,
+  completeScreenRecording,
+  getScreenRecordingStatus,
+  getScreenRecordingsList,
+} from "../controller/group/screenRecordingController";
 import multer from "multer";
 import { upload } from "../helpers/upload";
 import adminMiddleware from "../middleware/adminMiddleware";
@@ -312,6 +319,65 @@ groupRouter.get("/recordings/status", authMiddleware, async (req: any, res: any)
         serverResponse(true, "Recording status fetched successfully", await getRecordingStatus(req.query, req.user), res);
     } catch (error: any) {
         serverResponse(false, "Error fetching recording status", error.message, res);
+    }
+});
+
+// ==============================
+// Screen recording endpoints
+// ==============================
+groupRouter.post("/screen-recordings/init", authMiddleware, async (req: any, res: any) => {
+    try {
+        console.log("[routes] POST /groups/screen-recordings/init", {
+            groupId: req?.body?.groupId,
+            userId: req?.user?._id?.toString?.(),
+        });
+        serverResponse(true, "Screen recording initialized successfully", await initScreenRecording(req.body, req.user), res);
+    } catch (error: any) {
+        serverResponse(false, "Error initializing screen recording", error.message, res);
+    }
+});
+
+groupRouter.post("/screen-recordings/chunk", authMiddleware, uploadFile.single("chunk"), async (req: any, res: any) => {
+    try {
+        console.log("[routes] POST /groups/screen-recordings/chunk", {
+            groupId: req?.body?.groupId,
+            recordingId: req?.body?.recordingId,
+            chunkIndex: req?.body?.chunkIndex,
+            chunkSize: req?.file?.buffer?.length || 0,
+        });
+        serverResponse(true, "Screen recording chunk uploaded successfully", await uploadScreenRecordingChunk(req.body, req.user, req.file), res);
+    } catch (error: any) {
+        serverResponse(false, "Error uploading screen recording chunk", error.message, res);
+    }
+});
+
+groupRouter.post("/screen-recordings/complete", authMiddleware, async (req: any, res: any) => {
+    try {
+        console.log("[routes] POST /groups/screen-recordings/complete", {
+            groupId: req?.body?.groupId,
+            recordingId: req?.body?.recordingId,
+            totalChunks: req?.body?.totalChunks,
+            durationSec: req?.body?.durationSec,
+        });
+        serverResponse(true, "Screen recording completed successfully", await completeScreenRecording(req.body, req.user), res);
+    } catch (error: any) {
+        serverResponse(false, "Error completing screen recording", error.message, res);
+    }
+});
+
+groupRouter.get("/screen-recordings/status", authMiddleware, async (req: any, res: any) => {
+    try {
+        serverResponse(true, "Screen recording status fetched successfully", await getScreenRecordingStatus(req.query, req.user), res);
+    } catch (error: any) {
+        serverResponse(false, "Error fetching screen recording status", error.message, res);
+    }
+});
+
+groupRouter.get("/screen-recordings/list", authMiddleware, async (req: any, res: any) => {
+    try {
+        serverResponse(true, "Screen recordings fetched successfully", await getScreenRecordingsList(req.query, req.user), res);
+    } catch (error: any) {
+        serverResponse(false, "Error fetching screen recordings", error.message, res);
     }
 });
 

@@ -251,7 +251,7 @@ const MegaMessage = ({
                           className={styles.replyOfMyFilebody}
                           src={message.replyOf.msg}
                         />
-                      ) : message.replyOf.msgType == "video" ? (
+                      ) : message.replyOf.msgType == "video" || message.replyOf.msgType === "screen_recording" ? (
                         <video
                           className={styles.replyOfMyFilebody}
                           height="100px"
@@ -282,18 +282,38 @@ const MegaMessage = ({
               )}
               {message.textFileType == "image" ? (
                 <img className={styles.yourFilebody} src={message.message} onClick={() => SEOsetModalIsOpen(true)} />
-              ) : message.textFileType == "video" ? (
-                <video
-                  className={styles.yourFilebody}
-                  controls
-                  playsInline
-                  preload="auto"
-                  src={resolveUploadsUrl(message.message)}
-                  width="100%"
-                  style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
-                >
-                  Your browser does not support the video tag.
-                </video>
+              ) : message.textFileType == "video" || message.textFileType === "screen_recording" ? (
+                <div>
+                  {message.textFileType === "screen_recording" && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontSize: 12, color: '#7c3aed', fontWeight: 600 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#7c3aed', display: 'inline-block' }} />
+                      Screen Recording
+                    </div>
+                  )}
+                  {message.textFileType === "screen_recording" && message.message === "expired" ? (
+                    <div style={{ padding: '16px 20px', background: 'rgba(124,58,237,0.08)', borderRadius: 8, color: '#888', fontSize: 13, textAlign: 'center' }}>
+                      This screen recording has expired and is no longer available.
+                      <div style={{ fontSize: 11, marginTop: 4, color: '#aaa' }}>{message.fileName}</div>
+                    </div>
+                  ) : (
+                    <>
+                      <video
+                        className={styles.yourFilebody}
+                        controls
+                        playsInline
+                        preload="auto"
+                        src={resolveUploadsUrl(message.message)}
+                        width="100%"
+                        style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
+                      >
+                        Your browser does not support the video tag.
+                      </video>
+                      {message.fileName && (
+                        <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{message.fileName}</div>
+                      )}
+                    </>
+                  )}
+                </div>
               ) : message.textFileType === "doc" ? (
                 <div className="link_message">
                   <a href={message.message} download target="_blank">
@@ -499,18 +519,38 @@ const MegaMessage = ({
                 )}
                 {message.textFileType === "image" ? (
                   <img className={styles.myFilebody} src={message.message} onClick={() => SEOsetModalIsOpen(true)} />
-                ) : message.textFileType === "video" ? (
-                  <video
-                    className={styles.myFilebody}
-                    controls
-                    playsInline
-                    preload="auto"
-                    src={resolveUploadsUrl(message.message)}
-                    width="100%"
-                    style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
-                  >
-                    Your browser does not support the video tag.
-                  </video>
+                ) : message.textFileType === "video" || message.textFileType === "screen_recording" ? (
+                  <div>
+                    {message.textFileType === "screen_recording" && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontSize: 12, color: '#7c3aed', fontWeight: 600 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#7c3aed', display: 'inline-block' }} />
+                        Screen Recording
+                      </div>
+                    )}
+                    {message.textFileType === "screen_recording" && message.message === "expired" ? (
+                      <div style={{ padding: '16px 20px', background: 'rgba(124,58,237,0.08)', borderRadius: 8, color: '#888', fontSize: 13, textAlign: 'center' }}>
+                        This screen recording has expired and is no longer available.
+                        <div style={{ fontSize: 11, marginTop: 4, color: '#aaa' }}>{message.fileName}</div>
+                      </div>
+                    ) : (
+                      <>
+                        <video
+                          className={styles.myFilebody}
+                          controls
+                          playsInline
+                          preload="auto"
+                          src={resolveUploadsUrl(message.message)}
+                          width="100%"
+                          style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
+                        >
+                          Your browser does not support the video tag.
+                        </video>
+                        {message.fileName && (
+                          <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{message.fileName}</div>
+                        )}
+                      </>
+                    )}
+                  </div>
                 ) : message.textFileType === "doc" ? (
                   <div className="link_message">
                     <a href={message.message} download target="_blank">
@@ -651,7 +691,7 @@ const MegaMessage = ({
                             className={styles.replyOfMyFilebody}
                             src={message.replyOf.msg}
                           />
-                        ) : message.replyOf.msgType == "video" ? (
+                        ) : message.replyOf.msgType == "video" || message.replyOf.msgType === "screen_recording" ? (
                           <video
                             className={styles.replyOfMyFilebody}
                             height="100px"
@@ -682,18 +722,38 @@ const MegaMessage = ({
                 )}
                 {message.textFileType == "image" ? (
                   <img className={styles.yourFilebody} src={message.message} onClick={() => SEOsetModalIsOpen(true)} />
-                ) : message.textFileType == "video" ? (
-                  <video
-                    className={styles.yourFilebody}
-                    controls
-                    playsInline
-                    preload="auto"
-                    src={resolveUploadsUrl(message.message)}
-                    width="100%"
-                    style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
-                  >
-                    Your browser does not support the video tag.
-                  </video>
+                ) : message.textFileType == "video" || message.textFileType === "screen_recording" ? (
+                  <div>
+                    {message.textFileType === "screen_recording" && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontSize: 12, color: '#7c3aed', fontWeight: 600 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#7c3aed', display: 'inline-block' }} />
+                        Screen Recording
+                      </div>
+                    )}
+                    {message.textFileType === "screen_recording" && message.message === "expired" ? (
+                      <div style={{ padding: '16px 20px', background: 'rgba(124,58,237,0.08)', borderRadius: 8, color: '#888', fontSize: 13, textAlign: 'center' }}>
+                        This screen recording has expired and is no longer available.
+                        <div style={{ fontSize: 11, marginTop: 4, color: '#aaa' }}>{message.fileName}</div>
+                      </div>
+                    ) : (
+                      <>
+                        <video
+                          className={styles.yourFilebody}
+                          controls
+                          playsInline
+                          preload="auto"
+                          src={resolveUploadsUrl(message.message)}
+                          width="100%"
+                          style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
+                        >
+                          Your browser does not support the video tag.
+                        </video>
+                        {message.fileName && (
+                          <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{message.fileName}</div>
+                        )}
+                      </>
+                    )}
+                  </div>
                 ) : message.textFileType === "doc" ? (
                   <div className="link_message">
                     <a href={message.message} download target="_blank">

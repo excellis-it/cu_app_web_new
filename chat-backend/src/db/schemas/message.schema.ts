@@ -26,7 +26,7 @@ const message = new Schema(
     messageType: {
       type: String,
       enum: {
-        values: ["text", "doc", "image", "video", "created", "added", "removed", "callEnd"],
+        values: ["text", "doc", "image", "video", "screen_recording", "created", "added", "removed", "callEnd"],
       },
       trim: true,
       default: "text",

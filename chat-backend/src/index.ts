@@ -14,6 +14,7 @@ import adminRouter from "./routes/admin";
 import path, { join } from "path";
 import { cleanupOrphanedCalls } from "./app";
 import googleRouter from "./routes/google.routes";
+import { startScreenRecordingCleanupJob } from "./helpers/screenRecordingCleanup";
 
 const port = process.env.PORT || 10018;
 const morgan = require("morgan");
@@ -25,8 +26,10 @@ setTimeout(() => {
   cleanupOrphanedCalls()
     .then(() => console.log("Call cleanup completed"))
     .catch(err => console.error("Call cleanup failed:", err));
-}
-  , 10000);
+}, 10000);
+
+// Start daily cleanup of expired screen recordings (default: 30 days)
+startScreenRecordingCleanupJob();
 
 
 // initializeSocket();
