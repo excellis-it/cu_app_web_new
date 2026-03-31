@@ -229,41 +229,29 @@ function buildFfmpegArgs(params: {
 
   args.push("-filter_complex", filterParts.join(";"));
 
-  // --- Mapping & codecs: H.264 + AAC in fragmented MP4 ---
+  // --- Mapping & codecs: VP8 + Opus in WebM ---
+  // VP8/WebM handles RTP timestamp synchronization much better than H.264/MP4
+  // for live capture. The processor will remux to H.264 MP4 afterwards (fast copy-like step).
   if (hasVideo) {
     args.push(
       "-map", `[${videoOutputLabel}]`,
       "-map", "[aout]",
-      // H.264 baseline for max device compatibility
-      "-c:v", "libx264",
-      "-preset", "veryfast",
-      "-tune", "zerolatency",
-      "-profile:v", "baseline",
-      "-level", "3.1",
-      "-crf", "26",
-      "-pix_fmt", "yuv420p",
-      "-g", "48",              // keyframe every ~2s — enables fast seeking
-      "-keyint_min", "48",
-      // AAC mono voice
-      "-c:a", "aac",
-      "-b:a", "64k",
-      "-ac", "1",
+      "-c:v", "libvpx",
+      "-b:v", "1M",
+      "-deadline", "realtime",
+      "-cpu-used", "4",
+      "-c:a", "libopus",
+      "-b:a", "128k",
     );
   } else {
     args.push(
       "-map", "[aout]",
-      "-c:a", "aac",
-      "-b:a", "64k",
-      "-ac", "1",
+      "-c:a", "libopus",
+      "-b:a", "128k",
     );
   }
 
-  // Fragmented MP4: streamable from the start, no need for post-processing faststart
-  args.push(
-    "-movflags", "frag_keyframe+empty_moov+default_base_moof",
-    "-f", "mp4",
-    "-y", outputPath,
-  );
+  args.push("-f", "webm", "-y", outputPath);
   return args;
 }
 
@@ -278,6 +266,8 @@ export async function startServerRecording(params: {
 }): Promise<{ outputPath: string }> {
   const { roomId, recordingId, isAudioOnly } = params;
 
+  console.log("[recording:server] startServerRecording called", { roomId, recordingId, isAudioOnly });
+
   if (activeSessions.has(recordingId)) {
     throw new Error(`Recording session already active for recordingId=${recordingId}`);
   }
@@ -289,13 +279,24 @@ export async function startServerRecording(params: {
   ensureDir(sessionBaseDir);
   ensureDir(sdpDir);
 
-  const outputPath = path.join(sessionBaseDir, "recording.mp4");
+  const outputPath = path.join(sessionBaseDir, "raw.webm");
 
   // Clean existing output to avoid ffmpeg appending/reading stale files.
   if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
 
   const room = await getOrCreateRoom(roomId);
   const producers = getRoomProducers(roomId);
+
+  console.log("[recording:server] all producers in room", {
+    recordingId,
+    roomId,
+    totalProducers: producers.length,
+    producers: producers.map((p) => ({
+      producerId: p.producerId,
+      userId: p.userId,
+      kind: p.kind,
+    })),
+  });
 
   const audioProducers = producers.filter((p) => p.kind === "audio");
   const videoProducers = producers.filter((p) => p.kind === "video");

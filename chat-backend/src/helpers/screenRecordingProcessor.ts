@@ -141,6 +141,22 @@ async function transcodeWebmToMp4(inputFilePath: string, outputFilePath: string)
 }
 
 /**
+ * Remux a fragmented MP4 into a normal MP4 with moov atom at the front.
+ * This is a copy operation (no re-encoding) — very fast.
+ * Required so browsers can read total duration from the header.
+ */
+async function remuxToFaststart(inputFilePath: string, outputFilePath: string) {
+  await runFfmpeg([
+    "-y",
+    "-i",
+    path.resolve(inputFilePath),
+    "-c", "copy",
+    "-movflags", "+faststart",
+    path.resolve(outputFilePath),
+  ]);
+}
+
+/**
  * Probe the duration of a media file using ffprobe.
  * Returns duration in seconds (integer), or 0 if probing fails.
  */
@@ -242,22 +258,23 @@ export async function processScreenRecordingInBackground(recordingId: string) {
     const baseDir = getRecordingBaseDir(id);
     await ensureDir(baseDir);
 
-    // Server-side recording now outputs MP4 directly (H.264+AAC, fragmented).
-    // Client-side chunk upload writes webm chunks that need merging + transcode.
+    // Server-side recording outputs WebM (VP8+Opus). We transcode to MP4 (H.264+AAC)
+    // for universal playback. Client-side chunk upload also produces WebM.
     const rawFilePath = recording.rawFilePath || null;
+    const mp4Path = path.join(baseDir, "screen-recording.mp4");
 
     let playbackFilePath: string;
     let playbackObjectKey: string;
     let playbackUrl = "";
-    const isServerSideMp4 = rawFilePath && rawFilePath.endsWith(".mp4");
 
-    if (isServerSideMp4 && fs.existsSync(rawFilePath)) {
-      // Server-side recording: already MP4, skip transcode entirely
-      console.log("[screen-recording:process] server-side MP4 ready, skipping transcode", {
+    if (rawFilePath && fs.existsSync(rawFilePath)) {
+      // Server-side or legacy recording: transcode WebM → MP4
+      console.log("[screen-recording:process] transcoding to MP4", {
         recordingId: id,
         rawFilePath,
       });
-      playbackFilePath = rawFilePath;
+      await transcodeWebmToMp4(rawFilePath, mp4Path);
+      playbackFilePath = mp4Path;
       playbackObjectKey = `screen-recordings/${id}/screen-recording.mp4`;
     } else if (rawFilePath && !fs.existsSync(rawFilePath)) {
       // Wait briefly for FFmpeg to flush
@@ -269,21 +286,12 @@ export async function processScreenRecordingInBackground(recordingId: string) {
       if (!fs.existsSync(rawFilePath)) {
         throw new Error(`Server-side recording file not found after waiting: ${rawFilePath}`);
       }
-      playbackFilePath = rawFilePath;
-      playbackObjectKey = rawFilePath.endsWith(".mp4")
-        ? `screen-recordings/${id}/screen-recording.mp4`
-        : `screen-recordings/${id}/recording.webm`;
-    } else if (rawFilePath && fs.existsSync(rawFilePath)) {
-      // Server-side webm (legacy) — transcode to mp4
-      const mp4Path = path.join(baseDir, "screen-recording.mp4");
-      console.log("[screen-recording:process] transcode webm to mp4", { recordingId: id });
       await transcodeWebmToMp4(rawFilePath, mp4Path);
       playbackFilePath = mp4Path;
       playbackObjectKey = `screen-recordings/${id}/screen-recording.mp4`;
     } else {
       // Client-side chunk upload fallback: merge chunks + transcode
       const mergedWebmPath = path.join(baseDir, "merged.webm");
-      const mp4Path = path.join(baseDir, "screen-recording.mp4");
       console.log("[screen-recording:process] merging chunks (client upload)", { recordingId: id });
       await mergeChunks(id, mergedWebmPath);
       try {
