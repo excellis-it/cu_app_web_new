@@ -188,12 +188,17 @@ function buildFfmpegArgs(params: {
 }) {
   const {
     outputPath,
-    videoInputIndices,
-    audioInputIndices,
+    videoInputIndices: originalVideoIndices,
+    audioInputIndices: originalAudioIndices,
     sdpPathsInOrder,
     targetWidth,
     targetHeight,
   } = params;
+
+  // We added a 'lavfi' background as input 0.
+  // Shift all original indices up by 1.
+  const videoInputIndices = originalVideoIndices.map(i => i + 1);
+  const audioInputIndices = originalAudioIndices.map(i => i + 1);
 
   const args: string[] = [
     "-fflags",
@@ -202,6 +207,8 @@ function buildFfmpegArgs(params: {
     "10000000",
     "-probesize",
     "10000000",
+    // Base black background starting at t=0
+    "-f", "lavfi", "-i", `color=c=black:s=${targetWidth}x${targetHeight}:r=20`,
   ];
 
   for (const sdpPath of sdpPathsInOrder) {
@@ -235,6 +242,11 @@ function buildFfmpegArgs(params: {
     `${audioLabels}amix=inputs=${audioInputIndices.length}:duration=longest[aout]`
   );
 
+  // Overlay the grid on top of the persistent black background (input index 0)
+  if (hasVideo) {
+    filterParts.push(`[0:v][${videoOutputLabel}]overlay=shortest=0[vout_final]`);
+  }
+
   args.push("-filter_complex", filterParts.join(";"));
 
   // --- Mapping & codecs: VP8 + Opus in WebM ---
@@ -242,7 +254,7 @@ function buildFfmpegArgs(params: {
   // for live capture. The processor will remux to H.264 MP4 afterwards (fast copy-like step).
   if (hasVideo) {
     args.push(
-      "-map", `[${videoOutputLabel}]`,
+      "-map", "[vout_final]",
       "-map", "[aout]",
       "-c:v", "libvpx",
       "-b:v", "4000k",            // significantly higher bitrate for much better quality
