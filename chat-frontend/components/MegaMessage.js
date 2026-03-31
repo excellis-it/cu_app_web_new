@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import styles from "../src/styles/planning.module.css";
 import { Menu, MenuItem } from "@mui/material";
+import HlsVideo from "./HlsVideo";
 
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import DoneAllIcon from "@mui/icons-material/DoneAll";
@@ -305,17 +306,29 @@ const MegaMessage = ({
                     </div>
                   ) : (
                     <>
-                      <video
-                        className={styles.yourFilebody}
-                        controls
-                        playsInline
-                        preload="auto"
-                        src={resolveUploadsUrl(message.message)}
-                        width="100%"
-                        style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
-                      >
-                        Your browser does not support the video tag.
-                      </video>
+                      {message.textFileType === "screen_recording" ? (
+                        <HlsVideo
+                          className={styles.yourFilebody}
+                          controls
+                          playsInline
+                          preload="auto"
+                          src={resolveUploadsUrl(message.message)}
+                          width="100%"
+                          style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
+                        />
+                      ) : (
+                        <video
+                          className={styles.yourFilebody}
+                          controls
+                          playsInline
+                          preload="auto"
+                          src={resolveUploadsUrl(message.message)}
+                          width="100%"
+                          style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
+                        >
+                          Your browser does not support the video tag.
+                        </video>
+                      )}
                       {message.fileName && (
                         <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{message.fileName}</div>
                       )}
@@ -550,17 +563,29 @@ const MegaMessage = ({
                       </div>
                     ) : (
                       <>
-                        <video
-                          className={styles.myFilebody}
-                          controls
-                          playsInline
-                          preload="auto"
-                          src={resolveUploadsUrl(message.message)}
-                          width="100%"
-                          style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
-                        >
-                          Your browser does not support the video tag.
-                        </video>
+                        {message.textFileType === "screen_recording" ? (
+                          <HlsVideo
+                            className={styles.myFilebody}
+                            controls
+                            playsInline
+                            preload="auto"
+                            src={resolveUploadsUrl(message.message)}
+                            width="100%"
+                            style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
+                          />
+                        ) : (
+                          <video
+                            className={styles.myFilebody}
+                            controls
+                            playsInline
+                            preload="auto"
+                            src={resolveUploadsUrl(message.message)}
+                            width="100%"
+                            style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
+                          >
+                            Your browser does not support the video tag.
+                          </video>
+                        )}
                         {message.fileName && (
                           <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{message.fileName}</div>
                         )}
@@ -751,19 +776,39 @@ const MegaMessage = ({
                         This screen recording has expired and is no longer available.
                         <div style={{ fontSize: 11, marginTop: 4, color: '#aaa' }}>{message.fileName}</div>
                       </div>
+                    ) : message.textFileType === "screen_recording" && message.message === "processing" ? (
+                      <div style={{ padding: '20px', background: 'rgba(124,58,237,0.06)', borderRadius: 8, textAlign: 'center', maxWidth: '400px' }}>
+                        <div style={{ fontSize: 24, marginBottom: 8 }}>
+                          <span style={{ display: 'inline-block', animation: 'spin 1.5s linear infinite', width: 24, height: 24, border: '3px solid #e5e7eb', borderTopColor: '#7c3aed', borderRadius: '50%' }} />
+                        </div>
+                        <div style={{ fontSize: 13, color: '#666', fontWeight: 500 }}>Processing screen recording...</div>
+                        <div style={{ fontSize: 11, marginTop: 4, color: '#aaa' }}>{message.fileName}</div>
+                      </div>
                     ) : (
                       <>
-                        <video
-                          className={styles.yourFilebody}
-                          controls
-                          playsInline
-                          preload="auto"
-                          src={resolveUploadsUrl(message.message)}
-                          width="100%"
-                          style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
-                        >
-                          Your browser does not support the video tag.
-                        </video>
+                        {message.textFileType === "screen_recording" ? (
+                          <HlsVideo
+                            className={styles.yourFilebody}
+                            controls
+                            playsInline
+                            preload="auto"
+                            src={resolveUploadsUrl(message.message)}
+                            width="100%"
+                            style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
+                          />
+                        ) : (
+                          <video
+                            className={styles.yourFilebody}
+                            controls
+                            playsInline
+                            preload="auto"
+                            src={resolveUploadsUrl(message.message)}
+                            width="100%"
+                            style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
+                          >
+                            Your browser does not support the video tag.
+                          </video>
+                        )}
                         {message.fileName && (
                           <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{message.fileName}</div>
                         )}

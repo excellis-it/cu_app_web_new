@@ -141,6 +141,46 @@ async function transcodeWebmToMp4(inputFilePath: string, outputFilePath: string)
 }
 
 /**
+ * Transcode WebM → HLS (.m3u8 + .ts segments).
+ * Each segment is ~4 seconds. Output goes to a directory.
+ * Returns the list of created files (playlist + segments).
+ */
+async function transcodeWebmToHls(inputFilePath: string, hlsDir: string): Promise<string[]> {
+  await ensureDir(hlsDir);
+  const playlistPath = path.join(hlsDir, "playlist.m3u8");
+  const segmentPattern = path.join(hlsDir, "seg-%03d.ts");
+
+  await runFfmpeg([
+    "-y",
+    "-i",
+    path.resolve(inputFilePath),
+    // Video: H.264 baseline for max compatibility
+    "-c:v", "libx264",
+    "-preset", "fast",
+    "-crf", "26",
+    "-profile:v", "baseline",
+    "-level", "3.1",
+    "-pix_fmt", "yuv420p",
+    "-vf", "scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease:flags=lanczos",
+    // Audio: AAC mono
+    "-c:a", "aac",
+    "-b:a", "64k",
+    "-ac", "1",
+    // HLS settings
+    "-f", "hls",
+    "-hls_time", "4",                 // 4-second segments
+    "-hls_list_size", "0",            // keep all segments in playlist
+    "-hls_segment_filename", path.resolve(segmentPattern),
+    "-hls_playlist_type", "vod",      // mark as video-on-demand
+    path.resolve(playlistPath),
+  ]);
+
+  // Collect all created files
+  const files = await fsp.readdir(hlsDir);
+  return files.map((f) => path.join(hlsDir, f));
+}
+
+/**
  * Remux a fragmented MP4 into a normal MP4 with moov atom at the front.
  * This is a copy operation (no re-encoding) — very fast.
  * Required so browsers can read total duration from the header.
@@ -188,6 +228,8 @@ function getPublicUploadsDir() {
 function getRecordingContentType(objectKey: string) {
   if (objectKey.endsWith(".mp4")) return "video/mp4";
   if (objectKey.endsWith(".webm")) return "video/webm";
+  if (objectKey.endsWith(".m3u8")) return "application/vnd.apple.mpegurl";
+  if (objectKey.endsWith(".ts")) return "video/mp2t";
   return "application/octet-stream";
 }
 
@@ -243,6 +285,73 @@ async function ensureDir(dir: string) {
   }
 }
 
+/**
+ * Helper: upload a file to S3 or local, returning the playback URL.
+ */
+async function uploadFile(localFilePath: string, objectKey: string, recordingId: string): Promise<string> {
+  const s3Ready = process.env.S3_ACCESS_KEY && process.env.S3_SECRET_ACCESS_KEY
+    && process.env.S3_REGION && process.env.S3_BUCKETS_NAME;
+
+  if (s3Ready) {
+    console.log("[screen-recording:process] uploading to S3", { recordingId, objectKey });
+    const url = await uploadToS3CompatibleBucket(localFilePath, objectKey);
+    console.log("[screen-recording:process] S3 upload done", { recordingId, url });
+    return url;
+  }
+
+  // Local fallback
+  const publicUploadsDir = getPublicUploadsDir();
+  const finalDestPath = path.join(publicUploadsDir, objectKey.replace(/^\/+/, ""));
+  await ensureDir(path.dirname(finalDestPath));
+  await fsp.copyFile(localFilePath, finalDestPath);
+  return `/uploads/${objectKey}`;
+}
+
+/**
+ * Helper: update or create chat message and emit to all group members.
+ */
+async function emitRecordingMessage(recording: any, playbackUrl: string, durationSec: number) {
+  const group = await Group.findById(recording.groupId, { currentUsers: 1 }).lean();
+  const recipients = (group as any)?.currentUsers || [];
+  if (recipients.length === 0) return;
+
+  const placeholderMsgId = recording.uploadSessionId || null;
+  let savedMessage: any;
+
+  if (placeholderMsgId) {
+    savedMessage = await Message.findByIdAndUpdate(
+      placeholderMsgId,
+      { $set: { message: playbackUrl, fileName: `Screen Recording | ${durationSec}s` } },
+      { new: true },
+    );
+  }
+
+  if (!savedMessage) {
+    const sender = await USERS.findById(recording.startedBy, { name: 1 }).lean();
+    savedMessage = await Message.create({
+      senderId: recording.startedBy,
+      groupId: recording.groupId,
+      senderName: (sender as any)?.name || "Admin",
+      message: playbackUrl,
+      fileName: `Screen Recording | ${durationSec}s`,
+      messageType: "screen_recording",
+      createdAt: new Date(),
+      allRecipients: recipients,
+    });
+  }
+
+  const senderDetails = await USERS.findOne({ _id: recording.startedBy }, { password: 0 }).lean();
+  const socketPayload = { ...savedMessage.toObject(), senderDataAll: senderDetails };
+
+  const senderId = recording.startedBy?.toString() || "";
+  const receiverIds = recipients
+    .map((id: any) => id?.toString?.() || "")
+    .filter((id: string) => id && id !== senderId);
+
+  emitMessageToUsers(senderId, receiverIds, socketPayload);
+  emitMessageToRoom(recording.groupId, socketPayload);
+}
+
 export async function processScreenRecordingInBackground(recordingId: string) {
   const recording = await ScreenRecording.findById(recordingId);
   if (!recording) return;
@@ -258,35 +367,13 @@ export async function processScreenRecordingInBackground(recordingId: string) {
     const baseDir = getRecordingBaseDir(id);
     await ensureDir(baseDir);
 
-    // Server-side recording outputs WebM (VP8+Opus). We transcode to MP4 (H.264+AAC)
-    // for universal playback. Client-side chunk upload also produces WebM.
     const rawFilePath = recording.rawFilePath || null;
-    const mp4Path = path.join(baseDir, "screen-recording.mp4");
 
-    let playbackFilePath: string;
-    let playbackObjectKey: string;
-    let playbackUrl = "";
+    // --- Resolve the source file ---
+    let sourceFilePath: string;
 
     if (rawFilePath && fs.existsSync(rawFilePath)) {
-      // Server-side or legacy recording: transcode WebM → MP4
-      console.log("[screen-recording:process] transcoding to MP4", {
-        recordingId: id,
-        rawFilePath,
-        rawSizeBytes: fs.statSync(rawFilePath).size,
-      });
-      try {
-        await transcodeWebmToMp4(rawFilePath, mp4Path);
-        playbackFilePath = mp4Path;
-        playbackObjectKey = `screen-recordings/${id}/screen-recording.mp4`;
-      } catch (transcodeError: any) {
-        // Transcode failed — upload raw WebM as fallback
-        console.warn("[screen-recording:process] mp4 transcode failed, uploading webm", {
-          recordingId: id,
-          error: transcodeError?.message || String(transcodeError),
-        });
-        playbackFilePath = rawFilePath;
-        playbackObjectKey = `screen-recordings/${id}/recording.webm`;
-      }
+      sourceFilePath = rawFilePath;
     } else if (rawFilePath && !fs.existsSync(rawFilePath)) {
       // Wait briefly for FFmpeg to flush
       const startedAt = Date.now();
@@ -297,87 +384,103 @@ export async function processScreenRecordingInBackground(recordingId: string) {
       if (!fs.existsSync(rawFilePath)) {
         throw new Error(`Server-side recording file not found after waiting: ${rawFilePath}`);
       }
-      try {
-        await transcodeWebmToMp4(rawFilePath, mp4Path);
-        playbackFilePath = mp4Path;
-        playbackObjectKey = `screen-recordings/${id}/screen-recording.mp4`;
-      } catch (transcodeError: any) {
-        console.warn("[screen-recording:process] mp4 transcode failed, uploading webm", {
-          recordingId: id,
-          error: transcodeError?.message || String(transcodeError),
-        });
-        playbackFilePath = rawFilePath;
-        playbackObjectKey = `screen-recordings/${id}/recording.webm`;
-      }
+      sourceFilePath = rawFilePath;
     } else {
-      // Client-side chunk upload fallback: merge chunks + transcode
+      // Client-side chunk upload fallback: merge chunks
       const mergedWebmPath = path.join(baseDir, "merged.webm");
       console.log("[screen-recording:process] merging chunks (client upload)", { recordingId: id });
       await mergeChunks(id, mergedWebmPath);
-      try {
-        await transcodeWebmToMp4(mergedWebmPath, mp4Path);
-        playbackFilePath = mp4Path;
-        playbackObjectKey = `screen-recordings/${id}/screen-recording.mp4`;
-      } catch (transcodeError: any) {
-        console.warn("[screen-recording:process] mp4 transcode failed, using webm", {
-          recordingId: id,
-          error: transcodeError?.message || String(transcodeError),
-        });
-        playbackFilePath = mergedWebmPath;
-        playbackObjectKey = `screen-recordings/${id}/recording.webm`;
-      }
+      sourceFilePath = mergedWebmPath;
     }
 
-    // Upload to S3 cloud storage.
-    // Always try S3 first. Only fall back to local if S3 credentials are missing.
-    const s3Ready = process.env.S3_ACCESS_KEY && process.env.S3_SECRET_ACCESS_KEY
-      && process.env.S3_REGION && process.env.S3_BUCKETS_NAME;
+    const rawSizeBytes = fs.statSync(sourceFilePath).size;
 
-    if (s3Ready) {
-      console.log("[screen-recording:process] uploading to S3", {
-        recordingId: id,
-        playbackObjectKey,
-      });
-      playbackUrl = await uploadToS3CompatibleBucket(playbackFilePath, playbackObjectKey);
-      console.log("[screen-recording:process] S3 upload done", { recordingId: id, playbackUrl });
-    } else {
-      // Local fallback only when S3 is not configured at all.
-      const publicUploadsDir = getPublicUploadsDir();
-      const finalRelativePath = playbackObjectKey.replace(/^\/+/, "");
-      const finalDestPath = path.join(publicUploadsDir, finalRelativePath);
-      await ensureDir(path.dirname(finalDestPath));
-
-      console.log("[screen-recording:process] copying final file (local fallback — no S3 configured)", {
-        recordingId: id,
-        finalDestPath,
-      });
-      await fsp.copyFile(playbackFilePath, finalDestPath);
-    }
-
-    // Get file size
-    const fileStat = await fsp.stat(playbackFilePath);
-    const sizeBytes = fileStat.size;
-
-    // Probe duration from the file using ffprobe
+    // Probe duration from the source file
     let durationSec = recording.durationSec || 0;
     try {
-      const probedDuration = await getMediaDuration(playbackFilePath);
+      const probedDuration = await getMediaDuration(sourceFilePath);
       if (probedDuration > 0) durationSec = probedDuration;
     } catch {
       // Keep the socket-calculated duration as fallback
     }
 
-    recording.rawObjectKey = playbackObjectKey;
-    recording.playbackUrl = playbackUrl;
+    // ============================================================
+    // PHASE 1: Upload raw WebM immediately → recording is playable
+    // ============================================================
+    const webmObjectKey = `screen-recordings/${id}/recording.webm`;
+
+    console.log("[screen-recording:process] phase 1: uploading raw WebM", {
+      recordingId: id,
+      rawSizeBytes,
+      durationSec,
+    });
+
+    const webmUrl = await uploadFile(sourceFilePath, webmObjectKey, id);
+
+    // Mark as ready with WebM URL — users can play it now
+    recording.rawObjectKey = webmObjectKey;
+    recording.playbackUrl = webmUrl;
     recording.status = "ready";
     recording.errorMessage = "";
-    recording.sizeBytes = sizeBytes;
+    recording.sizeBytes = rawSizeBytes;
     recording.durationSec = durationSec;
     await recording.save();
 
-    console.log("[screen-recording:process] ready", { recordingId: id, playbackUrl, durationSec, sizeBytes });
+    console.log("[screen-recording:process] phase 1 ready (WebM)", {
+      recordingId: id,
+      playbackUrl: webmUrl,
+      durationSec,
+      sizeBytes: rawSizeBytes,
+    });
 
-    // Clean up temp files (chunks, merged webm, mp4) — everything is on S3 now.
+    // Emit to chat — users see the video immediately
+    await emitRecordingMessage(recording, webmUrl, durationSec);
+
+    // ============================================================
+    // PHASE 2: Transcode to HLS in background → chunked streaming
+    // ============================================================
+    const hlsDir = path.join(baseDir, "hls");
+    const hlsBaseKey = `screen-recordings/${id}/hls`;
+
+    try {
+      console.log("[screen-recording:process] phase 2: transcoding to HLS", { recordingId: id });
+      const hlsFiles = await transcodeWebmToHls(sourceFilePath, hlsDir);
+
+      // Upload all HLS files (playlist + segments) to S3
+      let totalHlsBytes = 0;
+      let hlsPlaylistUrl = "";
+      for (const filePath of hlsFiles) {
+        const fileName = path.basename(filePath);
+        const objectKey = `${hlsBaseKey}/${fileName}`;
+        const url = await uploadFile(filePath, objectKey, id);
+        totalHlsBytes += fs.statSync(filePath).size;
+        if (fileName === "playlist.m3u8") hlsPlaylistUrl = url;
+      }
+
+      // Update DB with HLS playlist URL
+      recording.rawObjectKey = `${hlsBaseKey}/playlist.m3u8`;
+      recording.playbackUrl = hlsPlaylistUrl;
+      recording.sizeBytes = totalHlsBytes;
+      await recording.save();
+
+      console.log("[screen-recording:process] phase 2 ready (HLS)", {
+        recordingId: id,
+        playbackUrl: hlsPlaylistUrl,
+        segments: hlsFiles.length - 1, // minus playlist file
+        totalHlsBytes,
+      });
+
+      // Emit updated URL to chat — player switches to HLS streaming
+      await emitRecordingMessage(recording, hlsPlaylistUrl, durationSec);
+    } catch (transcodeError: any) {
+      // HLS transcode failed — no problem, WebM is already playable
+      console.warn("[screen-recording:process] phase 2 HLS transcode failed (WebM still available)", {
+        recordingId: id,
+        error: transcodeError?.message || String(transcodeError),
+      });
+    }
+
+    // Clean up temp files — everything is on S3 now
     try {
       await fsp.rm(baseDir, { recursive: true, force: true });
       console.log("[screen-recording:process] temp files cleaned up", { recordingId: id, baseDir });
@@ -387,68 +490,6 @@ export async function processScreenRecordingInBackground(recordingId: string) {
         error: cleanupErr?.message || String(cleanupErr),
       });
     }
-
-    // Update the placeholder chat message (created when recording stopped) with the real URL.
-    // If no placeholder exists, create a new message.
-    const group = await Group.findById(recording.groupId, { currentUsers: 1 }).lean();
-    const sender = await USERS.findById(recording.startedBy, { name: 1 }).lean();
-
-    const recipients = (group as any)?.currentUsers || [];
-    if (recipients.length === 0) return;
-
-    const placeholderMsgId = recording.uploadSessionId || null;
-    let savedMessage: any;
-
-    if (placeholderMsgId) {
-      // Update existing placeholder message
-      savedMessage = await Message.findByIdAndUpdate(
-        placeholderMsgId,
-        {
-          $set: {
-            message: playbackUrl,
-            fileName: `Screen Recording | ${durationSec}s`,
-          },
-        },
-        { new: true },
-      );
-      console.log("[screen-recording:process] updated placeholder message", {
-        recordingId: id,
-        messageId: placeholderMsgId,
-      });
-    }
-
-    if (!savedMessage) {
-      // Fallback: create new message if placeholder doesn't exist
-      savedMessage = await Message.create({
-        senderId: recording.startedBy,
-        groupId: recording.groupId,
-        senderName: (sender as any)?.name || "Admin",
-        message: playbackUrl,
-        fileName: `Screen Recording | ${durationSec}s`,
-        messageType: "screen_recording",
-        createdAt: new Date(),
-        allRecipients: recipients,
-      });
-    }
-
-    const senderDetails = await USERS.findOne({ _id: recording.startedBy }, { password: 0 }).lean();
-
-    const socketPayload = {
-      ...savedMessage.toObject(),
-      senderDataAll: senderDetails,
-    };
-
-    // Emit to each group member's personal room (userId) so they receive it
-    // even after leaving the call room.
-    const senderId = recording.startedBy?.toString() || "";
-    const receiverIds = recipients
-      .map((id: any) => id?.toString?.() || "")
-      .filter((id: string) => id && id !== senderId);
-
-    emitMessageToUsers(senderId, receiverIds, socketPayload);
-
-    // Also emit to the call room in case anyone is still in the call.
-    emitMessageToRoom(recording.groupId, socketPayload);
   } catch (error: any) {
     recording.status = "failed";
     recording.errorMessage = error?.message || "Screen recording processing failed";

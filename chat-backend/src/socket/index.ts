@@ -1536,7 +1536,7 @@ export default function initializeSocket() {
           // Create a placeholder "processing" message in chat immediately
           // so users see feedback while transcode + upload runs.
           const group = await Group.findById(roomId, { currentUsers: 1 }).lean() as any;
-          const senderDoc = await USERS.findOne({ _id: userId }, { name: 1, password: 0 }).lean() as any;
+          const senderDoc = await USERS.findOne({ _id: userId }, { name: 1 }).lean() as any;
           const senderDetailsDoc = await USERS.findOne({ _id: userId }, { password: 0 }).lean() as any;
           const recipients = group?.currentUsers || [];
 
