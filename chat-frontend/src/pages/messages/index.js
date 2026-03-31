@@ -1887,8 +1887,18 @@ const GroupMessage = () => {
       const existingIds = new Set(transformedMessages.map((m) => m._id));
 
       messages.forEach((message) => {
-        // Skip if message already exists
-        if (existingIds.has(message._id)) return;
+        // If message already exists, update it in place (e.g., processing → ready)
+        if (existingIds.has(message._id)) {
+          const idx = transformedMessages.findIndex((m) => m._id === message._id);
+          if (idx !== -1) {
+            transformedMessages[idx] = {
+              ...transformedMessages[idx],
+              message: message?.message || message?.content,
+              fileName: message?.fileName,
+            };
+          }
+          return;
+        }
 
         const currentUserId =
           globalUser?.data?.user?._id?.toString() ||
@@ -2744,10 +2754,19 @@ const GroupMessage = () => {
         const cachedData = messageCache.current.get(groupId);
         if (cachedData && cachedData.raw && cachedData.transformed) {
           // Check if message ID already exists in cache
-          const idExists = cachedData.raw.some(
+          const existingIndex = cachedData.raw.findIndex(
             (m) => m._id === latest.data._id,
           );
-          if (!idExists) {
+          if (existingIndex !== -1) {
+            // Update existing message (e.g., processing → ready screen recording)
+            const updatedRaw = [...cachedData.raw];
+            updatedRaw[existingIndex] = latest.data;
+            const updatedTransformed = transformMessagesInstant(updatedRaw);
+            messageCache.current.set(groupId, {
+              raw: updatedRaw,
+              transformed: updatedTransformed,
+            });
+          } else {
             const newTransformed = transformMessagesInstant([latest.data]);
             messageCache.current.set(groupId, {
               raw: [...cachedData.raw, latest.data],
@@ -2772,8 +2791,13 @@ const GroupMessage = () => {
       ) {
         const newTransformed = transformMessagesInstant([latest.data]);
         setCallModifiedMsgs((prev) => {
-          // Prevent duplicates
-          if (prev.some((m) => m._id === latest.data._id)) return prev;
+          const existingIdx = prev.findIndex((m) => m._id === latest.data._id);
+          if (existingIdx !== -1) {
+            // Update existing message (e.g., processing → ready screen recording)
+            const updated = [...prev];
+            updated[existingIdx] = newTransformed[0];
+            return updated;
+          }
           return [...prev, ...newTransformed];
         });
       }

@@ -295,6 +295,14 @@ const MegaMessage = ({
                       This screen recording has expired and is no longer available.
                       <div style={{ fontSize: 11, marginTop: 4, color: '#aaa' }}>{message.fileName}</div>
                     </div>
+                  ) : message.textFileType === "screen_recording" && message.message === "processing" ? (
+                    <div style={{ padding: '20px', background: 'rgba(124,58,237,0.06)', borderRadius: 8, textAlign: 'center', maxWidth: '400px' }}>
+                      <div style={{ fontSize: 24, marginBottom: 8 }}>
+                        <span style={{ display: 'inline-block', animation: 'spin 1.5s linear infinite', width: 24, height: 24, border: '3px solid #e5e7eb', borderTopColor: '#7c3aed', borderRadius: '50%' }} />
+                      </div>
+                      <div style={{ fontSize: 13, color: '#666', fontWeight: 500 }}>Processing screen recording...</div>
+                      <div style={{ fontSize: 11, marginTop: 4, color: '#aaa' }}>{message.fileName}</div>
+                    </div>
                   ) : (
                     <>
                       <video
@@ -530,6 +538,14 @@ const MegaMessage = ({
                     {message.textFileType === "screen_recording" && message.message === "expired" ? (
                       <div style={{ padding: '16px 20px', background: 'rgba(124,58,237,0.08)', borderRadius: 8, color: '#888', fontSize: 13, textAlign: 'center' }}>
                         This screen recording has expired and is no longer available.
+                        <div style={{ fontSize: 11, marginTop: 4, color: '#aaa' }}>{message.fileName}</div>
+                      </div>
+                    ) : message.textFileType === "screen_recording" && message.message === "processing" ? (
+                      <div style={{ padding: '20px', background: 'rgba(124,58,237,0.06)', borderRadius: 8, textAlign: 'center', maxWidth: '400px' }}>
+                        <div style={{ fontSize: 24, marginBottom: 8 }}>
+                          <span style={{ display: 'inline-block', animation: 'spin 1.5s linear infinite', width: 24, height: 24, border: '3px solid #e5e7eb', borderTopColor: '#7c3aed', borderRadius: '50%' }} />
+                        </div>
+                        <div style={{ fontSize: 13, color: '#666', fontWeight: 500 }}>Processing screen recording...</div>
                         <div style={{ fontSize: 11, marginTop: 4, color: '#aaa' }}>{message.fileName}</div>
                       </div>
                     ) : (

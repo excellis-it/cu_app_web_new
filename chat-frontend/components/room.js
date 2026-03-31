@@ -873,6 +873,7 @@ const Room = ({
           try {
             console.log("[room.js][SCREC] FE-screen-recording-started", payload);
             setIsScreenRecording(true);
+            toast.info("Recording started", { position: "top-right", autoClose: 2000 });
             // Start duration timer for non-admin participants (admin starts it locally)
             if (!screenRecordingStartTimeRef.current) {
               screenRecordingStartTimeRef.current = Date.now();
@@ -887,6 +888,7 @@ const Room = ({
           try {
             console.log("[room.js][SCREC] FE-screen-recording-stopped", payload);
             setIsScreenRecording(false);
+            toast.info("Recording stopped. Processing...", { position: "top-right", autoClose: 3000 });
             stopDurationTimer();
           } catch (e) {
             console.error("[room.js] FE-screen-recording-stopped handler error", e);

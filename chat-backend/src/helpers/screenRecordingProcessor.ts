@@ -388,23 +388,48 @@ export async function processScreenRecordingInBackground(recordingId: string) {
       });
     }
 
-    // Create a chat message so all group members can see the recording in history.
+    // Update the placeholder chat message (created when recording stopped) with the real URL.
+    // If no placeholder exists, create a new message.
     const group = await Group.findById(recording.groupId, { currentUsers: 1 }).lean();
     const sender = await USERS.findById(recording.startedBy, { name: 1 }).lean();
 
-    const recipients = group?.currentUsers || [];
+    const recipients = (group as any)?.currentUsers || [];
     if (recipients.length === 0) return;
 
-    const savedMessage = await Message.create({
-      senderId: recording.startedBy,
-      groupId: recording.groupId,
-      senderName: sender?.name || "Admin",
-      message: playbackUrl,
-      fileName: `Screen Recording | ${recording.durationSec || 0}s`,
-      messageType: "screen_recording",
-      createdAt: new Date(),
-      allRecipients: recipients,
-    });
+    const placeholderMsgId = recording.uploadSessionId || null;
+    let savedMessage: any;
+
+    if (placeholderMsgId) {
+      // Update existing placeholder message
+      savedMessage = await Message.findByIdAndUpdate(
+        placeholderMsgId,
+        {
+          $set: {
+            message: playbackUrl,
+            fileName: `Screen Recording | ${durationSec}s`,
+          },
+        },
+        { new: true },
+      );
+      console.log("[screen-recording:process] updated placeholder message", {
+        recordingId: id,
+        messageId: placeholderMsgId,
+      });
+    }
+
+    if (!savedMessage) {
+      // Fallback: create new message if placeholder doesn't exist
+      savedMessage = await Message.create({
+        senderId: recording.startedBy,
+        groupId: recording.groupId,
+        senderName: (sender as any)?.name || "Admin",
+        message: playbackUrl,
+        fileName: `Screen Recording | ${durationSec}s`,
+        messageType: "screen_recording",
+        createdAt: new Date(),
+        allRecipients: recipients,
+      });
+    }
 
     const senderDetails = await USERS.findOne({ _id: recording.startedBy }, { password: 0 }).lean();
 

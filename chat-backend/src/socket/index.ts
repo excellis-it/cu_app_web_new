@@ -1528,15 +1528,56 @@ export default function initializeSocket() {
             return;
           }
 
-          // Save the output path and trigger processing (upload to S3 + chat message)
+          // Save the output path
           await ScreenRecording.findByIdAndUpdate(recordingId, {
             $set: { rawFilePath: outputPath },
+          });
+
+          // Create a placeholder "processing" message in chat immediately
+          // so users see feedback while transcode + upload runs.
+          const group = await Group.findById(roomId, { currentUsers: 1 }).lean() as any;
+          const senderDoc = await USERS.findOne({ _id: userId }, { name: 1, password: 0 }).lean() as any;
+          const senderDetailsDoc = await USERS.findOne({ _id: userId }, { password: 0 }).lean() as any;
+          const recipients = group?.currentUsers || [];
+
+          let placeholderMsgId: string | null = null;
+          if (recipients.length > 0) {
+            const placeholderMsg = await Message.create({
+              senderId: userId,
+              groupId: roomId,
+              senderName: senderDoc?.name || "Admin",
+              message: "processing",
+              fileName: `Screen Recording | ${durationSec}s`,
+              messageType: "screen_recording",
+              createdAt: new Date(),
+              allRecipients: recipients,
+            });
+            placeholderMsgId = placeholderMsg._id.toString();
+
+            const socketPayload = {
+              ...placeholderMsg.toObject(),
+              senderDataAll: senderDetailsDoc,
+            };
+
+            const senderId = userId.toString();
+            const receiverIds = recipients
+              .map((id: any) => id?.toString?.() || "")
+              .filter((id: string) => id && id !== senderId);
+
+            emitMessageToUsers(senderId, receiverIds, socketPayload);
+            emitMessageToRoom(roomId, socketPayload);
+          }
+
+          // Save placeholder message ID so processor can update it
+          await ScreenRecording.findByIdAndUpdate(recordingId, {
+            $set: { rawFilePath: outputPath, uploadSessionId: placeholderMsgId },
           });
 
           console.log("[BE-stop-screen-recording] processing", {
             roomId,
             recordingId,
             outputPath,
+            placeholderMsgId,
           });
 
           processScreenRecordingInBackground(recordingId).catch((e: any) => {
