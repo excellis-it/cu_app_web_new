@@ -205,14 +205,15 @@ function buildFfmpegArgs(params: {
   ];
 
   for (const sdpPath of sdpPathsInOrder) {
-    // thread_queue_size: buffer up to 8192 packets per input so FFmpeg doesn't
-    // drop RTP packets while busy encoding/compositing other streams.
-    // max_delay: allow up to 10s of buffered data before forcing consumption.
+    // thread_queue_size: buffer packets per input to prevent drops during compositing.
+    // fifo_size: UDP receive buffer in packets (default 7, far too small for multi-stream).
+    // overrun_nonfatal: don't crash if buffer overruns, just drop gracefully.
     args.push(
-      "-thread_queue_size", "8192",
+      "-thread_queue_size", "4096",
       "-max_delay", "10000000",
-      "-reorder_queue_size", "2048",
       "-protocol_whitelist", "file,udp,rtp,rtcp",
+      "-fifo_size", "524288",
+      "-overrun_nonfatal", "1",
       "-i", sdpPath,
     );
   }
@@ -245,11 +246,15 @@ function buildFfmpegArgs(params: {
       "-map", `[${videoOutputLabel}]`,
       "-map", "[aout]",
       "-c:v", "libvpx",
-      "-b:v", "1M",
+      "-b:v", "800k",
+      "-quality", "realtime",
       "-deadline", "realtime",
-      "-cpu-used", "4",
+      "-cpu-used", "8",          // max speed, lowest CPU usage
+      "-lag-in-frames", "0",     // no look-ahead buffering
+      "-error-resilient", "1",   // handle dropped packets gracefully
+      "-auto-alt-ref", "0",      // disable alt reference frames (faster)
       "-c:a", "libopus",
-      "-b:a", "128k",
+      "-b:a", "96k",
     );
   } else {
     args.push(

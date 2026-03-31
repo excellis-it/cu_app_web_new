@@ -438,58 +438,78 @@ export async function processScreenRecordingInBackground(recordingId: string) {
 
     // ============================================================
     // PHASE 2: Transcode to HLS in background → chunked streaming
+    // Runs async — doesn't block Phase 1 completion or cleanup
     // ============================================================
-    const hlsDir = path.join(baseDir, "hls");
-    const hlsBaseKey = `screen-recordings/${id}/hls`;
+    const rawFilePathCopy = sourceFilePath;
+    const baseDirCopy = baseDir;
 
-    try {
-      console.log("[screen-recording:process] phase 2: transcoding to HLS", { recordingId: id });
-      const hlsFiles = await transcodeWebmToHls(sourceFilePath, hlsDir);
+    // Don't await — let it run completely in background
+    (async () => {
+      const hlsDir = path.join(baseDirCopy, "hls");
+      const hlsBaseKey = `screen-recordings/${id}/hls`;
 
-      // Upload all HLS files (playlist + segments) to S3
-      let totalHlsBytes = 0;
-      let hlsPlaylistUrl = "";
-      for (const filePath of hlsFiles) {
-        const fileName = path.basename(filePath);
-        const objectKey = `${hlsBaseKey}/${fileName}`;
-        const url = await uploadFile(filePath, objectKey, id);
-        totalHlsBytes += fs.statSync(filePath).size;
-        if (fileName === "playlist.m3u8") hlsPlaylistUrl = url;
+      try {
+        console.log("[screen-recording:process] phase 2: transcoding to HLS", { recordingId: id });
+        const hlsFiles = await transcodeWebmToHls(rawFilePathCopy, hlsDir);
+
+        // Upload all HLS files (playlist + segments) to S3
+        let totalHlsBytes = 0;
+        let hlsPlaylistUrl = "";
+        for (const filePath of hlsFiles) {
+          const fileName = path.basename(filePath);
+          const objectKey = `${hlsBaseKey}/${fileName}`;
+          const url = await uploadFile(filePath, objectKey, id);
+          totalHlsBytes += fs.statSync(filePath).size;
+          if (fileName === "playlist.m3u8") hlsPlaylistUrl = url;
+        }
+
+        // Update DB with HLS playlist URL
+        await ScreenRecording.findByIdAndUpdate(id, {
+          $set: {
+            rawObjectKey: `${hlsBaseKey}/playlist.m3u8`,
+            playbackUrl: hlsPlaylistUrl,
+            sizeBytes: totalHlsBytes,
+          },
+        });
+
+        console.log("[screen-recording:process] phase 2 ready (HLS)", {
+          recordingId: id,
+          playbackUrl: hlsPlaylistUrl,
+          segments: hlsFiles.length - 1,
+          totalHlsBytes,
+        });
+
+        // Emit updated URL to chat — player switches to HLS streaming
+        // Re-fetch recording to get latest state
+        const updatedRecording = await ScreenRecording.findById(id);
+        if (updatedRecording) {
+          await emitRecordingMessage(updatedRecording, hlsPlaylistUrl, durationSec);
+        }
+      } catch (transcodeError: any) {
+        console.warn("[screen-recording:process] phase 2 HLS transcode failed (WebM still available)", {
+          recordingId: id,
+          error: transcodeError?.message || String(transcodeError),
+        });
       }
 
-      // Update DB with HLS playlist URL
-      recording.rawObjectKey = `${hlsBaseKey}/playlist.m3u8`;
-      recording.playbackUrl = hlsPlaylistUrl;
-      recording.sizeBytes = totalHlsBytes;
-      await recording.save();
-
-      console.log("[screen-recording:process] phase 2 ready (HLS)", {
+      // Clean up ALL temp files after Phase 2 completes (or fails)
+      try {
+        await fsp.rm(baseDirCopy, { recursive: true, force: true });
+        console.log("[screen-recording:process] temp files cleaned up", { recordingId: id, baseDir: baseDirCopy });
+      } catch (cleanupErr: any) {
+        console.warn("[screen-recording:process] temp cleanup failed (non-fatal)", {
+          recordingId: id,
+          error: cleanupErr?.message || String(cleanupErr),
+        });
+      }
+    })().catch((e) => {
+      console.error("[screen-recording:process] phase 2 unexpected error", {
         recordingId: id,
-        playbackUrl: hlsPlaylistUrl,
-        segments: hlsFiles.length - 1, // minus playlist file
-        totalHlsBytes,
+        error: e?.message || String(e),
       });
-
-      // Emit updated URL to chat — player switches to HLS streaming
-      await emitRecordingMessage(recording, hlsPlaylistUrl, durationSec);
-    } catch (transcodeError: any) {
-      // HLS transcode failed — no problem, WebM is already playable
-      console.warn("[screen-recording:process] phase 2 HLS transcode failed (WebM still available)", {
-        recordingId: id,
-        error: transcodeError?.message || String(transcodeError),
-      });
-    }
-
-    // Clean up temp files — everything is on S3 now
-    try {
-      await fsp.rm(baseDir, { recursive: true, force: true });
-      console.log("[screen-recording:process] temp files cleaned up", { recordingId: id, baseDir });
-    } catch (cleanupErr: any) {
-      console.warn("[screen-recording:process] temp cleanup failed (non-fatal)", {
-        recordingId: id,
-        error: cleanupErr?.message || String(cleanupErr),
-      });
-    }
+      // Best-effort cleanup
+      fsp.rm(baseDirCopy, { recursive: true, force: true }).catch(() => {});
+    });
   } catch (error: any) {
     recording.status = "failed";
     recording.errorMessage = error?.message || "Screen recording processing failed";
