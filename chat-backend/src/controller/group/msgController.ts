@@ -1499,9 +1499,6 @@ export async function deliverySeen(data: any, user: any) {
 }
 export const checkActiveCall = async (groupId: string, user: any) => {
   try {
-    const VideoCall = require('../../db/schemas/videocall.schema').default;
-    const User = require('../../db/schemas/users.schema').default;
-
     // Find active call in this group
     const groupCall = await VideoCall.findOne({
       groupId,
@@ -1539,14 +1536,15 @@ export const checkActiveCall = async (groupId: string, user: any) => {
       .map((p: any) => p.user);
 
     // Extra guard against stale "joined" states:
-    // if none of the joined users are currently active in calls, auto-end the call.
-    const activeUsersInCall = await User.find(
+    // Only count participants whose 'isActiveInCall' flag is truly true in DB
+    const activeUsersInCall = await USERS.find(
       { _id: { $in: participantIds }, isActiveInCall: true },
-      { _id: 1 }
+      { _id: 1, name: 1, image: 1 }
     ).lean();
-    const activeUserIds = new Set(activeUsersInCall.map((u: any) => u._id.toString()));
+    const activeUserCount = activeUsersInCall.length;
 
-    if (activeUserIds.size === 0) {
+    if (activeUserCount === 0) {
+      // No one is TRULY in the call anymore. Auto-end it.
       await VideoCall.updateOne(
         { _id: groupCall._id },
         {
@@ -1554,6 +1552,7 @@ export const checkActiveCall = async (groupId: string, user: any) => {
             status: 'ended',
             endedAt: new Date(),
             incommingCall: false,
+            // Force all 'joined' states to 'left' since they were stale
             "userActivity.$[elem].status": "left",
             "userActivity.$[elem].leftAt": new Date(),
           }
@@ -1562,27 +1561,49 @@ export const checkActiveCall = async (groupId: string, user: any) => {
           arrayFilters: [{ "elem.status": "joined" }]
         }
       );
+
+      // Create a 'Call Has Ended' message so the chat list updates correctly
+      try {
+        const moment = require("moment");
+        const start = moment(groupCall.startedAt);
+        const end = moment(new Date());
+        const duration = moment.utc(moment.duration(end.diff(start)).asMilliseconds()).format("HH:mm:ss");
+        
+        // Find a suitable sender (the one who called this API or SuperAdmin)
+        const senderId = user?._id || participantIds[0];
+        const group = await Group.findById(groupId).lean() as any;
+
+        if (group && senderId) {
+          const sysMsg = await Message.create({
+            senderId: senderId,
+            groupId: groupId,
+            senderName: user?.name || "System",
+            message: `Call Has Ended | ${duration}`,
+            messageType: "text",
+            createdAt: new Date(),
+            allRecipients: group.currentUsers,
+          });
+
+          // If socket instance is available, we would emit here, 
+          // but since this is an API call, the client will see the message 
+          // on next group refresh (which happens immediately after this API call).
+        }
+      } catch (e) {
+        console.error("Error creating auto-end message:", e);
+      }
+
       return {
         activeCall: false,
         participantCount: 0
       };
     }
 
-    // Fetch participant details from User collection
-    const participants = await User.find(
-      { _id: { $in: Array.from(activeUserIds) } },
-      { name: 1, image: 1 }
-    ).lean();
-
-
-
     return {
       activeCall: true,
-      participantCount: participants.length,
-      participants,
+      participantCount: activeUsersInCall.length,
+      participants: activeUsersInCall,
       startedAt: groupCall.startedAt,
       callType: groupCall.callType,
-
     };
   } catch (error) {
     console.error("Error checking active call:", error);

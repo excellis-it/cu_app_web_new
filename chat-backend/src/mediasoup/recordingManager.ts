@@ -144,8 +144,8 @@ function buildVideoGridFilter(params: {
     const idx = videoInputIndices[i];
     const label = `sv${i}`;
     filterParts.push(
-      `[${idx}:v]fps=8,scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear,` +
-      `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black,setpts=PTS-STARTPTS[${label}]`
+      `[${idx}:v]fps=20,scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear,` +
+      `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black[${label}]`
     );
     stackInputLabels.push(`[${label}]`);
   }
@@ -207,9 +207,11 @@ function buildFfmpegArgs(params: {
   for (const sdpPath of sdpPathsInOrder) {
     // thread_queue_size: buffer packets per input to prevent drops during compositing.
     // max_delay: allow buffering before forcing packet consumption.
+    // use_wallclock_as_timestamps: force absolute sync across all A/V inputs based on arrival time.
     args.push(
       "-thread_queue_size", "8192",
       "-max_delay", "5000000",
+      "-use_wallclock_as_timestamps", "1",
       "-protocol_whitelist", "file,udp,rtp,rtcp",
       "-i", sdpPath,
     );
@@ -243,7 +245,7 @@ function buildFfmpegArgs(params: {
       "-map", `[${videoOutputLabel}]`,
       "-map", "[aout]",
       "-c:v", "libvpx",
-      "-b:v", "500k",            // ultra-low bitrate for stable realtime capture
+      "-b:v", "4000k",            // significantly higher bitrate for much better quality
       "-quality", "realtime",
       "-deadline", "realtime",
       "-cpu-used", "16",         // fastest possible mode for VP8

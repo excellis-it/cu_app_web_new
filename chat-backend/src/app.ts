@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import videoCall from "./db/schemas/videocall.schema";
+import USERS from "./db/schemas/users.schema";
 import usersRouter from './routes/users.routes';
 import groupRouter from './routes/group.routes';
 import adminRouter from './routes/admin';
@@ -90,6 +91,13 @@ export async function cleanupOrphanedCalls() {
           endedAt: new Date()
         }
       }
+    );
+
+    // Global Reset: Mark all users as not in a call on server restart/cleanup.
+    // This heals any stale states from previous crashes or unhandled disconnects.
+    await USERS.updateMany(
+      { isActiveInCall: true },
+      { $set: { isActiveInCall: false } }
     );
   } catch (error) {
     console.error("Error cleaning up orphaned calls:", error);
