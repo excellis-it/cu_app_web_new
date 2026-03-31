@@ -144,7 +144,7 @@ function buildVideoGridFilter(params: {
     const idx = videoInputIndices[i];
     const label = `sv${i}`;
     filterParts.push(
-      `[${idx}:v]scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease,` +
+      `[${idx}:v]fps=8,scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear,` +
       `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black,setpts=PTS-STARTPTS[${label}]`
     );
     stackInputLabels.push(`[${label}]`);
@@ -208,8 +208,8 @@ function buildFfmpegArgs(params: {
     // thread_queue_size: buffer packets per input to prevent drops during compositing.
     // max_delay: allow buffering before forcing packet consumption.
     args.push(
-      "-thread_queue_size", "4096",
-      "-max_delay", "10000000",
+      "-thread_queue_size", "8192",
+      "-max_delay", "5000000",
       "-protocol_whitelist", "file,udp,rtp,rtcp",
       "-i", sdpPath,
     );
@@ -243,10 +243,12 @@ function buildFfmpegArgs(params: {
       "-map", `[${videoOutputLabel}]`,
       "-map", "[aout]",
       "-c:v", "libvpx",
-      "-b:v", "500k",            // lower bitrate for 640x360
+      "-b:v", "500k",            // ultra-low bitrate for stable realtime capture
       "-quality", "realtime",
       "-deadline", "realtime",
-      "-cpu-used", "8",          // max speed, lowest CPU usage
+      "-cpu-used", "16",         // fastest possible mode for VP8
+      "-threads", "0",           // use all available cores for encoding
+      "-row-mt", "1",            // enable row-based multi-threading for VP8
       "-lag-in-frames", "0",     // no look-ahead buffering
       "-error-resilient", "1",   // handle dropped packets gracefully
       "-auto-alt-ref", "0",      // disable alt reference frames (faster)
@@ -400,8 +402,8 @@ export async function startServerRecording(params: {
     videoInputIndices,
     audioInputIndices,
     sdpPathsInOrder,
-    targetWidth: 640,
-    targetHeight: 360,
+    targetWidth: 426,
+    targetHeight: 240,
   });
 
   const ffmpegStderrPrefix = `[recording:${recordingId}] ffmpeg`;
@@ -422,7 +424,7 @@ export async function startServerRecording(params: {
   });
 
   // Resume consumers after FFmpeg has been spawned and request keyframes for video.
-  // This reduces "unspecified size / keyframe missing" startup failures.
+  // We request multiple keyframes quickly at the start to overcome FFmpeg's initial buffering delay.
   for (const st of streams) {
     try {
       await st.consumer.resume();
@@ -432,6 +434,9 @@ export async function startServerRecording(params: {
     if (st.kind === "video") {
       try {
         await (st.consumer as any).requestKeyFrame?.();
+        // Background some extra requests in case the first is missed
+        setTimeout(() => (st.consumer as any).requestKeyFrame?.().catch(() => {}), 1000);
+        setTimeout(() => (st.consumer as any).requestKeyFrame?.().catch(() => {}), 2000);
       } catch {
         // ignore
       }
