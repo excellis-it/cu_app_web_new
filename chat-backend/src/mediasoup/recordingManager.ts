@@ -197,16 +197,24 @@ function buildFfmpegArgs(params: {
 
   const args: string[] = [
     "-fflags",
-    "+genpts",
+    "+genpts+discardcorrupt",
     "-analyzeduration",
-    "5000000",
+    "10000000",
     "-probesize",
-    "5000000",
+    "10000000",
   ];
 
   for (const sdpPath of sdpPathsInOrder) {
-    args.push("-protocol_whitelist", "file,udp,rtp,rtcp");
-    args.push("-i", sdpPath);
+    // thread_queue_size: buffer up to 8192 packets per input so FFmpeg doesn't
+    // drop RTP packets while busy encoding/compositing other streams.
+    // max_delay: allow up to 10s of buffered data before forcing consumption.
+    args.push(
+      "-thread_queue_size", "8192",
+      "-max_delay", "10000000",
+      "-reorder_queue_size", "2048",
+      "-protocol_whitelist", "file,udp,rtp,rtcp",
+      "-i", sdpPath,
+    );
   }
 
   // --- Build filter_complex ---

@@ -272,10 +272,21 @@ export async function processScreenRecordingInBackground(recordingId: string) {
       console.log("[screen-recording:process] transcoding to MP4", {
         recordingId: id,
         rawFilePath,
+        rawSizeBytes: fs.statSync(rawFilePath).size,
       });
-      await transcodeWebmToMp4(rawFilePath, mp4Path);
-      playbackFilePath = mp4Path;
-      playbackObjectKey = `screen-recordings/${id}/screen-recording.mp4`;
+      try {
+        await transcodeWebmToMp4(rawFilePath, mp4Path);
+        playbackFilePath = mp4Path;
+        playbackObjectKey = `screen-recordings/${id}/screen-recording.mp4`;
+      } catch (transcodeError: any) {
+        // Transcode failed — upload raw WebM as fallback
+        console.warn("[screen-recording:process] mp4 transcode failed, uploading webm", {
+          recordingId: id,
+          error: transcodeError?.message || String(transcodeError),
+        });
+        playbackFilePath = rawFilePath;
+        playbackObjectKey = `screen-recordings/${id}/recording.webm`;
+      }
     } else if (rawFilePath && !fs.existsSync(rawFilePath)) {
       // Wait briefly for FFmpeg to flush
       const startedAt = Date.now();
@@ -286,9 +297,18 @@ export async function processScreenRecordingInBackground(recordingId: string) {
       if (!fs.existsSync(rawFilePath)) {
         throw new Error(`Server-side recording file not found after waiting: ${rawFilePath}`);
       }
-      await transcodeWebmToMp4(rawFilePath, mp4Path);
-      playbackFilePath = mp4Path;
-      playbackObjectKey = `screen-recordings/${id}/screen-recording.mp4`;
+      try {
+        await transcodeWebmToMp4(rawFilePath, mp4Path);
+        playbackFilePath = mp4Path;
+        playbackObjectKey = `screen-recordings/${id}/screen-recording.mp4`;
+      } catch (transcodeError: any) {
+        console.warn("[screen-recording:process] mp4 transcode failed, uploading webm", {
+          recordingId: id,
+          error: transcodeError?.message || String(transcodeError),
+        });
+        playbackFilePath = rawFilePath;
+        playbackObjectKey = `screen-recordings/${id}/recording.webm`;
+      }
     } else {
       // Client-side chunk upload fallback: merge chunks + transcode
       const mergedWebmPath = path.join(baseDir, "merged.webm");
