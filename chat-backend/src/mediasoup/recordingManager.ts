@@ -243,13 +243,14 @@ function buildFfmpegArgs(params: {
       "-map", `[${videoOutputLabel}]`,
       "-map", "[aout]",
       "-c:v", "libvpx",
-      "-b:v", "800k",
+      "-b:v", "500k",            // lower bitrate for 640x360
       "-quality", "realtime",
       "-deadline", "realtime",
       "-cpu-used", "8",          // max speed, lowest CPU usage
       "-lag-in-frames", "0",     // no look-ahead buffering
       "-error-resilient", "1",   // handle dropped packets gracefully
       "-auto-alt-ref", "0",      // disable alt reference frames (faster)
+      "-static-thresh", "1000",  // skip encoding similar frames (huge CPU saving)
       "-c:a", "libopus",
       "-b:a", "96k",
     );
@@ -383,13 +384,15 @@ export async function startServerRecording(params: {
     audioStreams: audioInputIndices.length,
   });
 
+  // Use low resolution for live capture to minimize CPU usage and RTP packet drops.
+  // Phase 2 (HLS transcode) produces high quality from this source.
   const args = buildFfmpegArgs({
     outputPath,
     videoInputIndices,
     audioInputIndices,
     sdpPathsInOrder,
-    targetWidth: 1280,
-    targetHeight: 720,
+    targetWidth: 640,
+    targetHeight: 360,
   });
 
   const ffmpegStderrPrefix = `[recording:${recordingId}] ffmpeg`;
@@ -468,12 +471,16 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
 
   const { ffmpegProcess, streams, outputPath, allocatedPorts, keyframeTimer } = session;
 
+  // Stop keyframe timer first, then wait for any in-flight requestKeyFrame()
+  // promises to settle before closing consumers. Without this delay, the mediasoup
+  // Channel rejects the pending request after the consumer is gone → unhandled rejection crash.
   if (keyframeTimer) {
     clearInterval(keyframeTimer);
   }
+  // Wait for in-flight keyframe requests to resolve/reject (mediasoup round-trip < 500ms)
+  await new Promise((r) => setTimeout(r, 500));
 
-  // Graceful stop: close mediasoup consumers first so FFmpeg stops receiving data,
-  // then send "q" so FFmpeg writes the container trailer quickly.
+  // Close mediasoup consumers so FFmpeg stops receiving data.
   for (const st of streams) {
     try { st.consumer.close(); } catch { /* ignore */ }
     try { st.transport.close(); } catch { /* ignore */ }

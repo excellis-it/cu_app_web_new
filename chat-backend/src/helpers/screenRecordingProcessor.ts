@@ -161,14 +161,14 @@ async function transcodeWebmToHls(inputFilePath: string, hlsDir: string): Promis
     "-profile:v", "baseline",
     "-level", "3.1",
     "-pix_fmt", "yuv420p",
-    "-vf", "scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease:flags=lanczos",
+    "-vf", "scale=1280:720:flags=lanczos",
     // Audio: AAC mono
     "-c:a", "aac",
     "-b:a", "64k",
     "-ac", "1",
     // HLS settings
     "-f", "hls",
-    "-hls_time", "4",                 // 4-second segments
+    "-hls_time", "6",                 // 6-second segments (fewer files to upload)
     "-hls_list_size", "0",            // keep all segments in playlist
     "-hls_segment_filename", path.resolve(segmentPattern),
     "-hls_playlist_type", "vod",      // mark as video-on-demand
@@ -480,36 +480,32 @@ export async function processScreenRecordingInBackground(recordingId: string) {
         });
 
         // Emit updated URL to chat — player switches to HLS streaming
-        // Re-fetch recording to get latest state
-        const updatedRecording = await ScreenRecording.findById(id);
-        if (updatedRecording) {
-          await emitRecordingMessage(updatedRecording, hlsPlaylistUrl, durationSec);
+        try {
+          const updatedRecording = await ScreenRecording.findById(id);
+          if (updatedRecording) {
+            await emitRecordingMessage(updatedRecording, hlsPlaylistUrl, durationSec);
+          }
+        } catch (emitErr: any) {
+          console.warn("[screen-recording:process] phase 2 emit failed (non-fatal)", {
+            recordingId: id,
+            error: emitErr?.message || String(emitErr),
+          });
         }
       } catch (transcodeError: any) {
-        console.warn("[screen-recording:process] phase 2 HLS transcode failed (WebM still available)", {
+        console.warn("[screen-recording:process] phase 2 HLS failed (WebM still available)", {
           recordingId: id,
           error: transcodeError?.message || String(transcodeError),
         });
+      } finally {
+        // ALWAYS clean up temp files — regardless of success or failure
+        try {
+          await fsp.rm(baseDirCopy, { recursive: true, force: true });
+          console.log("[screen-recording:process] temp files cleaned up", { recordingId: id });
+        } catch {
+          // ignore
+        }
       }
-
-      // Clean up ALL temp files after Phase 2 completes (or fails)
-      try {
-        await fsp.rm(baseDirCopy, { recursive: true, force: true });
-        console.log("[screen-recording:process] temp files cleaned up", { recordingId: id, baseDir: baseDirCopy });
-      } catch (cleanupErr: any) {
-        console.warn("[screen-recording:process] temp cleanup failed (non-fatal)", {
-          recordingId: id,
-          error: cleanupErr?.message || String(cleanupErr),
-        });
-      }
-    })().catch((e) => {
-      console.error("[screen-recording:process] phase 2 unexpected error", {
-        recordingId: id,
-        error: e?.message || String(e),
-      });
-      // Best-effort cleanup
-      fsp.rm(baseDirCopy, { recursive: true, force: true }).catch(() => {});
-    });
+    })();
   } catch (error: any) {
     recording.status = "failed";
     recording.errorMessage = error?.message || "Screen recording processing failed";
@@ -524,6 +520,46 @@ export async function processScreenRecordingInBackground(recordingId: string) {
       event: "SCREEN_RECORDING_PROCESS",
       message: "Error processing screen recording",
       meta: { recordingId },
+    });
+  }
+}
+
+/**
+ * Cleanup orphaned temp directories on startup.
+ * Removes any recording temp dir whose DB record is already "ready" or "failed".
+ * Call this once when the server starts.
+ */
+export async function cleanupOrphanedTempFiles() {
+  const tempDir = recordingConfig.tempUploadDir;
+  if (!fs.existsSync(tempDir)) return;
+
+  try {
+    const entries = await fsp.readdir(tempDir);
+    let cleaned = 0;
+
+    for (const entry of entries) {
+      // Skip non-recording directories like "screen-recordings"
+      if (!entry.match(/^[a-f0-9]{24}$/)) continue;
+
+      const fullPath = path.join(tempDir, entry);
+      const stat = await fsp.stat(fullPath).catch(() => null);
+      if (!stat || !stat.isDirectory()) continue;
+
+      // Check if DB record exists and is complete
+      const recording = await ScreenRecording.findById(entry, { status: 1 }).lean();
+      if (!recording || recording.status === "ready" || recording.status === "failed") {
+        await fsp.rm(fullPath, { recursive: true, force: true });
+        cleaned++;
+        console.log("[screen-recording:cleanup] removed orphaned temp dir", { id: entry, status: recording?.status || "missing" });
+      }
+    }
+
+    if (cleaned > 0) {
+      console.log("[screen-recording:cleanup] startup cleanup done", { cleaned });
+    }
+  } catch (err: any) {
+    console.warn("[screen-recording:cleanup] startup cleanup error (non-fatal)", {
+      error: err?.message || String(err),
     });
   }
 }

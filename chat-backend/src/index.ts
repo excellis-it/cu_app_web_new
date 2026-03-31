@@ -15,9 +15,22 @@ import path, { join } from "path";
 import { cleanupOrphanedCalls } from "./app";
 import googleRouter from "./routes/google.routes";
 import { startScreenRecordingCleanupJob } from "./helpers/screenRecordingCleanup";
+import { cleanupOrphanedTempFiles } from "./helpers/screenRecordingProcessor";
 
 const port = process.env.PORT || 10018;
 const morgan = require("morgan");
+
+// Catch unhandled promise rejections (e.g., mediasoup Channel errors after consumer close)
+// to prevent process crashes. Log but don't exit.
+process.on("unhandledRejection", (reason: any) => {
+  const msg = reason?.message || String(reason);
+  // Suppress known mediasoup timing errors that are harmless
+  if (msg.includes("Channel request handler") && msg.includes("not found")) {
+    console.warn("[process] suppressed mediasoup channel rejection:", msg);
+    return;
+  }
+  console.error("[process] unhandledRejection:", reason);
+});
 
 connectDB();
 
@@ -30,6 +43,13 @@ setTimeout(() => {
 
 // Start daily cleanup of expired screen recordings (default: 30 days)
 startScreenRecordingCleanupJob();
+
+// Clean up orphaned temp files from previous server runs
+setTimeout(() => {
+  cleanupOrphanedTempFiles()
+    .then(() => console.log("Orphaned temp file cleanup completed"))
+    .catch(err => console.error("Orphaned temp file cleanup failed:", err));
+}, 15000);
 
 
 // initializeSocket();
