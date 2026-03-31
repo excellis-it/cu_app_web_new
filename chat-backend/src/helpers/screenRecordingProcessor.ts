@@ -157,18 +157,20 @@ async function transcodeWebmToHls(inputFilePath: string, hlsDir: string): Promis
     // Video: H.264 baseline for max compatibility
     "-c:v", "libx264",
     "-preset", "fast",
-    "-crf", "26",
+    "-crf", "28",
     "-profile:v", "baseline",
     "-level", "3.1",
     "-pix_fmt", "yuv420p",
-    "-vf", "scale=1280:720:flags=lanczos",
+    "-vf", "scale='min(854,iw)':'min(480,ih)':force_original_aspect_ratio=decrease:flags=lanczos",
+    "-maxrate", "700k",
+    "-bufsize", "1400k",
     // Audio: AAC mono
     "-c:a", "aac",
     "-b:a", "64k",
     "-ac", "1",
     // HLS settings
     "-f", "hls",
-    "-hls_time", "6",                 // 6-second segments (fewer files to upload)
+    "-hls_time", "4",                 // shorter segments improve startup/seek smoothness
     "-hls_list_size", "0",            // keep all segments in playlist
     "-hls_segment_filename", path.resolve(segmentPattern),
     "-hls_playlist_type", "vod",      // mark as video-on-demand
@@ -405,11 +407,11 @@ export async function processScreenRecordingInBackground(recordingId: string) {
     }
 
     // ============================================================
-    // PHASE 1: Upload raw WebM immediately → recording is playable
+    // PHASE 1: Upload raw WebM as fallback (keep chat card "processing")
     // ============================================================
     const webmObjectKey = `screen-recordings/${id}/recording.webm`;
 
-    console.log("[screen-recording:process] phase 1: uploading raw WebM", {
+    console.log("[screen-recording:process] phase 1: uploading raw WebM fallback", {
       recordingId: id,
       rawSizeBytes,
       durationSec,
@@ -417,24 +419,22 @@ export async function processScreenRecordingInBackground(recordingId: string) {
 
     const webmUrl = await uploadFile(sourceFilePath, webmObjectKey, id);
 
-    // Mark as ready with WebM URL — users can play it now
+    // Keep processing state until HLS is ready.
+    // This avoids temporary 0:00 duration/metadata issues from intermediate WebM playback.
     recording.rawObjectKey = webmObjectKey;
     recording.playbackUrl = webmUrl;
-    recording.status = "ready";
+    recording.status = "processing";
     recording.errorMessage = "";
     recording.sizeBytes = rawSizeBytes;
     recording.durationSec = durationSec;
     await recording.save();
 
-    console.log("[screen-recording:process] phase 1 ready (WebM)", {
+    console.log("[screen-recording:process] phase 1 uploaded fallback (still processing)", {
       recordingId: id,
       playbackUrl: webmUrl,
       durationSec,
       sizeBytes: rawSizeBytes,
     });
-
-    // Emit to chat — users see the video immediately
-    await emitRecordingMessage(recording, webmUrl, durationSec);
 
     // ============================================================
     // PHASE 2: Transcode to HLS in background → chunked streaming
@@ -469,6 +469,8 @@ export async function processScreenRecordingInBackground(recordingId: string) {
             rawObjectKey: `${hlsBaseKey}/playlist.m3u8`,
             playbackUrl: hlsPlaylistUrl,
             sizeBytes: totalHlsBytes,
+            status: "ready",
+            errorMessage: "",
           },
         });
 
@@ -496,6 +498,28 @@ export async function processScreenRecordingInBackground(recordingId: string) {
           recordingId: id,
           error: transcodeError?.message || String(transcodeError),
         });
+        // Fallback to WebM so recording is still delivered.
+        try {
+          await ScreenRecording.findByIdAndUpdate(id, {
+            $set: {
+              status: "ready",
+              errorMessage: "",
+              playbackUrl: webmUrl,
+              rawObjectKey: webmObjectKey,
+              sizeBytes: rawSizeBytes,
+              durationSec,
+            },
+          });
+          const fallbackRecording = await ScreenRecording.findById(id);
+          if (fallbackRecording) {
+            await emitRecordingMessage(fallbackRecording, webmUrl, durationSec);
+          }
+        } catch (fallbackErr: any) {
+          console.warn("[screen-recording:process] fallback WebM emit failed", {
+            recordingId: id,
+            error: fallbackErr?.message || String(fallbackErr),
+          });
+        }
       } finally {
         // ALWAYS clean up temp files — regardless of success or failure
         try {

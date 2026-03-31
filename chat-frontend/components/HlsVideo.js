@@ -18,8 +18,23 @@ const HlsVideo = ({ src, ...props }) => {
     if (isHls) {
       if (Hls.isSupported()) {
         const hls = new Hls({
-          maxBufferLength: 30,
-          maxMaxBufferLength: 60,
+          enableWorker: true,
+          lowLatencyMode: false,
+          startFragPrefetch: true,
+          maxBufferLength: 60,
+          maxMaxBufferLength: 120,
+          maxBufferSize: 60 * 1000 * 1000,
+          capLevelToPlayerSize: true,
+        });
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (!data?.fatal) return;
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            hls.startLoad();
+          } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            hls.recoverMediaError();
+          } else {
+            hls.destroy();
+          }
         });
         hls.loadSource(src);
         hls.attachMedia(video);
