@@ -144,8 +144,7 @@ function buildVideoGridFilter(params: {
     const idx = videoInputIndices[i];
     const label = `sv${i}`;
     filterParts.push(
-      `[${idx}:v]fps=20,scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear,` +
-      `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black[${label}]`
+      `[${idx}:v]fps=15,scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear[${label}]`
     );
     stackInputLabels.push(`[${label}]`);
   }
@@ -208,7 +207,7 @@ function buildFfmpegArgs(params: {
     "-probesize",
     "10000000",
     // Base black background starting at t=0
-    "-f", "lavfi", "-i", `color=c=black:s=${targetWidth}x${targetHeight}:r=20`,
+    "-f", "lavfi", "-i", `color=c=black:s=${targetWidth}x${targetHeight}:r=15`,
   ];
 
   for (const sdpPath of sdpPathsInOrder) {
@@ -257,7 +256,8 @@ function buildFfmpegArgs(params: {
       "-map", "[vout_final]",
       "-map", "[aout]",
       "-c:v", "libvpx",
-      "-b:v", "4000k",            // significantly higher bitrate for much better quality
+      "-b:v", "2500k",            // balanced bitrate for quality vs CPU load
+      "-crf", "32",               // high constant quality
       "-quality", "realtime",
       "-deadline", "realtime",
       "-cpu-used", "16",         // fastest possible mode for VP8
@@ -416,8 +416,8 @@ export async function startServerRecording(params: {
     videoInputIndices,
     audioInputIndices,
     sdpPathsInOrder,
-    targetWidth: 426,
-    targetHeight: 240,
+    targetWidth: 1280,
+    targetHeight: 720,
   });
 
   const ffmpegStderrPrefix = `[recording:${recordingId}] ffmpeg`;
@@ -448,9 +448,12 @@ export async function startServerRecording(params: {
     if (st.kind === "video") {
       try {
         await (st.consumer as any).requestKeyFrame?.();
-        // Background some extra requests in case the first is missed
+        // Burst: Request keyframe every 1s for the first 4s of the call
+        // to overcome any initial UDP packet loss or startup delay.
         setTimeout(() => (st.consumer as any).requestKeyFrame?.().catch(() => {}), 1000);
         setTimeout(() => (st.consumer as any).requestKeyFrame?.().catch(() => {}), 2000);
+        setTimeout(() => (st.consumer as any).requestKeyFrame?.().catch(() => {}), 3000);
+        setTimeout(() => (st.consumer as any).requestKeyFrame?.().catch(() => {}), 4000);
       } catch {
         // ignore
       }
@@ -508,11 +511,8 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
   // Wait for in-flight keyframe requests to resolve/reject (mediasoup round-trip < 500ms)
   await new Promise((r) => setTimeout(r, 500));
 
-  // Close mediasoup consumers so FFmpeg stops receiving data.
-  for (const st of streams) {
-    try { st.consumer.close(); } catch { /* ignore */ }
-    try { st.transport.close(); } catch { /* ignore */ }
-  }
+  // 1. Send quit command to FFmpeg stdin to flush buffers properly.
+  // We close the consumers later (after FFmpeg exits).
 
   // Send quit command to FFmpeg stdin.
   try {
@@ -545,6 +545,12 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
   });
 
   console.log("[recording:server] ffmpeg stopped", { recordingId, exitCode });
+
+  // 3. Close mediasoup consumers ONLY AFTER FFmpeg has finished writing files.
+  for (const st of streams) {
+    try { st.consumer.close(); } catch { /* ignore */ }
+    try { st.transport.close(); } catch { /* ignore */ }
+  }
 
   releasePorts(allocatedPorts);
 
