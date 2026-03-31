@@ -349,6 +349,15 @@ export async function startServerRecording(params: {
       // Start paused so we can bring FFmpeg up first, then resume and request keyframes.
       paused: true,
     });
+    // For simulcast/SVC producers, lock recording to the lowest layer.
+    // This significantly reduces RTP pressure and packet loss during server-side compositing.
+    if (s.kind === "video") {
+      try {
+        await (consumer as any).setPreferredLayers?.({ spatialLayer: 0, temporalLayer: 0 });
+      } catch {
+        // ignore if not supported by this consumer/codec
+      }
+    }
 
     const sdpPath = path.join(sdpDir, `stream-${i}.sdp`);
     const sdp = buildSdpForConsumer({ kind: s.kind, sdpIp, rtpPort, consumer });
@@ -440,7 +449,7 @@ export async function startServerRecording(params: {
         // ignore
       }
     }
-  }, 2000);
+  }, 5000);
 
   const allocatedPorts = streams.flatMap((st) => [st.rtpPort, st.rtcpPort]);
 
