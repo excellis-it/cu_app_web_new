@@ -1286,10 +1286,10 @@ export default function initializeSocket() {
         });
 
         (async () => {
-          let outputWebmPath = "";
+          let outputPath = "";
           try {
             const stopped = await stopServerRecording(recordingIdStr);
-            outputWebmPath = stopped.outputWebmPath;
+            outputPath = stopped.outputPath;
           } catch (e: any) {
             console.error("[BE-stop-recording] failed to stop server ffmpeg", {
               roomId,
@@ -1309,7 +1309,7 @@ export default function initializeSocket() {
           await CallRecording.findByIdAndUpdate(recordingIdStr, {
             $set: {
               status: "processing",
-              rawFilePath: outputWebmPath,
+              rawFilePath: outputPath,
             },
           });
 
@@ -1317,7 +1317,7 @@ export default function initializeSocket() {
             roomId,
             recordingId: recordingIdStr,
             durationSec,
-            outputWebmPath,
+            outputPath,
           });
 
           processRecordingInBackground(recordingIdStr).catch((e: any) => {
@@ -1508,10 +1508,10 @@ export default function initializeSocket() {
 
         // Stop FFmpeg and process in background
         (async () => {
-          let outputWebmPath = "";
+          let outputPath = "";
           try {
             const stopped = await stopServerRecording(recordingId);
-            outputWebmPath = stopped.outputWebmPath;
+            outputPath = stopped.outputPath;
           } catch (e: any) {
             console.error("[BE-stop-screen-recording] failed to stop ffmpeg", {
               roomId,
@@ -1528,15 +1528,15 @@ export default function initializeSocket() {
             return;
           }
 
-          // Save the raw webm path and trigger processing
+          // Save the output path and trigger processing (upload to S3 + chat message)
           await ScreenRecording.findByIdAndUpdate(recordingId, {
-            $set: { rawFilePath: outputWebmPath },
+            $set: { rawFilePath: outputPath },
           });
 
           console.log("[BE-stop-screen-recording] processing", {
             roomId,
             recordingId,
-            outputWebmPath,
+            outputPath,
           });
 
           processScreenRecordingInBackground(recordingId).catch((e: any) => {

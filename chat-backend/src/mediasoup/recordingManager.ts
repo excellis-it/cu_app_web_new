@@ -23,7 +23,7 @@ type ServerStream = {
 type RecordingSession = {
   roomId: string;
   recordingId: string;
-  outputWebmPath: string;
+  outputPath: string;
   sdpDir: string;
   ffmpegProcess: ReturnType<typeof spawn>;
   ffmpegStderrPrefix: string;
@@ -179,7 +179,7 @@ function buildVideoGridFilter(params: {
 }
 
 function buildFfmpegArgs(params: {
-  outputWebmPath: string;
+  outputPath: string;
   videoInputIndices: number[];
   audioInputIndices: number[];
   sdpPathsInOrder: string[];
@@ -187,7 +187,7 @@ function buildFfmpegArgs(params: {
   targetHeight: number;
 }) {
   const {
-    outputWebmPath,
+    outputPath,
     videoInputIndices,
     audioInputIndices,
     sdpPathsInOrder,
@@ -229,28 +229,41 @@ function buildFfmpegArgs(params: {
 
   args.push("-filter_complex", filterParts.join(";"));
 
-  // --- Mapping & codecs ---
+  // --- Mapping & codecs: H.264 + AAC in fragmented MP4 ---
   if (hasVideo) {
     args.push(
       "-map", `[${videoOutputLabel}]`,
       "-map", "[aout]",
-      // Must encode since we're compositing (can't copy)
-      "-c:v", "libvpx",
-      "-b:v", "1M",
-      "-deadline", "realtime",
-      "-cpu-used", "4",
-      "-c:a", "libopus",
-      "-b:a", "128k",
+      // H.264 baseline for max device compatibility
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-tune", "zerolatency",
+      "-profile:v", "baseline",
+      "-level", "3.1",
+      "-crf", "26",
+      "-pix_fmt", "yuv420p",
+      "-g", "48",              // keyframe every ~2s — enables fast seeking
+      "-keyint_min", "48",
+      // AAC mono voice
+      "-c:a", "aac",
+      "-b:a", "64k",
+      "-ac", "1",
     );
   } else {
     args.push(
       "-map", "[aout]",
-      "-c:a", "libopus",
-      "-b:a", "128k",
+      "-c:a", "aac",
+      "-b:a", "64k",
+      "-ac", "1",
     );
   }
 
-  args.push("-f", "webm", "-y", outputWebmPath);
+  // Fragmented MP4: streamable from the start, no need for post-processing faststart
+  args.push(
+    "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+    "-f", "mp4",
+    "-y", outputPath,
+  );
   return args;
 }
 
@@ -262,7 +275,7 @@ export async function startServerRecording(params: {
   roomId: string;
   recordingId: string;
   isAudioOnly: boolean;
-}): Promise<{ outputWebmPath: string }> {
+}): Promise<{ outputPath: string }> {
   const { roomId, recordingId, isAudioOnly } = params;
 
   if (activeSessions.has(recordingId)) {
@@ -276,10 +289,10 @@ export async function startServerRecording(params: {
   ensureDir(sessionBaseDir);
   ensureDir(sdpDir);
 
-  const outputWebmPath = path.join(sessionBaseDir, "raw.webm");
+  const outputPath = path.join(sessionBaseDir, "recording.mp4");
 
   // Clean existing output to avoid ffmpeg appending/reading stale files.
-  if (fs.existsSync(outputWebmPath)) fs.unlinkSync(outputWebmPath);
+  if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
 
   const room = await getOrCreateRoom(roomId);
   const producers = getRoomProducers(roomId);
@@ -360,7 +373,7 @@ export async function startServerRecording(params: {
   });
 
   const args = buildFfmpegArgs({
-    outputWebmPath,
+    outputPath,
     videoInputIndices,
     audioInputIndices,
     sdpPathsInOrder,
@@ -372,7 +385,7 @@ export async function startServerRecording(params: {
   console.log("[recording:server] spawn ffmpeg", {
     recordingId,
     roomId,
-    outputWebmPath,
+    outputPath,
     streams: streams.map((s) => ({ kind: s.kind, producerId: s.producerId, rtpPort: s.rtpPort })),
   });
 
@@ -420,7 +433,7 @@ export async function startServerRecording(params: {
   const session: RecordingSession = {
     roomId,
     recordingId,
-    outputWebmPath,
+    outputPath,
     sdpDir,
     ffmpegProcess,
     ffmpegStderrPrefix,
@@ -431,10 +444,10 @@ export async function startServerRecording(params: {
 
   activeSessions.set(recordingId, session);
 
-  return { outputWebmPath };
+  return { outputPath };
 }
 
-export async function stopServerRecording(recordingId: string): Promise<{ outputWebmPath: string }> {
+export async function stopServerRecording(recordingId: string): Promise<{ outputPath: string }> {
   const session = activeSessions.get(recordingId);
   if (!session) {
     throw new Error(`No active server-side recording session for recordingId=${recordingId}`);
@@ -442,22 +455,31 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
 
   activeSessions.delete(recordingId);
 
-  const { ffmpegProcess, streams, outputWebmPath, allocatedPorts, keyframeTimer } = session;
+  const { ffmpegProcess, streams, outputPath, allocatedPorts, keyframeTimer } = session;
 
   if (keyframeTimer) {
     clearInterval(keyframeTimer);
   }
 
-  // Graceful stop for ffmpeg.
-  // ffmpeg listens for commands on stdin; `q` should stop and write trailer.
+  // Graceful stop: close mediasoup consumers first so FFmpeg stops receiving data,
+  // then send "q" so FFmpeg writes the container trailer quickly.
+  for (const st of streams) {
+    try { st.consumer.close(); } catch { /* ignore */ }
+    try { st.transport.close(); } catch { /* ignore */ }
+  }
+
+  // Send quit command to FFmpeg stdin.
   try {
     ffmpegProcess.stdin?.write("q\n");
   } catch {
     // ignore
   }
+  try {
+    ffmpegProcess.stdin?.end();
+  } catch {
+    // ignore
+  }
 
-  // Ensure stdin closes so ffmpeg can exit even if q doesn't work.
-  // Give ffmpeg a moment to process the quit command before ending stdin.
   const exitCode: number | null = await new Promise((resolve) => {
     let resolved = false;
     const onClose = (code: number | null) => {
@@ -466,51 +488,20 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
       resolve(code);
     };
     ffmpegProcess.once("close", onClose);
-    // Fallback timeout (Windows may need more time to flush container trailers)
+    // SIGTERM after 10s, SIGKILL after 15s — no need to wait 45s
     setTimeout(() => {
-      try {
-        // Prefer SIGTERM first; then SIGKILL only if needed.
-        ffmpegProcess.kill("SIGTERM");
-      } catch {
-        // ignore
-      }
+      try { ffmpegProcess.kill("SIGTERM"); } catch { /* ignore */ }
       setTimeout(() => {
-        try {
-          ffmpegProcess.kill("SIGKILL");
-        } catch {
-          // ignore
-        }
+        try { ffmpegProcess.kill("SIGKILL"); } catch { /* ignore */ }
         onClose(null);
-      }, 8000);
-    }, 45000);
+      }, 5000);
+    }, 10000);
   });
 
   console.log("[recording:server] ffmpeg stopped", { recordingId, exitCode });
 
-  // Ensure stdin is closed after sending quit.
-  try {
-    ffmpegProcess.stdin?.end();
-  } catch {
-    // ignore
-  }
-
-  // Close mediasoup consumer/transport.
-  for (const st of streams) {
-    try {
-      st.consumer.close();
-    } catch {
-      // ignore
-    }
-    try {
-      st.transport.close();
-    } catch {
-      // ignore
-    }
-  }
-
   releasePorts(allocatedPorts);
 
-  // Keep SDP files for debugging; cleanup can be added later.
-  return { outputWebmPath };
+  return { outputPath };
 }
 

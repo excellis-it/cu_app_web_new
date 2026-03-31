@@ -44,7 +44,9 @@ function runFfmpeg(args: string[]) {
 }
 
 function getRecordingBaseDir(recordingId: string) {
-  return path.join(recordingConfig.tempUploadDir, "screen-recordings", recordingId);
+  // Server-side recording writes raw.webm directly to {tempUploadDir}/{recordingId}/
+  // so this must match the path used in recordingManager.ts
+  return path.join(recordingConfig.tempUploadDir, recordingId);
 }
 
 function getChunksDir(recordingId: string) {
@@ -104,30 +106,63 @@ async function transcodeWebmToMp4(inputFilePath: string, outputFilePath: string)
     "-y",
     "-i",
     path.resolve(inputFilePath),
-    // Video: H.264 optimized for screen content
+    // Video: H.264 optimized for video call content
     "-c:v",
     "libx264",
     "-preset",
-    "faster",       // better compression than veryfast, still reasonable speed
+    "faster",
     "-crf",
-    "28",            // higher CRF = smaller file (28 is great for screen, text stays sharp)
+    "26",            // slightly lower CRF for better quality with video call faces
     "-tune",
-    "stillimage",    // optimized for screen content (mostly static with text)
+    "zerolatency",   // reduces decoding latency, better for streaming playback
+    "-profile:v",
+    "baseline",      // maximum device compatibility (especially mobile)
+    "-level",
+    "3.1",
     "-pix_fmt",
     "yuv420p",
     "-vf",
     "scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease:flags=lanczos",
-    // Audio: AAC mono at 64k (voice only, no music)
+    "-g",
+    "48",            // keyframe every 2s at 24fps — enables fast seeking
+    "-keyint_min",
+    "48",
+    // Audio: AAC mono at 64k (voice only)
     "-c:a",
     "aac",
     "-b:a",
     "64k",
     "-ac",
-    "1",             // mono — halves audio size, fine for voice
+    "1",
     "-movflags",
-    "+faststart",    // enables progressive playback (important for mobile)
+    "+faststart",    // enables progressive playback (streams while loading)
     path.resolve(outputFilePath),
   ]);
+}
+
+/**
+ * Probe the duration of a media file using ffprobe.
+ * Returns duration in seconds (integer), or 0 if probing fails.
+ */
+function getMediaDuration(filePath: string): Promise<number> {
+  const ffprobeBinary = ffmpegBinary.replace(/ffmpeg(\.exe)?$/, "ffprobe$1");
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffprobeBinary, [
+      "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "default=noprint_wrappers=1:nokey=1",
+      path.resolve(filePath),
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+
+    let stdout = "";
+    proc.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+    proc.on("error", (err) => reject(err));
+    proc.on("close", (code) => {
+      if (code !== 0) return reject(new Error(`ffprobe exited with code ${code}`));
+      const dur = Math.round(parseFloat(stdout.trim()));
+      resolve(Number.isFinite(dur) ? dur : 0);
+    });
+  });
 }
 
 function getPublicUploadsDir() {
@@ -207,56 +242,62 @@ export async function processScreenRecordingInBackground(recordingId: string) {
     const baseDir = getRecordingBaseDir(id);
     await ensureDir(baseDir);
 
-    const mp4Path = path.join(baseDir, "screen-recording.mp4");
+    // Server-side recording now outputs MP4 directly (H.264+AAC, fragmented).
+    // Client-side chunk upload writes webm chunks that need merging + transcode.
+    const rawFilePath = recording.rawFilePath || null;
 
-    // Server-side recording writes a raw.webm via FFmpeg + mediasoup PlainTransports.
-    // Client-side chunk upload writes chunks that need merging.
-    const rawWebmPath = recording.rawFilePath || null;
-    const mergedWebmPath = path.join(baseDir, "merged.webm");
+    let playbackFilePath: string;
+    let playbackObjectKey: string;
+    let playbackUrl = "";
+    const isServerSideMp4 = rawFilePath && rawFilePath.endsWith(".mp4");
 
-    let sourceWebmPath: string;
-
-    if (rawWebmPath && fs.existsSync(rawWebmPath)) {
-      // Server-side recording: use the raw.webm directly
-      console.log("[screen-recording:process] using server-side raw webm", {
+    if (isServerSideMp4 && fs.existsSync(rawFilePath)) {
+      // Server-side recording: already MP4, skip transcode entirely
+      console.log("[screen-recording:process] server-side MP4 ready, skipping transcode", {
         recordingId: id,
-        rawWebmPath,
+        rawFilePath,
       });
-      sourceWebmPath = rawWebmPath;
-    } else if (rawWebmPath && !fs.existsSync(rawWebmPath)) {
+      playbackFilePath = rawFilePath;
+      playbackObjectKey = `screen-recordings/${id}/screen-recording.mp4`;
+    } else if (rawFilePath && !fs.existsSync(rawFilePath)) {
       // Wait briefly for FFmpeg to flush
       const startedAt = Date.now();
       while (Date.now() - startedAt < 20000) {
-        if (fs.existsSync(rawWebmPath)) break;
+        if (fs.existsSync(rawFilePath)) break;
         await new Promise((r) => setTimeout(r, 500));
       }
-      if (!fs.existsSync(rawWebmPath)) {
-        throw new Error(`Server-side raw webm not found after waiting: ${rawWebmPath}`);
+      if (!fs.existsSync(rawFilePath)) {
+        throw new Error(`Server-side recording file not found after waiting: ${rawFilePath}`);
       }
-      sourceWebmPath = rawWebmPath;
+      playbackFilePath = rawFilePath;
+      playbackObjectKey = rawFilePath.endsWith(".mp4")
+        ? `screen-recordings/${id}/screen-recording.mp4`
+        : `screen-recordings/${id}/recording.webm`;
+    } else if (rawFilePath && fs.existsSync(rawFilePath)) {
+      // Server-side webm (legacy) — transcode to mp4
+      const mp4Path = path.join(baseDir, "screen-recording.mp4");
+      console.log("[screen-recording:process] transcode webm to mp4", { recordingId: id });
+      await transcodeWebmToMp4(rawFilePath, mp4Path);
+      playbackFilePath = mp4Path;
+      playbackObjectKey = `screen-recordings/${id}/screen-recording.mp4`;
     } else {
-      // Client-side chunk upload fallback: merge chunks
+      // Client-side chunk upload fallback: merge chunks + transcode
+      const mergedWebmPath = path.join(baseDir, "merged.webm");
+      const mp4Path = path.join(baseDir, "screen-recording.mp4");
       console.log("[screen-recording:process] merging chunks (client upload)", { recordingId: id });
       await mergeChunks(id, mergedWebmPath);
-      sourceWebmPath = mergedWebmPath;
-    }
-
-    let playbackObjectKey = `screen-recordings/${id}/recording.webm`;
-    let playbackFilePath = sourceWebmPath;
-    let playbackUrl = `/uploads/${playbackObjectKey}`;
-
-    // Try MP4 transcode for better browser/mobile playback.
-    try {
-      console.log("[screen-recording:process] transcode to mp4", { recordingId: id });
-      await transcodeWebmToMp4(sourceWebmPath, mp4Path);
-      playbackObjectKey = `screen-recordings/${id}/screen-recording.mp4`;
-      playbackFilePath = mp4Path;
-      playbackUrl = `/uploads/${playbackObjectKey}`;
-    } catch (transcodeError: any) {
-      console.warn("[screen-recording:process] mp4 transcode failed, falling back to webm", {
-        recordingId: id,
-        error: transcodeError?.message || String(transcodeError),
-      });
+      try {
+        await transcodeWebmToMp4(mergedWebmPath, mp4Path);
+        playbackFilePath = mp4Path;
+        playbackObjectKey = `screen-recordings/${id}/screen-recording.mp4`;
+      } catch (transcodeError: any) {
+        console.warn("[screen-recording:process] mp4 transcode failed, using webm", {
+          recordingId: id,
+          error: transcodeError?.message || String(transcodeError),
+        });
+        playbackFilePath = mergedWebmPath;
+        playbackObjectKey = `screen-recordings/${id}/recording.webm`;
+      }
     }
 
     // Upload to S3 cloud storage.
@@ -285,13 +326,28 @@ export async function processScreenRecordingInBackground(recordingId: string) {
       await fsp.copyFile(playbackFilePath, finalDestPath);
     }
 
+    // Get file size
+    const fileStat = await fsp.stat(playbackFilePath);
+    const sizeBytes = fileStat.size;
+
+    // Probe duration from the file using ffprobe
+    let durationSec = recording.durationSec || 0;
+    try {
+      const probedDuration = await getMediaDuration(playbackFilePath);
+      if (probedDuration > 0) durationSec = probedDuration;
+    } catch {
+      // Keep the socket-calculated duration as fallback
+    }
+
     recording.rawObjectKey = playbackObjectKey;
     recording.playbackUrl = playbackUrl;
     recording.status = "ready";
     recording.errorMessage = "";
+    recording.sizeBytes = sizeBytes;
+    recording.durationSec = durationSec;
     await recording.save();
 
-    console.log("[screen-recording:process] ready", { recordingId: id, playbackUrl });
+    console.log("[screen-recording:process] ready", { recordingId: id, playbackUrl, durationSec, sizeBytes });
 
     // Clean up temp files (chunks, merged webm, mp4) — everything is on S3 now.
     try {
