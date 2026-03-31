@@ -206,14 +206,11 @@ function buildFfmpegArgs(params: {
 
   for (const sdpPath of sdpPathsInOrder) {
     // thread_queue_size: buffer packets per input to prevent drops during compositing.
-    // fifo_size: UDP receive buffer in packets (default 7, far too small for multi-stream).
-    // overrun_nonfatal: don't crash if buffer overruns, just drop gracefully.
+    // max_delay: allow buffering before forcing packet consumption.
     args.push(
       "-thread_queue_size", "4096",
       "-max_delay", "10000000",
       "-protocol_whitelist", "file,udp,rtp,rtcp",
-      "-fifo_size", "524288",
-      "-overrun_nonfatal", "1",
       "-i", sdpPath,
     );
   }
