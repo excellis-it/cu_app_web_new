@@ -352,6 +352,8 @@ export async function startServerRecording(params: {
       producerId: p.producerId,
       userId: p.userId,
       kind: p.kind,
+      width: p.width,
+      height: p.height,
     })),
   });
 
