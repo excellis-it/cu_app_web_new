@@ -143,55 +143,70 @@ function buildSdpForConsumer(params: {
  *  • 1 participant  → match their native aspect ratio (capped to 1280×720)
  *  • N participants → grid-aware sizing that respects the dominant orientation
  */
+/**
+ * Compute canvas size dynamically based on actual participant video dimensions.
+ * The canvas is built from participant cells — each cell matches the average
+ * participant resolution, so the recording reflects real screen sizes rather
+ * than arbitrary hard-coded values.
+ *
+ * A soft cap of 960×720 total pixels is applied only when the computed canvas
+ * would be too large for real-time encoding on typical servers.
+ */
 function computeCanvasSize(
   videoDimensions: Map<number, { width: number; height: number }>,
   videoCount: number,
 ): { width: number; height: number } {
-  const MAX_W = 1280;
-  const MAX_H = 960;
+  const SOFT_MAX_W = 960;
+  const SOFT_MAX_H = 720;
 
   if (videoCount === 0) return { width: 640, height: 480 };
 
   const dims = Array.from(videoDimensions.values());
 
-  // Single participant — match their aspect ratio
+  // Single participant — use their actual resolution (capped for encoding speed)
   if (videoCount === 1 && dims.length > 0) {
     const d = dims[0];
-    const isPortrait = d.height > d.width;
-    if (isPortrait) {
-      const h = Math.min(720, MAX_H);
-      const w = (Math.round(h * (d.width / d.height)) & ~1) || 480;
-      return { width: Math.min(Math.max(w, 360), MAX_W), height: h };
-    }
-    const w = Math.min(1280, MAX_W);
-    const h = (Math.round(w * (d.height / d.width)) & ~1) || 720;
-    return { width: w, height: Math.min(Math.max(h, 360), MAX_H) };
+    let w = d.width;
+    let h = d.height;
+    // Scale down proportionally if too large
+    if (w > SOFT_MAX_W) { h = Math.round(h * (SOFT_MAX_W / w)); w = SOFT_MAX_W; }
+    if (h > SOFT_MAX_H) { w = Math.round(w * (SOFT_MAX_H / h)); h = SOFT_MAX_H; }
+    w = Math.max(w & ~1, 320);
+    h = Math.max(h & ~1, 240);
+    return { width: w, height: h };
   }
 
-  // Multiple participants — pick cell dimensions by dominant orientation
-  const portraitCount = dims.filter((d) => d.height > d.width).length;
+  // Multiple participants — compute cell size from average participant dimensions
   const cols = Math.ceil(Math.sqrt(videoCount));
   const rows = Math.ceil(videoCount / cols);
 
   let cellW: number;
   let cellH: number;
-  if (portraitCount > videoCount - portraitCount) {
-    // Mostly portrait participants
-    cellW = 360;
-    cellH = 480;
-  } else if (portraitCount === 0) {
-    // All landscape
-    cellW = 640;
-    cellH = 360;
+
+  if (dims.length > 0) {
+    // Average the actual participant dimensions to compute cell size
+    const avgW = Math.round(dims.reduce((sum, d) => sum + d.width, 0) / dims.length);
+    const avgH = Math.round(dims.reduce((sum, d) => sum + d.height, 0) / dims.length);
+    cellW = Math.max(avgW & ~1, 160);
+    cellH = Math.max(avgH & ~1, 120);
   } else {
-    // Mixed portrait + landscape — square-ish cells work best
-    cellW = 480;
-    cellH = 480;
+    // No dimension info at all — safe default
+    cellW = 320;
+    cellH = 240;
   }
 
-  const canvasW = (Math.min(cols * cellW, MAX_W) & ~1) || 640;
-  const canvasH = (Math.min(rows * cellH, MAX_H) & ~1) || 480;
-  return { width: canvasW, height: canvasH };
+  // Scale cells down if total canvas would exceed soft cap (for encoding speed)
+  let canvasW = cols * cellW;
+  let canvasH = rows * cellH;
+  if (canvasW > SOFT_MAX_W || canvasH > SOFT_MAX_H) {
+    const scale = Math.min(SOFT_MAX_W / canvasW, SOFT_MAX_H / canvasH);
+    cellW = Math.max(Math.round(cellW * scale) & ~1, 160);
+    cellH = Math.max(Math.round(cellH * scale) & ~1, 120);
+    canvasW = cols * cellW;
+    canvasH = rows * cellH;
+  }
+
+  return { width: canvasW & ~1 || 640, height: canvasH & ~1 || 480 };
 }
 
 function buildVideoGridFilter(params: {
@@ -280,12 +295,12 @@ function buildFfmpegArgs(params: {
 
   for (const sdpPath of sdpPathsInOrder) {
     args.push(
-      "-thread_queue_size", "4096",
+      "-thread_queue_size", "8192",
       "-analyzeduration", "20000",  // 20ms - minimal probing since codecs are pre-declared
       "-probesize", "32000",        // 32KB - just enough for a few RTP packets
-      "-max_delay", "500000",
-      "-reorder_queue_size", "64",
-      "-buffer_size", "10M",
+      "-max_delay", "2000000",      // 2s — tolerate jitter / late packets before dropping
+      "-reorder_queue_size", "256", // larger reorder buffer to reduce "missed N packets" warnings
+      "-buffer_size", "20M",        // double buffer to absorb RTP bursts
       "-rw_timeout", "5000000",     // 5s - allow time for late-starting streams
       "-use_wallclock_as_timestamps", "1",
       "-protocol_whitelist", "file,udp,rtp,rtcp",
@@ -314,9 +329,12 @@ function buildFfmpegArgs(params: {
 
   for (let i = 0; i < audioInputIndices.length; i++) {
     const idx = audioInputIndices[i];
+    // Normalize each audio stream's timestamps to start from 0, resample to fix jitter
     filterParts.push(`[${idx}:a]asetpts=PTS-STARTPTS,aresample=async=1000:first_pts=0[anorm${i}]`);
   }
   const normalizedAudioLabels = audioInputIndices.map((_, i) => `[anorm${i}]`).join("");
+  // amix combines all audio streams; asetpts=N/SR/TB generates strictly monotonic
+  // timestamps based on sample count, preventing DTS resets across segments
   filterParts.push(
     `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=0,asetpts=N/SR/TB[aout]`
   );
@@ -327,13 +345,15 @@ function buildFfmpegArgs(params: {
     args.push(
       "-map", `[${videoOutputLabel}]`,
       "-map", "[aout]",
-      // H.264 is MUCH faster than VP8 on CPU-constrained servers
       "-c:v", "libx264",
       "-preset", "ultrafast",
       "-tune", "zerolatency",
       "-crf", "28",
       "-pix_fmt", "yuv420p",
-      "-force_key_frames", "expr:gte(t,n_forced*2)",
+      "-g", "30",                  // keyframe every 2s at 15fps — cheaper than force_key_frames expr
+      "-bf", "0",                  // no B-frames (faster encoding, less latency)
+      "-x264-params", "rc-lookahead=0:ref=1:me=dia:subme=0:trellis=0:weightp=0:scenecut=0",
+      "-threads", "2",             // limit threads to avoid CPU contention with other processes
       "-c:a", "aac",
       "-b:a", "128k",
       "-movflags", "+frag_keyframe+empty_moov+default_base_moof", // fragmented MP4 for crash resilience
@@ -352,6 +372,39 @@ function buildFfmpegArgs(params: {
 
 export function isRecordingActive(recordingId: string) {
   return activeSessions.has(recordingId);
+}
+
+/**
+ * Debounced restart scheduler — when a new participant joins, both audio and video
+ * producers fire in quick succession. This ensures we only restart FFmpeg once per
+ * burst of new producers, with a 2-second window to collect all changes.
+ */
+const pendingRestarts: Map<string, NodeJS.Timeout> = new Map();
+const RESTART_DEBOUNCE_MS = 2000;
+
+export function scheduleRecordingRestart(roomId: string, recordingId: string) {
+  const key = `${roomId}:${recordingId}`;
+  const existing = pendingRestarts.get(key);
+  if (existing) clearTimeout(existing);
+
+  const timer = setTimeout(() => {
+    pendingRestarts.delete(key);
+    if (!activeSessions.has(recordingId)) return;
+
+    const producersNow = getRoomProducers(roomId);
+    const isAudioOnly = !producersNow.some((p) => p.kind === "video");
+
+    console.log(`[recording:restart] debounced restart for room=${roomId}, recording=${recordingId}`);
+    restartServerRecording({ roomId, recordingId, isAudioOnly }).catch((err) => {
+      console.error("[recording:restart] debounced restart failed", {
+        roomId,
+        recordingId,
+        error: err?.message || String(err),
+      });
+    });
+  }, RESTART_DEBOUNCE_MS);
+
+  pendingRestarts.set(key, timer);
 }
 
 export async function recoverStaleRecordings() {
@@ -488,6 +541,26 @@ export async function startServerRecording(params: {
     const sdpPath = path.join(sdpDir, `stream-${i}.sdp`);
     const sdp = buildSdpForConsumer({ kind: s.kind, sdpIp, rtpPort, consumer });
     await fsp.writeFile(sdpPath, sdp, "utf8");
+    // Determine video dimensions: prefer appData from producer, then fall back to
+    // consumer RTP encoding parameters, then a safe default (640x480).
+    let streamWidth = (s as any).width as number | undefined;
+    let streamHeight = (s as any).height as number | undefined;
+    if (s.kind === "video" && (!streamWidth || !streamHeight)) {
+      const enc = consumer.rtpParameters?.encodings?.[0];
+      const scaleDown = (enc as any)?.scaleResolutionDownBy || 1;
+      // Try to get dimensions from consumer's RTP header extensions or track
+      const consumerWidth = (enc as any)?.width;
+      const consumerHeight = (enc as any)?.height;
+      if (consumerWidth && consumerHeight) {
+        streamWidth = Math.round(consumerWidth / scaleDown);
+        streamHeight = Math.round(consumerHeight / scaleDown);
+      } else {
+        // Default fallback — most webcams are 640x480 or 320x240
+        streamWidth = streamWidth || 640;
+        streamHeight = streamHeight || 480;
+      }
+    }
+
     streams.push({
       producerId: s.producerId,
       kind: s.kind,
@@ -496,8 +569,8 @@ export async function startServerRecording(params: {
       rtpPort,
       rtcpPort,
       sdpPath,
-      width: (s as any).width,
-      height: (s as any).height
+      width: streamWidth,
+      height: streamHeight,
     });
   }
 
@@ -685,14 +758,20 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
     await fsp.writeFile(concatListPath, concatContent, "utf8");
     try {
       console.log(`[recording:server] merging ${session.segments.length} segments into ${finalOutputPath}`);
+      // Re-encode audio during merge to fix non-monotonous DTS across segments.
+      // Video is stream-copied (fast); audio is re-muxed with proper timestamp generation.
       const ffmpeg = spawn(ffmpegBinary, [
         "-y",
         "-f", "concat",
         "-safe", "0",
         "-i", concatListPath,
-        "-c", "copy",
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-af", "aresample=async=1000",
         "-fflags", "+genpts+igndts",
         "-movflags", "+faststart",
+        "-max_muxing_queue_size", "1024",
         finalOutputPath
       ]);
       

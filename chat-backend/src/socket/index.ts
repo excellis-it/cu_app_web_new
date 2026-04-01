@@ -37,7 +37,7 @@ import {
   startServerRecording,
   stopServerRecording,
   getActiveRecordingForRoom,
-  restartServerRecording,
+  scheduleRecordingRestart,
 } from "../mediasoup/recordingManager";
 import { processRecordingInBackground } from "../helpers/recordingProcessor";
 import { processScreenRecordingInBackground } from "../helpers/screenRecordingProcessor";
@@ -2153,23 +2153,15 @@ export default function initializeSocket() {
 
             cb && cb({ ok: true, id: producer.id });
 
-            // If a recording is active for this room and a new video producer appears,
-            // restart the recording to include the late-joining participant.
-            const activeRecordingId = getActiveRecordingForRoom(roomId);
-            if (activeRecordingId) {
-              const producersNow = getRoomProducers(roomId);
-              const isAudioOnly = !producersNow.some((p) => p.kind === "video");
-              restartServerRecording({
-                roomId,
-                recordingId: activeRecordingId,
-                isAudioOnly,
-              }).catch((err) => {
-                console.error("[MS-produce] recording restart failed", {
-                  roomId,
-                  recordingId: activeRecordingId,
-                  error: err?.message || String(err),
-                });
-              });
+            // If a recording is active and a new VIDEO producer appears, debounce-restart
+            // the recording to include the late-joining participant. Audio-only producers
+            // don't change the grid layout, so skip restart for them. The 2s debounce
+            // ensures that audio+video from the same user join only trigger one restart.
+            if (kind === "video") {
+              const activeRecordingId = getActiveRecordingForRoom(roomId);
+              if (activeRecordingId) {
+                scheduleRecordingRestart(roomId, activeRecordingId);
+              }
             }
           } catch (err) {
             console.error("MS-produce error:", err);
