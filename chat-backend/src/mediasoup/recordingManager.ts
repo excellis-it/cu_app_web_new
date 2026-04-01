@@ -43,8 +43,8 @@ type RecordingSession = {
 const activeSessions: Map<string, RecordingSession> = new Map();
 const restartLocks: Set<string> = new Set();
 
-const DEFAULT_RTP_BASE_PORT = 20000;
-const DEFAULT_RTP_MAX_PORT = 30000;
+const DEFAULT_RTP_BASE_PORT = 50000;
+const DEFAULT_RTP_MAX_PORT = 59999;
 const rtpBasePort = Number(process.env.RECORDING_RTP_BASE_PORT) || DEFAULT_RTP_BASE_PORT;
 const rtpMaxPort = Number(process.env.RECORDING_RTP_MAX_PORT) || DEFAULT_RTP_MAX_PORT;
 let nextPort = rtpBasePort;
@@ -87,7 +87,8 @@ function releasePorts(ports: number[]) {
 }
 
 function getLocalIp() {
-  return process.env.RECORDING_ANNOUNCED_IP || "127.0.0.1";
+  // Always use localhost for internal recording traffic (avoids firewall/external IP issues)
+  return "127.0.0.1";
 }
 
 function buildSdpForConsumer(params: {
@@ -371,8 +372,8 @@ export async function restartServerRecording(params: {
     releasePorts(allocatedPorts);
     activeSessions.delete(recordingId);
 
-    // One more small gap for OS cleanup
-    await new Promise((r) => setTimeout(r, 500));
+    // One more small gap for OS cleanup (increased to 1s)
+    await new Promise((r) => setTimeout(r, 1000));
 
     await startServerRecording({ ...params, existingSegments: segments, sharedStartMicros: commonStartMicros });
   } finally {

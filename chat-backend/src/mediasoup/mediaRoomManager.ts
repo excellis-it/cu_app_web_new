@@ -59,10 +59,14 @@ let workerIndex = 0;
 
 async function initWorkers(): Promise<void> {
   if (workers.length > 0) return;
-  const portsPerWorker = Math.floor(10000 / numWorkers);
+  const minBasePort = 40000;
+  const maxBasePort = 49999;
+  const totalRange = maxBasePort - minBasePort;
+  const portsPerWorker = Math.floor(totalRange / numWorkers);
+
   for (let i = 0; i < numWorkers; i++) {
-    const minPort = 40000 + i * portsPerWorker;
-    const maxPort = Math.min(49999, minPort + portsPerWorker - 1);
+    const minPort = minBasePort + i * portsPerWorker;
+    const maxPort = Math.min(maxBasePort, minPort + portsPerWorker - 1);
     const worker = await createWorker({
       logLevel: "warn",
       rtcMinPort: minPort,
