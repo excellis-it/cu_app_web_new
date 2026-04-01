@@ -189,7 +189,7 @@ function buildVideoGridFilter(params: {
     const isPortrait = dims ? dims.height > dims.width : false;
 
     // Process input i into label sv_i
-    const chain: string[] = [`[${idx}:v]setpts=PTS-STARTPTS,fps=10`];
+    const chain: string[] = [`[${idx}:v]setpts=PTS-STARTPTS,fps=15`];
     if (isPortrait) {
       // Counter-clockwise rotation (transpose=2) fixes mobile cameras that send
       // landscape-oriented frames for portrait capture. passthrough=portrait
@@ -243,7 +243,7 @@ function buildFfmpegArgs(params: {
     "-analyzeduration", "1000000", // 1s for the background screen
     "-probesize", "1000000",
     "-flags", "low_delay",
-    "-f", "lavfi", "-i", `color=c=black:s=${targetWidth}x${targetHeight}:r=10`,
+    "-f", "lavfi", "-i", `color=c=black:s=${targetWidth}x${targetHeight}:r=15`,
   ];
 
   for (const sdpPath of sdpPathsInOrder) {
@@ -255,7 +255,6 @@ function buildFfmpegArgs(params: {
       "-reorder_queue_size", "256", // larger reorder buffer to reduce "missed N packets" warnings
       "-buffer_size", "20M",        // double buffer to absorb RTP bursts
       "-rw_timeout", "5000000",     // 5s - allow time for late-starting streams
-      "-use_wallclock_as_timestamps", "1",
       "-protocol_whitelist", "file,udp,rtp,rtcp",
     );
 
@@ -302,12 +301,12 @@ function buildFfmpegArgs(params: {
       "-c:v", "libx264",
       "-preset", "ultrafast",
       "-tune", "zerolatency",
-      "-crf", "32",
+      "-crf", "28",
       "-pix_fmt", "yuv420p",
-      "-g", "20",                  // keyframe every 2s at 10fps
+      "-g", "30",                  // keyframe every 2s at 15fps
       "-bf", "0",                  // no B-frames
       "-x264-params", "rc-lookahead=0:ref=1:me=dia:subme=0:trellis=0:weightp=0:scenecut=0",
-      "-threads", "4",             // enough threads for 1280×720 @ 10fps real-time
+      "-threads", "0",             // auto-detect: use all available CPU cores
       "-c:a", "aac",
       "-b:a", "128k",
       "-movflags", "+frag_keyframe+empty_moov+default_base_moof", // fragmented MP4 for crash resilience
@@ -320,7 +319,7 @@ function buildFfmpegArgs(params: {
     );
   }
 
-  args.push("-max_muxing_queue_size", "1024", "-f", "mp4", "-y", outputPath);
+  args.push("-max_muxing_queue_size", "4096", "-f", "mp4", "-y", outputPath);
   return args;
 }
 
