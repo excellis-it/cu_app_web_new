@@ -36,6 +36,8 @@ type RecordingSession = {
   keyframeTimer: NodeJS.Timeout | null;
   ffmpegExited: boolean;
   ffmpegExitCode: number | null;
+  commonStartMicros: number;
+  segments: string[];
 };
 
 const activeSessions: Map<string, RecordingSession> = new Map();
@@ -418,9 +420,8 @@ export async function restartServerRecording(params: {
 
   console.log("[recording:server] restarting to pick up new producers", { roomId, recordingId });
 
-  // Tear down the current FFmpeg + consumers silently (don't process the partial output)
-  activeSessions.delete(recordingId);
-  const { ffmpegProcess, streams, allocatedPorts, keyframeTimer } = session;
+  // Capture existing session data to preserve timeline and segments
+  const { ffmpegProcess, streams, allocatedPorts, keyframeTimer, commonStartMicros, segments } = session;
 
   if (keyframeTimer) clearInterval(keyframeTimer);
   await new Promise((r) => setTimeout(r, 300));
@@ -437,8 +438,12 @@ export async function restartServerRecording(params: {
   }
   releasePorts(allocatedPorts);
 
-  // Start a fresh recording with the same recordingId — picks up all current producers
-  await startServerRecording(params);
+  // Restart exactly where we left off, passing the existing segments and start time.
+  await startServerRecording({
+    ...params,
+    existingSegments: segments,
+    sharedStartMicros: commonStartMicros,
+  });
   console.log("[recording:server] restart complete", { roomId, recordingId });
 }
 
@@ -446,8 +451,10 @@ export async function startServerRecording(params: {
   roomId: string;
   recordingId: string;
   isAudioOnly: boolean;
+  existingSegments?: string[];
+  sharedStartMicros?: number;
 }): Promise<{ outputPath: string }> {
-  const { roomId, recordingId, isAudioOnly } = params;
+  const { roomId, recordingId, isAudioOnly, existingSegments = [], sharedStartMicros } = params;
 
   console.log("[recording:server] startServerRecording called", { roomId, recordingId, isAudioOnly });
 
@@ -462,9 +469,12 @@ export async function startServerRecording(params: {
   ensureDir(sessionBaseDir);
   ensureDir(sdpDir);
 
-  const outputPath = path.join(sessionBaseDir, "raw.webm");
+  // If this is a restart/continuation, we use a new segment file.
+  // The stopServerRecording function will merge them all at the end.
+  const segmentIndex = existingSegments.length;
+  const outputPath = path.join(sessionBaseDir, `raw_${segmentIndex}.webm`);
 
-  // Clean existing output to avoid ffmpeg appending/reading stale files.
+  // Clean existing segment specifically (unlikely to exist but good practice)
   if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
 
   const room = await getOrCreateRoom(roomId);
@@ -601,7 +611,7 @@ export async function startServerRecording(params: {
     }
   }
 
-  const commonStartMicros = Date.now() * 1000;
+  const commonStartMicros = sharedStartMicros || Date.now() * 1000;
 
   // Use low resolution for live capture to minimize CPU usage and RTP packet drops.
   const args = buildFfmpegArgs({
@@ -678,6 +688,8 @@ export async function startServerRecording(params: {
     keyframeTimer,
     ffmpegExited: false,
     ffmpegExitCode: null,
+    commonStartMicros,
+    segments: [...existingSegments, outputPath],
   };
 
   activeSessions.set(recordingId, session);
@@ -755,16 +767,41 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
     });
   }
 
-  console.log("[recording:server] ffmpeg stopped", { recordingId, exitCode });
-
-  // 3. Close mediasoup consumers ONLY AFTER FFmpeg has finished writing files.
-  for (const st of streams) {
-    try { st.consumer.close(); } catch { /* ignore */ }
-    try { st.transport.close(); } catch { /* ignore */ }
-  }
-
   releasePorts(allocatedPorts);
 
-  return { outputPath };
+  // 4. Merge segments if there are multiple parts (due to late joiners/restarts)
+  if (session.segments.length > 1) {
+    const finalOutputPath = path.join(path.dirname(outputPath), "raw.webm");
+    const concatListPath = path.join(path.dirname(outputPath), "concat-list-server.txt");
+
+    console.log("[recording:server] merging segments", { segments: session.segments.length, finalOutputPath });
+
+    const concatContent = session.segments
+      .map(s => `file '${path.resolve(s).replaceAll("\\", "/")}'`)
+      .join("\n");
+
+    await fsp.writeFile(concatListPath, concatContent, "utf8");
+
+    try {
+      const ffmpeg = spawn(ffmpegBinary, [
+        "-y", "-f", "concat", "-safe", "0", "-i", concatListPath, "-c", "copy", finalOutputPath,
+      ]);
+      await new Promise((resolve, reject) => {
+        ffmpeg.on("close", (code) => code === 0 ? resolve(null) : reject(new Error(`Merge failed with code ${code}`)));
+      });
+      return { outputPath: finalOutputPath };
+    } catch (err) {
+      console.error("[recording:server] segment merge failed, falling back to last segment", err);
+      return { outputPath };
+    }
+  }
+
+  // If only one segment, rename it to the standard raw.webm so the processor finds it easily.
+  const finalOutputPath = path.join(path.dirname(outputPath), "raw.webm");
+  if (fs.existsSync(outputPath)) {
+    await fsp.rename(outputPath, finalOutputPath).catch(() => { });
+  }
+
+  return { outputPath: finalOutputPath };
 }
 
