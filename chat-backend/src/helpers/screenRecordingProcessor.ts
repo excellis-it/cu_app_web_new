@@ -419,34 +419,40 @@ export async function processScreenRecordingInBackground(recordingId: string) {
       // Keep the socket-calculated duration as fallback
     }
 
-    // ============================================================
-    // PHASE 1: Upload raw WebM as fallback (keep chat card "processing")
-    // ============================================================
-    const webmObjectKey = `screen-recordings/${id}/recording.webm`;
+    const isMp4 = sourceFilePath.endsWith(".mp4");
+    const webmObjectKey = isMp4 ? `screen-recordings/${id}/recording.mp4` : `screen-recordings/${id}/recording.webm`;
 
-    console.log("[screen-recording:process] phase 1: uploading raw WebM fallback", {
+    console.log(`[screen-recording:process] phase 1: uploading ${isMp4 ? "MP4" : "WebM"}`, {
       recordingId: id,
+      sourceFilePath,
       rawSizeBytes,
       durationSec,
     });
 
-    const webmUrl = await uploadFile(sourceFilePath, webmObjectKey, id);
+    const playbackUrl = await uploadFile(sourceFilePath, webmObjectKey, id);
 
-    // Keep processing state until HLS is ready.
-    // This avoids temporary 0:00 duration/metadata issues from intermediate WebM playback.
+    // If it's already an MP4, we can set status to "ready" immediately
     recording.rawObjectKey = webmObjectKey;
-    recording.playbackUrl = webmUrl;
-    recording.status = "processing";
+    recording.playbackUrl = playbackUrl;
+    recording.status = isMp4 ? "ready" : "processing";
     recording.errorMessage = "";
     recording.sizeBytes = rawSizeBytes;
     recording.durationSec = durationSec;
     await recording.save();
 
-    console.log("[screen-recording:process] phase 1 uploaded fallback (still processing)", {
+    if (isMp4) {
+      console.log("[screen-recording:process] MP4 source - skipping transcode", { recordingId: id });
+      await emitRecordingMessage(recording, playbackUrl, durationSec);
+      // Clean up temp
+      try {
+        await fsp.rm(baseDir, { recursive: true, force: true });
+      } catch { }
+      return;
+    }
+
+    console.log("[screen-recording:process] WebM source - starting background transcode", {
       recordingId: id,
-      playbackUrl: webmUrl,
-      durationSec,
-      sizeBytes: rawSizeBytes,
+      playbackUrl,
     });
 
     // ============================================================
@@ -504,7 +510,7 @@ export async function processScreenRecordingInBackground(recordingId: string) {
             $set: {
               status: "ready",
               errorMessage: "",
-              playbackUrl: webmUrl,
+              playbackUrl: playbackUrl, // was webmUrl, using current playbackUrl
               rawObjectKey: webmObjectKey,
               sizeBytes: rawSizeBytes,
               durationSec,
@@ -512,7 +518,7 @@ export async function processScreenRecordingInBackground(recordingId: string) {
           });
           const fallbackRecording = await ScreenRecording.findById(id);
           if (fallbackRecording) {
-            await emitRecordingMessage(fallbackRecording, webmUrl, durationSec);
+            await emitRecordingMessage(fallbackRecording, playbackUrl, durationSec);
           }
         } catch (fallbackErr: any) {
           console.warn("[screen-recording:process] fallback WebM emit failed", {

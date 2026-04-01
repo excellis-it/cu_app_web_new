@@ -218,16 +218,19 @@ function buildFfmpegArgs(params: {
   for (const sdpPath of sdpPathsInOrder) {
     args.push(
       "-thread_queue_size", "4096",
-      "-analyzeduration", "500000", // slightly more time to find video headers
-      "-probesize", "500000",
+      "-analyzeduration", "100000", // 100ms - very fast probing
+      "-probesize", "100000",
       "-max_delay", "500000",
       "-reorder_queue_size", "128",
       "-buffer_size", "10M",
       "-rw_timeout", "1000000",
       "-use_wallclock_as_timestamps", "1",
       "-protocol_whitelist", "file,udp,rtp,rtcp",
-      "-i", sdpPath,
     );
+
+    // Explicitly define input format and codecs BEFORE -i to skip slow probing
+    args.push("-f", "sdp", "-c:v", "vp8", "-c:a", "opus");
+    args.push("-i", sdpPath);
   }
 
   const filterParts: string[] = [];
@@ -261,29 +264,26 @@ function buildFfmpegArgs(params: {
     args.push(
       "-map", `[${videoOutputLabel}]`,
       "-map", "[aout]",
-      "-c:v", "libvpx",
-      "-b:v", "1200k",
-      "-crf", "25",
-      "-quality", "realtime",
-      "-deadline", "realtime",
-      "-cpu-used", "12",
-      "-threads", "0",
-      "-lag-in-frames", "0",
-      "-error-resilient", "1",
-      "-auto-alt-ref", "0",
-      "-static-thresh", "500",
-      "-c:a", "libopus",
+      // H.264 is MUCH faster than VP8 on CPU-constrained servers
+      "-c:v", "libx264",
+      "-preset", "ultrafast",
+      "-tune", "zerolatency",
+      "-crf", "28",
+      "-pix_fmt", "yuv420p",
+      "-force_key_frames", "expr:gte(t,n_forced*2)",
+      "-c:a", "aac",
       "-b:a", "128k",
+      "-movflags", "+frag_keyframe+empty_moov+default_base_moof", // fragmented MP4 for crash resilience
     );
   } else {
     args.push(
       "-map", "[aout]",
-      "-c:a", "libopus",
+      "-c:a", "aac",
       "-b:a", "128k",
     );
   }
 
-  args.push("-f", "webm", "-y", outputPath);
+  args.push("-f", "mp4", "-y", outputPath);
   return args;
 }
 
@@ -391,7 +391,7 @@ export async function startServerRecording(params: {
   ensureDir(sdpDir);
 
   const segmentIndex = existingSegments.length;
-  const outputPath = path.join(sessionBaseDir, `raw_${segmentIndex}.webm`);
+  const outputPath = path.join(sessionBaseDir, `raw_${segmentIndex}.mp4`);
   if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
 
   const room = await getOrCreateRoom(roomId);
@@ -608,7 +608,7 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
   releasePorts(allocatedPorts);
 
   if (session.segments.length > 1) {
-    const finalOutputPath = path.join(path.dirname(outputPath), "raw.webm");
+    const finalOutputPath = path.join(path.dirname(outputPath), "raw.mp4");
     const concatListPath = path.join(path.dirname(outputPath), "concat-list-server.txt");
     const concatContent = session.segments.map(s => `file '${path.resolve(s).replaceAll("\\", "/")}'`).join("\n");
     await fsp.writeFile(concatListPath, concatContent, "utf8");
@@ -645,7 +645,7 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
     }
   }
 
-  const finalOutputPath = path.join(path.dirname(outputPath), "raw.webm");
+  const finalOutputPath = path.join(path.dirname(outputPath), "raw.mp4");
   if (fs.existsSync(outputPath)) await fsp.rename(outputPath, finalOutputPath).catch(() => { });
   return { outputPath: finalOutputPath };
 }

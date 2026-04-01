@@ -231,33 +231,34 @@ export async function processRecordingInBackground(recordingId: string) {
     const baseDir = getRecordingBaseDir(id);
     await ensureDir(baseDir);
 
-    // Server-side recording (Phase 1) writes a single raw.webm at stop time.
+    // Server-side recording (Phase 1) writes a single raw.mp4 or raw.webm at stop time.
     // Client-side chunk flow writes merged.webm after receiving chunks.
-    const rawWebmPath = recording.rawFilePath || null;
+    const rawFilePath = recording.rawFilePath || null;
+    const isServerMp4 = rawFilePath && rawFilePath.endsWith(".mp4");
+    
     const mergedWebmPath = path.join(baseDir, "merged.webm");
     const mp4Path = path.join(baseDir, "recording.mp4");
 
-    if (rawWebmPath) {
-      // Server-side recording mode: we expect `raw.webm` to exist.
-      if (!fs.existsSync(rawWebmPath)) {
+    if (rawFilePath) {
+      if (!fs.existsSync(rawFilePath)) {
         // Give a short grace period for ffmpeg to flush to disk.
         const startedAt = Date.now();
         while (Date.now() - startedAt < 20000) {
-          if (fs.existsSync(rawWebmPath)) break;
+          if (fs.existsSync(rawFilePath)) break;
           // eslint-disable-next-line no-await-in-loop
           await new Promise((r) => setTimeout(r, 500));
         }
       }
 
-      if (!fs.existsSync(rawWebmPath)) {
+      if (!fs.existsSync(rawFilePath)) {
         throw new Error(
-          `Server-side raw webm not found after waiting: ${rawWebmPath}`,
+          `Server-side raw file not found after waiting: ${rawFilePath}`,
         );
       }
 
-      console.log("[recording:process] using server-side raw webm (server recording flow)", {
+      console.log(`[recording:process] using server-side raw ${isServerMp4 ? "mp4" : "webm"}`, {
         recordingId: id,
-        rawWebmPath,
+        rawFilePath,
       });
     } else {
       // Client-side chunk upload mode: merge chunks into merged.webm.
@@ -273,24 +274,27 @@ export async function processRecordingInBackground(recordingId: string) {
       recordingId: id,
     });
 
-    let playbackObjectKey = `recordings/${id}/merged.webm`;
-    // Server mode uses raw.webm; we may upload it under a "merged.webm" key for compatibility.
-    let playbackFilePath = rawWebmPath ? rawWebmPath : mergedWebmPath;
-    let playbackUrl = `/uploads/${playbackObjectKey}`; // fallback if CDN is not configured
+    let playbackObjectKey = isServerMp4 ? `recordings/${id}/recording.mp4` : `recordings/${id}/merged.webm`;
+    let playbackFilePath = rawFilePath ? rawFilePath : mergedWebmPath;
+    let playbackUrl = `/uploads/${playbackObjectKey}`; 
 
-    // Try MP4 first (best for browser playback).
-    try {
-      console.log("[recording:process] transcode to mp4", { recordingId: id, mp4Path });
-      await transcodeWebmToMp4(mergedWebmPath, mp4Path);
-      playbackObjectKey = `recordings/${id}/recording.mp4`;
-      playbackFilePath = mp4Path;
-      playbackUrl = `/uploads/${playbackObjectKey}`; // fallback until uploaded to CDN
-    } catch (transcodeError: any) {
-      // eslint-disable-next-line no-console
-      console.warn("[recording:process] mp4 transcode failed, falling back to webm", {
-        recordingId: id,
-        error: transcodeError?.message || String(transcodeError),
-      });
+    // Try MP4 transcode ONLY if the source is not already MP4
+    if (!isServerMp4) {
+      try {
+        console.log("[recording:process] transcode to mp4", { recordingId: id, mp4Path });
+        const transcodeSource = rawFilePath ? rawFilePath : mergedWebmPath;
+        await transcodeWebmToMp4(transcodeSource, mp4Path);
+        playbackObjectKey = `recordings/${id}/recording.mp4`;
+        playbackFilePath = mp4Path;
+        playbackUrl = `/uploads/${playbackObjectKey}`;
+      } catch (transcodeError: any) {
+        console.warn("[recording:process] mp4 transcode failed, falling back to webm", {
+          recordingId: id,
+          error: transcodeError?.message || String(transcodeError),
+        });
+      }
+    } else {
+      console.log("[recording:process] source is already MP4, skipping transcode", { recordingId: id });
     }
 
     // Upload final file to CDN (Phase: record -> CDN -> chat message)
