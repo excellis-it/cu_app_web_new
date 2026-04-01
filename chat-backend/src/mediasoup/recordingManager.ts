@@ -141,8 +141,9 @@ function buildVideoGridFilter(params: {
   targetWidth: number;
   targetHeight: number;
   videoDimensions?: Map<number, { width: number; height: number }>;
+  commonStartMicros: number;
 }): { filterParts: string[]; videoOutputLabel: string } {
-  const { videoInputIndices, targetWidth, targetHeight, videoDimensions } = params;
+  const { videoInputIndices, targetWidth, targetHeight, videoDimensions, commonStartMicros } = params;
   const n = videoInputIndices.length;
 
   if (n === 0) return { filterParts: [], videoOutputLabel: "" };
@@ -172,7 +173,9 @@ function buildVideoGridFilter(params: {
     //    to portrait, but leaves already-portrait pixels untouched)
     // 3. scale to fit cell while preserving aspect ratio
     // 4. pad to exact cell size (center video, fill remainder with black — required by xstack)
-    const chain: string[] = [`[${idx}:v]setpts=PTS-STARTPTS,fps=15`];
+    // We use a shared wallclock offset (commonStartMicros) instead of STARTPTS
+    // so all participants stay in sync relative to each other on the recording timeline.
+    const chain: string[] = [`[${idx}:v]setpts=PTS-${params.commonStartMicros},fps=15`];
 
     if (isPortrait) {
       chain.push("transpose=1:passthrough=portrait");
@@ -223,6 +226,7 @@ function buildFfmpegArgs(params: {
   targetWidth: number;
   targetHeight: number;
   videoDimensions?: Map<number, { width: number; height: number }>;
+  commonStartMicros: number;
 }) {
   const {
     outputPath,
@@ -231,6 +235,7 @@ function buildFfmpegArgs(params: {
     sdpPathsInOrder,
     targetWidth,
     targetHeight,
+    commonStartMicros,
   } = params;
 
   // We added a 'lavfi' background as input 0.
@@ -277,17 +282,22 @@ function buildFfmpegArgs(params: {
   const hasVideo = videoInputIndices.length > 0;
   let videoOutputLabel = "";
   if (hasVideo) {
-    const grid = buildVideoGridFilter({ videoInputIndices, targetWidth, targetHeight, videoDimensions: params.videoDimensions });
+    const grid = buildVideoGridFilter({
+      videoInputIndices,
+      targetWidth,
+      targetHeight,
+      videoDimensions: params.videoDimensions,
+      commonStartMicros,
+    });
     filterParts.push(...grid.filterParts);
     videoOutputLabel = grid.videoOutputLabel;
   }
 
-  // Audio mix: normalize each audio input's timestamps to start from 0 (asetpts),
-  // mix them together (amix), then resync to video timeline (aresample async).
+  // Audio mix: normalize each audio input's timestamps to a shared wallclock offset.
   // Without this, wall-clock timestamp differences between inputs cause A/V drift.
   for (let i = 0; i < audioInputIndices.length; i++) {
     const idx = audioInputIndices[i];
-    filterParts.push(`[${idx}:a]asetpts=PTS-STARTPTS[anorm${i}]`);
+    filterParts.push(`[${idx}:a]asetpts=PTS-${commonStartMicros}[anorm${i}]`);
   }
   const normalizedAudioLabels = audioInputIndices.map((_, i) => `[anorm${i}]`).join("");
   filterParts.push(
@@ -542,9 +552,8 @@ export async function startServerRecording(params: {
 
   // Brief pause to let any in-flight disconnection events (DTLS close, producer close)
   // propagate through mediasoup before we commit to the FFmpeg input list.
-  // Without this, a user who disconnects right as recording starts leaves a dead
-  // SDP input that FFmpeg blocks on forever during probing.
-  await new Promise((r) => setTimeout(r, 1500));
+  // Reduced to 400ms to improve responsiveness.
+  await new Promise((r) => setTimeout(r, 400));
 
   // Filter out consumers that closed during the wait (producer's transport died).
   const deadStreams = streams.filter((st) => st.consumer.closed);
@@ -592,8 +601,9 @@ export async function startServerRecording(params: {
     }
   }
 
+  const commonStartMicros = Date.now() * 1000;
+
   // Use low resolution for live capture to minimize CPU usage and RTP packet drops.
-  // The post-recording processor upscales/remuxes to higher quality.
   const args = buildFfmpegArgs({
     outputPath,
     videoInputIndices,
@@ -602,6 +612,7 @@ export async function startServerRecording(params: {
     targetWidth: 640,
     targetHeight: 480,
     videoDimensions,
+    commonStartMicros,
   });
 
   const ffmpegStderrPrefix = `[recording:${recordingId}] ffmpeg`;
@@ -622,32 +633,23 @@ export async function startServerRecording(params: {
   });
 
   // Wait for FFmpeg to open all SDP inputs before resuming consumers.
-  // Each input takes ~0.5s to probe (analyzeduration), so total startup ≈ N × 0.5s.
-  // Resuming too early wastes keyframes that arrive before FFmpeg is listening.
-  const ffmpegStartupMs = liveStreams.length * 600; // 0.6s per input with margin
-  await new Promise((r) => setTimeout(r, ffmpegStartupMs));
+  // We use a fixed short delay now instead of per-stream linear wait.
+  await new Promise((r) => setTimeout(r, 400));
 
   // Resume consumers and request keyframes AFTER FFmpeg is ready to receive.
-  for (const st of liveStreams) {
+  const resumePromises = liveStreams.map(async (st) => {
     try {
       await st.consumer.resume();
-    } catch {
-      // ignore
-    }
-  }
+      if (st.kind === "video" && !st.consumer.closed) {
+        // Initial keyframe request burst
+        await (st.consumer as any).requestKeyFrame?.();
+        setTimeout(() => { if (!st.consumer.closed) (st.consumer as any).requestKeyFrame?.()?.catch?.(() => { }); }, 500);
+        setTimeout(() => { if (!st.consumer.closed) (st.consumer as any).requestKeyFrame?.()?.catch?.(() => { }); }, 1500);
+      }
+    } catch { /* ignore */ }
+  });
 
-  // Request keyframes for video — burst to ensure FFmpeg gets one quickly.
-  for (const st of liveStreams) {
-    if (st.kind !== "video" || st.consumer.closed) continue;
-    try {
-      await (st.consumer as any).requestKeyFrame?.();
-      setTimeout(() => { if (!st.consumer.closed) (st.consumer as any).requestKeyFrame?.()?.catch?.(() => {}); }, 500);
-      setTimeout(() => { if (!st.consumer.closed) (st.consumer as any).requestKeyFrame?.()?.catch?.(() => {}); }, 1500);
-      setTimeout(() => { if (!st.consumer.closed) (st.consumer as any).requestKeyFrame?.()?.catch?.(() => {}); }, 3000);
-    } catch {
-      // ignore
-    }
-  }
+  await Promise.all(resumePromises);
 
   const keyframeTimer = setInterval(() => {
     for (const st of liveStreams) {

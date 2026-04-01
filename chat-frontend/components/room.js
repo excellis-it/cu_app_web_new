@@ -1668,12 +1668,33 @@ const Room = ({
           ];
 
           const videoSettings = videoTrack.getSettings();
+          // On mobile devices the camera sensor reports its native (landscape)
+          // dimensions regardless of how the phone is held.  Detect portrait
+          // orientation and swap width/height so the backend can apply the
+          // correct FFmpeg transpose filter when recording.
+          let reportedWidth = videoSettings.width;
+          let reportedHeight = videoSettings.height;
+          if (isMobileBrowser && typeof window !== "undefined") {
+            const angle =
+              screen?.orientation?.angle ?? window.orientation ?? 0;
+            const isPortraitOrientation =
+              angle === 0 || angle === 180;
+            if (
+              isPortraitOrientation &&
+              reportedWidth > reportedHeight
+            ) {
+              [reportedWidth, reportedHeight] = [
+                reportedHeight,
+                reportedWidth,
+              ];
+            }
+          }
           videoProducerRef.current = await sendTransport.produce({
             track: videoTrack,
             encodings: videoEncodings,
             appData: {
-              width: videoSettings.width,
-              height: videoSettings.height,
+              width: reportedWidth,
+              height: reportedHeight,
             },
           });
           console.log("[room.js] video producer created", {
@@ -2549,8 +2570,8 @@ const Room = ({
               >
                 -
               </button>
-              {/* Screen Recording button - SuperAdmin / admin role only */}
-              {canScreenRecord ? (
+              {/* Screen Recording button - SuperAdmin / admin role only (hidden during call recording) */}
+              {canScreenRecord && !isCallRecording ? (
                 <button
                   type="button"
                   onClick={() => {
