@@ -3,6 +3,7 @@ import serverResponse from "../helpers/serverResponse";
 import authMiddleware from "../middleware/authMiddleware";
 import { AddNewGroupMessage, AddUserToGroup, CreateNewGroup, DeleteGroupMessage, GetGroups, GetSingleGroupDetails, GetSingleGroupMessages, updateGroup, RemoveUserFromGroup, ReportGroup, ReportMessage, testMessage, deliverySeen, infoMessage, checkActiveCall, GetGroupsActivity, GetSingleGroupCallDetails, GetOrCreateDirectChat, AddGroupAction, CreateGuestMeeting, GetGuestMeetingByPin, GetAllGuestMeeting, UpdateGuestMeeting, AddGuestMeetingMessage, GetAllGuestMeetingMessage } from "../controller/group/msgController";
 import {
+  checkRecordingOngoing,
   completeRecordingUpload,
   getRecordingStatus,
   initRecordingUpload,
@@ -305,6 +306,14 @@ groupRouter.post("/recordings/complete", authMiddleware, async (req: any, res: a
         serverResponse(true, "Recording upload completed successfully", await completeRecordingUpload(req.body, req.user), res);
     } catch (error: any) {
         serverResponse(false, "Error completing recording upload", error.message, res);
+    }
+});
+
+groupRouter.get("/recordings/ongoing", authMiddleware, async (req: any, res: any) => {
+    try {
+        serverResponse(true, "Recording ongoing status fetched successfully", await checkRecordingOngoing(req.query, req.user), res);
+    } catch (error: any) {
+        serverResponse(false, "Error checking recording status", error.message, res);
     }
 });
 

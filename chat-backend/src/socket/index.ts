@@ -36,6 +36,8 @@ import {
 import {
   startServerRecording,
   stopServerRecording,
+  getActiveRecordingForRoom,
+  restartServerRecording,
 } from "../mediasoup/recordingManager";
 import { processRecordingInBackground } from "../helpers/recordingProcessor";
 import { processScreenRecordingInBackground } from "../helpers/screenRecordingProcessor";
@@ -1996,6 +1998,27 @@ export default function initializeSocket() {
             });
 
             cb && cb({ ok: true, id: producer.id });
+
+            // If a recording is active for this room and a new video producer appears,
+            // restart the recording to include the late-joining participant.
+            if (kind === "video") {
+              const activeRecordingId = getActiveRecordingForRoom(roomId);
+              if (activeRecordingId) {
+                const producersNow = getRoomProducers(roomId);
+                const isAudioOnly = !producersNow.some((p) => p.kind === "video");
+                restartServerRecording({
+                  roomId,
+                  recordingId: activeRecordingId,
+                  isAudioOnly,
+                }).catch((err) => {
+                  console.error("[MS-produce] recording restart failed", {
+                    roomId,
+                    recordingId: activeRecordingId,
+                    error: err?.message || String(err),
+                  });
+                });
+              }
+            }
           } catch (err) {
             console.error("MS-produce error:", err);
             cb && cb({ ok: false, error: "failed" });

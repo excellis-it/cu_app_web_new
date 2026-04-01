@@ -308,6 +308,28 @@ export async function completeRecordingUpload(body: any, user: any) {
   };
 }
 
+export async function checkRecordingOngoing(query: any, user: any) {
+  const groupId = query?.groupId;
+  const userId = toStringId(user?._id);
+
+  if (!groupId) {
+    throw new Error("groupId is required.");
+  }
+  if (!userId) throw new Error("User context is missing.");
+
+  await ensureGroupMemberAccess(groupId, userId);
+
+  const ongoingRecording = await CallRecording.findOne(
+    { groupId, status: "recording" },
+    { _id: 1, groupId: 1, callId: 1, startedBy: 1, status: 1, createdAt: 1 },
+  ).lean();
+
+  return {
+    isRecording: !!ongoingRecording,
+    recording: ongoingRecording || null,
+  };
+}
+
 export async function getRecordingStatus(query: any, user: any) {
   const recordingId = query?.recordingId;
   const roomId = query?.roomId;

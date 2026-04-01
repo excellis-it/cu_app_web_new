@@ -32,6 +32,8 @@ type RecordingSession = {
   streams: ServerStream[];
   allocatedPorts: number[];
   keyframeTimer: NodeJS.Timeout | null;
+  ffmpegExited: boolean;
+  ffmpegExitCode: number | null;
 };
 
 const activeSessions: Map<string, RecordingSession> = new Map();
@@ -240,6 +242,7 @@ function buildFfmpegArgs(params: {
     // max_delay: keep low (0.5s) to prevent FFmpeg from blocking on one input and starving others.
     // reorder_queue_size=0: localhost RTP doesn't need packet reordering — skip it.
     // buffer_size=2097152: increase UDP socket receive buffer to 2MB to survive bursts while FFmpeg reads other inputs.
+    // rw_timeout=5000000: give up reading from a dead UDP socket after 5s (prevents infinite block if a stream dies mid-recording).
     // use_wallclock_as_timestamps: force absolute sync across all A/V inputs based on arrival time.
     args.push(
       "-thread_queue_size", "8192",
@@ -248,6 +251,7 @@ function buildFfmpegArgs(params: {
       "-max_delay", "500000",
       "-reorder_queue_size", "0",
       "-buffer_size", "2097152",
+      "-rw_timeout", "5000000",
       "-use_wallclock_as_timestamps", "1",
       "-protocol_whitelist", "file,udp,rtp,rtcp",
       "-i", sdpPath,
@@ -320,6 +324,57 @@ function buildFfmpegArgs(params: {
 
 export function isRecordingActive(recordingId: string) {
   return activeSessions.has(recordingId);
+}
+
+/**
+ * Find an active recording session for the given room, if any.
+ * Returns the recordingId or null.
+ */
+export function getActiveRecordingForRoom(roomId: string): string | null {
+  for (const [recordingId, session] of activeSessions.entries()) {
+    if (session.roomId === roomId) return recordingId;
+  }
+  return null;
+}
+
+/**
+ * Restart a running recording to pick up new producers (e.g., late-joining participants).
+ * Stops the current FFmpeg, releases resources, and starts a fresh session with all current producers.
+ * The old raw segment is discarded (it will be part of the seamless new recording).
+ */
+export async function restartServerRecording(params: {
+  roomId: string;
+  recordingId: string;
+  isAudioOnly: boolean;
+}): Promise<void> {
+  const { roomId, recordingId } = params;
+  const session = activeSessions.get(recordingId);
+  if (!session) return;
+
+  console.log("[recording:server] restarting to pick up new producers", { roomId, recordingId });
+
+  // Tear down the current FFmpeg + consumers silently (don't process the partial output)
+  activeSessions.delete(recordingId);
+  const { ffmpegProcess, streams, allocatedPorts, keyframeTimer } = session;
+
+  if (keyframeTimer) clearInterval(keyframeTimer);
+  await new Promise((r) => setTimeout(r, 300));
+
+  try { ffmpegProcess.kill("SIGKILL"); } catch { /* ignore */ }
+  await new Promise((resolve) => {
+    ffmpegProcess.once("close", resolve);
+    setTimeout(resolve, 3000); // don't wait forever
+  });
+
+  for (const st of streams) {
+    try { st.consumer.close(); } catch { /* ignore */ }
+    try { st.transport.close(); } catch { /* ignore */ }
+  }
+  releasePorts(allocatedPorts);
+
+  // Start a fresh recording with the same recordingId — picks up all current producers
+  await startServerRecording(params);
+  console.log("[recording:server] restart complete", { roomId, recordingId });
 }
 
 export async function startServerRecording(params: {
@@ -430,17 +485,42 @@ export async function startServerRecording(params: {
     });
   }
 
-  // Separate video and audio input indices (video first, then audio — matches selectedStreams order)
-  const sdpPathsInOrder = streams.map((st) => st.sdpPath);
-  const videoInputIndices: number[] = [];
-  const audioInputIndices: number[] = [];
-  for (let i = 0; i < streams.length; i++) {
-    if (streams[i].kind === "video") videoInputIndices.push(i);
-    else audioInputIndices.push(i);
+  // Brief pause to let any in-flight disconnection events (DTLS close, producer close)
+  // propagate through mediasoup before we commit to the FFmpeg input list.
+  // Without this, a user who disconnects right as recording starts leaves a dead
+  // SDP input that FFmpeg blocks on forever during probing.
+  await new Promise((r) => setTimeout(r, 1500));
+
+  // Filter out consumers that closed during the wait (producer's transport died).
+  const deadStreams = streams.filter((st) => st.consumer.closed);
+  if (deadStreams.length > 0) {
+    console.log("[recording:server] pruning dead streams before FFmpeg", {
+      recordingId,
+      dead: deadStreams.map((s) => ({ producerId: s.producerId, kind: s.kind })),
+    });
+    for (const st of deadStreams) {
+      try { st.consumer.close(); } catch { /* already closed */ }
+      try { st.transport.close(); } catch { /* ignore */ }
+    }
+    const deadPorts = deadStreams.flatMap((st) => [st.rtpPort, st.rtcpPort]);
+    releasePorts(deadPorts);
+  }
+  const liveStreams = streams.filter((st) => !st.consumer.closed);
+
+  if (liveStreams.length === 0) {
+    throw new Error("All consumers closed before FFmpeg could start — no streams to record.");
+  }
+  if (!liveStreams.some((st) => st.kind === "audio")) {
+    throw new Error("No live audio consumers remain — server-side recording requires at least one audio stream.");
   }
 
-  if (audioInputIndices.length === 0) {
-    throw new Error("Server-side recording currently requires at least one audio producer.");
+  // Rebuild indices from liveStreams only
+  const sdpPathsInOrder = liveStreams.map((st) => st.sdpPath);
+  const videoInputIndices: number[] = [];
+  const audioInputIndices: number[] = [];
+  for (let i = 0; i < liveStreams.length; i++) {
+    if (liveStreams[i].kind === "video") videoInputIndices.push(i);
+    else audioInputIndices.push(i);
   }
 
   console.log("[recording:server] grid layout", {
@@ -451,9 +531,9 @@ export async function startServerRecording(params: {
 
   // Build video dimensions map for portrait detection in the FFmpeg filter.
   const videoDimensions = new Map<number, { width: number; height: number }>();
-  for (let i = 0; i < streams.length; i++) {
-    if (streams[i].kind === "video" && streams[i].width && streams[i].height) {
-      videoDimensions.set(i, { width: streams[i].width!, height: streams[i].height! });
+  for (let i = 0; i < liveStreams.length; i++) {
+    if (liveStreams[i].kind === "video" && liveStreams[i].width && liveStreams[i].height) {
+      videoDimensions.set(i, { width: liveStreams[i].width!, height: liveStreams[i].height! });
     }
   }
 
@@ -489,11 +569,11 @@ export async function startServerRecording(params: {
   // Wait for FFmpeg to open all SDP inputs before resuming consumers.
   // Each input takes ~0.5s to probe (analyzeduration), so total startup ≈ N × 0.5s.
   // Resuming too early wastes keyframes that arrive before FFmpeg is listening.
-  const ffmpegStartupMs = streams.length * 600; // 0.6s per input with margin
+  const ffmpegStartupMs = liveStreams.length * 600; // 0.6s per input with margin
   await new Promise((r) => setTimeout(r, ffmpegStartupMs));
 
   // Resume consumers and request keyframes AFTER FFmpeg is ready to receive.
-  for (const st of streams) {
+  for (const st of liveStreams) {
     try {
       await st.consumer.resume();
     } catch {
@@ -502,7 +582,7 @@ export async function startServerRecording(params: {
   }
 
   // Request keyframes for video — burst to ensure FFmpeg gets one quickly.
-  for (const st of streams) {
+  for (const st of liveStreams) {
     if (st.kind !== "video") continue;
     try {
       await (st.consumer as any).requestKeyFrame?.();
@@ -515,7 +595,7 @@ export async function startServerRecording(params: {
   }
 
   const keyframeTimer = setInterval(() => {
-    for (const st of streams) {
+    for (const st of liveStreams) {
       if (st.kind !== "video") continue;
       try {
         if (!st.consumer.closed) {
@@ -527,7 +607,7 @@ export async function startServerRecording(params: {
     }
   }, 5000);
 
-  const allocatedPorts = streams.flatMap((st) => [st.rtpPort, st.rtcpPort]);
+  const allocatedPorts = liveStreams.flatMap((st) => [st.rtpPort, st.rtcpPort]);
 
   const session: RecordingSession = {
     roomId,
@@ -536,12 +616,25 @@ export async function startServerRecording(params: {
     sdpDir,
     ffmpegProcess,
     ffmpegStderrPrefix,
-    streams,
+    streams: liveStreams,
     allocatedPorts,
     keyframeTimer,
+    ffmpegExited: false,
+    ffmpegExitCode: null,
   };
 
   activeSessions.set(recordingId, session);
+
+  // Track early FFmpeg death (e.g. all inputs died mid-recording).
+  // This lets stopServerRecording skip waiting on an already-dead process.
+  ffmpegProcess.once("close", (code) => {
+    if (activeSessions.has(recordingId)) {
+      const s = activeSessions.get(recordingId)!;
+      s.ffmpegExited = true;
+      s.ffmpegExitCode = code;
+      console.log("[recording:server] ffmpeg exited early", { recordingId, exitCode: code });
+    }
+  });
 
   return { outputPath };
 }
@@ -565,38 +658,45 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
   // Wait for in-flight keyframe requests to resolve/reject (mediasoup round-trip < 500ms)
   await new Promise((r) => setTimeout(r, 500));
 
-  // 1. Send quit command to FFmpeg stdin to flush buffers properly.
-  // We close the consumers later (after FFmpeg exits).
+  // If FFmpeg already exited (e.g. all inputs died mid-recording), skip the stop dance.
+  let exitCode: number | null = session.ffmpegExitCode;
 
-  // Send quit command to FFmpeg stdin.
-  try {
-    ffmpegProcess.stdin?.write("q\n");
-  } catch {
-    // ignore
-  }
-  try {
-    ffmpegProcess.stdin?.end();
-  } catch {
-    // ignore
-  }
+  if (session.ffmpegExited) {
+    console.log("[recording:server] ffmpeg already exited before stop was called", {
+      recordingId,
+      exitCode,
+    });
+  } else {
+    // Send quit command to FFmpeg stdin to flush buffers properly.
+    try {
+      ffmpegProcess.stdin?.write("q\n");
+    } catch {
+      // ignore
+    }
+    try {
+      ffmpegProcess.stdin?.end();
+    } catch {
+      // ignore
+    }
 
-  const exitCode: number | null = await new Promise((resolve) => {
-    let resolved = false;
-    const onClose = (code: number | null) => {
-      if (resolved) return;
-      resolved = true;
-      resolve(code);
-    };
-    ffmpegProcess.once("close", onClose);
-    // SIGTERM after 10s, SIGKILL after 15s — no need to wait 45s
-    setTimeout(() => {
-      try { ffmpegProcess.kill("SIGTERM"); } catch { /* ignore */ }
+    exitCode = await new Promise((resolve) => {
+      let resolved = false;
+      const onClose = (code: number | null) => {
+        if (resolved) return;
+        resolved = true;
+        resolve(code);
+      };
+      ffmpegProcess.once("close", onClose);
+      // SIGTERM after 10s, SIGKILL after 15s — no need to wait 45s
       setTimeout(() => {
-        try { ffmpegProcess.kill("SIGKILL"); } catch { /* ignore */ }
-        onClose(null);
-      }, 5000);
-    }, 10000);
-  });
+        try { ffmpegProcess.kill("SIGTERM"); } catch { /* ignore */ }
+        setTimeout(() => {
+          try { ffmpegProcess.kill("SIGKILL"); } catch { /* ignore */ }
+          onClose(null);
+        }, 5000);
+      }, 10000);
+    });
+  }
 
   console.log("[recording:server] ffmpeg stopped", { recordingId, exitCode });
 
