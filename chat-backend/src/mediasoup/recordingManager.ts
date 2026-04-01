@@ -144,69 +144,22 @@ function buildSdpForConsumer(params: {
  *  • N participants → grid-aware sizing that respects the dominant orientation
  */
 /**
- * Compute canvas size dynamically based on actual participant video dimensions.
- * The canvas is built from participant cells — each cell matches the average
- * participant resolution, so the recording reflects real screen sizes rather
- * than arbitrary hard-coded values.
+ * Fixed 1280×720 canvas that fills the entire frame like a real screen.
  *
- * A soft cap of 960×720 total pixels is applied only when the computed canvas
- * would be too large for real-time encoding on typical servers.
+ *  - 1 user  → full 1280×720
+ *  - 2 users → two 640×720 cells side-by-side
+ *  - 3 users → 2×2 grid (640×360 each, one cell blank)
+ *  - 4 users → 2×2 grid (640×360 each)
+ *  - etc.
+ *
+ * The grid cell sizes are computed in buildVideoGridFilter by dividing
+ * the canvas by cols/rows, so we just return the fixed canvas here.
  */
 function computeCanvasSize(
-  videoDimensions: Map<number, { width: number; height: number }>,
-  videoCount: number,
+  _videoDimensions: Map<number, { width: number; height: number }>,
+  _videoCount: number,
 ): { width: number; height: number } {
-  const SOFT_MAX_W = 960;
-  const SOFT_MAX_H = 720;
-
-  if (videoCount === 0) return { width: 640, height: 480 };
-
-  const dims = Array.from(videoDimensions.values());
-
-  // Single participant — use their actual resolution (capped for encoding speed)
-  if (videoCount === 1 && dims.length > 0) {
-    const d = dims[0];
-    let w = d.width;
-    let h = d.height;
-    // Scale down proportionally if too large
-    if (w > SOFT_MAX_W) { h = Math.round(h * (SOFT_MAX_W / w)); w = SOFT_MAX_W; }
-    if (h > SOFT_MAX_H) { w = Math.round(w * (SOFT_MAX_H / h)); h = SOFT_MAX_H; }
-    w = Math.max(w & ~1, 320);
-    h = Math.max(h & ~1, 240);
-    return { width: w, height: h };
-  }
-
-  // Multiple participants — compute cell size from average participant dimensions
-  const cols = Math.ceil(Math.sqrt(videoCount));
-  const rows = Math.ceil(videoCount / cols);
-
-  let cellW: number;
-  let cellH: number;
-
-  if (dims.length > 0) {
-    // Average the actual participant dimensions to compute cell size
-    const avgW = Math.round(dims.reduce((sum, d) => sum + d.width, 0) / dims.length);
-    const avgH = Math.round(dims.reduce((sum, d) => sum + d.height, 0) / dims.length);
-    cellW = Math.max(avgW & ~1, 160);
-    cellH = Math.max(avgH & ~1, 120);
-  } else {
-    // No dimension info at all — safe default
-    cellW = 320;
-    cellH = 240;
-  }
-
-  // Scale cells down if total canvas would exceed soft cap (for encoding speed)
-  let canvasW = cols * cellW;
-  let canvasH = rows * cellH;
-  if (canvasW > SOFT_MAX_W || canvasH > SOFT_MAX_H) {
-    const scale = Math.min(SOFT_MAX_W / canvasW, SOFT_MAX_H / canvasH);
-    cellW = Math.max(Math.round(cellW * scale) & ~1, 160);
-    cellH = Math.max(Math.round(cellH * scale) & ~1, 120);
-    canvasW = cols * cellW;
-    canvasH = rows * cellH;
-  }
-
-  return { width: canvasW & ~1 || 640, height: canvasH & ~1 || 480 };
+  return { width: 1280, height: 720 };
 }
 
 function buildVideoGridFilter(params: {
@@ -236,7 +189,7 @@ function buildVideoGridFilter(params: {
     const isPortrait = dims ? dims.height > dims.width : false;
 
     // Process input i into label sv_i
-    const chain: string[] = [`[${idx}:v]setpts=PTS-STARTPTS,fps=15`];
+    const chain: string[] = [`[${idx}:v]setpts=PTS-STARTPTS,fps=10`];
     if (isPortrait) {
       // Counter-clockwise rotation (transpose=2) fixes mobile cameras that send
       // landscape-oriented frames for portrait capture. passthrough=portrait
@@ -290,7 +243,7 @@ function buildFfmpegArgs(params: {
     "-analyzeduration", "1000000", // 1s for the background screen
     "-probesize", "1000000",
     "-flags", "low_delay",
-    "-f", "lavfi", "-i", `color=c=black:s=${targetWidth}x${targetHeight}:r=15`,
+    "-f", "lavfi", "-i", `color=c=black:s=${targetWidth}x${targetHeight}:r=10`,
   ];
 
   for (const sdpPath of sdpPathsInOrder) {
@@ -329,14 +282,15 @@ function buildFfmpegArgs(params: {
 
   for (let i = 0; i < audioInputIndices.length; i++) {
     const idx = audioInputIndices[i];
-    // Normalize each audio stream's timestamps to start from 0, resample to fix jitter
+    // Normalize each audio stream: reset PTS to 0, resample to fix jitter from RTP
     filterParts.push(`[${idx}:a]asetpts=PTS-STARTPTS,aresample=async=1000:first_pts=0[anorm${i}]`);
   }
   const normalizedAudioLabels = audioInputIndices.map((_, i) => `[anorm${i}]`).join("");
-  // amix combines all audio streams; asetpts=N/SR/TB generates strictly monotonic
-  // timestamps based on sample count, preventing DTS resets across segments
+  // amix combines all audio; final aresample generates strictly monotonic output
+  // timestamps. Using aresample instead of asetpts=N/SR/TB because the latter
+  // doesn't prevent backward-in-time packets when amix interleaves late-starting streams.
   filterParts.push(
-    `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=0,asetpts=N/SR/TB[aout]`
+    `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=0,aresample=async=1:first_pts=0[aout]`
   );
 
   args.push("-filter_complex", filterParts.join(";"));
@@ -348,12 +302,12 @@ function buildFfmpegArgs(params: {
       "-c:v", "libx264",
       "-preset", "ultrafast",
       "-tune", "zerolatency",
-      "-crf", "28",
+      "-crf", "32",
       "-pix_fmt", "yuv420p",
-      "-g", "30",                  // keyframe every 2s at 15fps — cheaper than force_key_frames expr
-      "-bf", "0",                  // no B-frames (faster encoding, less latency)
+      "-g", "20",                  // keyframe every 2s at 10fps
+      "-bf", "0",                  // no B-frames
       "-x264-params", "rc-lookahead=0:ref=1:me=dia:subme=0:trellis=0:weightp=0:scenecut=0",
-      "-threads", "2",             // limit threads to avoid CPU contention with other processes
+      "-threads", "4",             // enough threads for 1280×720 @ 10fps real-time
       "-c:a", "aac",
       "-b:a", "128k",
       "-movflags", "+frag_keyframe+empty_moov+default_base_moof", // fragmented MP4 for crash resilience
