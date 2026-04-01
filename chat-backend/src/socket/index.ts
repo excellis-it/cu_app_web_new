@@ -2143,6 +2143,7 @@ export default function initializeSocket() {
               transportId,
               kind,
               producerId: producer.id,
+              appData: kind === "video" ? appData : undefined,
             });
             socket.to(roomId).emit("MS-new-producer", {
               producerId: producer.id,

@@ -136,6 +136,64 @@ function buildSdpForConsumer(params: {
     .join("\n");
 }
 
+/**
+ * Compute the optimal canvas size based on the actual participant video
+ * dimensions instead of using a fixed 640×480 for every call.
+ *
+ *  • 1 participant  → match their native aspect ratio (capped to 1280×720)
+ *  • N participants → grid-aware sizing that respects the dominant orientation
+ */
+function computeCanvasSize(
+  videoDimensions: Map<number, { width: number; height: number }>,
+  videoCount: number,
+): { width: number; height: number } {
+  const MAX_W = 1280;
+  const MAX_H = 960;
+
+  if (videoCount === 0) return { width: 640, height: 480 };
+
+  const dims = Array.from(videoDimensions.values());
+
+  // Single participant — match their aspect ratio
+  if (videoCount === 1 && dims.length > 0) {
+    const d = dims[0];
+    const isPortrait = d.height > d.width;
+    if (isPortrait) {
+      const h = Math.min(720, MAX_H);
+      const w = (Math.round(h * (d.width / d.height)) & ~1) || 480;
+      return { width: Math.min(Math.max(w, 360), MAX_W), height: h };
+    }
+    const w = Math.min(1280, MAX_W);
+    const h = (Math.round(w * (d.height / d.width)) & ~1) || 720;
+    return { width: w, height: Math.min(Math.max(h, 360), MAX_H) };
+  }
+
+  // Multiple participants — pick cell dimensions by dominant orientation
+  const portraitCount = dims.filter((d) => d.height > d.width).length;
+  const cols = Math.ceil(Math.sqrt(videoCount));
+  const rows = Math.ceil(videoCount / cols);
+
+  let cellW: number;
+  let cellH: number;
+  if (portraitCount > videoCount - portraitCount) {
+    // Mostly portrait participants
+    cellW = 360;
+    cellH = 480;
+  } else if (portraitCount === 0) {
+    // All landscape
+    cellW = 640;
+    cellH = 360;
+  } else {
+    // Mixed portrait + landscape — square-ish cells work best
+    cellW = 480;
+    cellH = 480;
+  }
+
+  const canvasW = (Math.min(cols * cellW, MAX_W) & ~1) || 640;
+  const canvasH = (Math.min(rows * cellH, MAX_H) & ~1) || 480;
+  return { width: canvasW, height: canvasH };
+}
+
 function buildVideoGridFilter(params: {
   videoInputIndices: number[];
   targetWidth: number;
@@ -161,7 +219,7 @@ function buildVideoGridFilter(params: {
     const label = `sv${i}`;
     const dims = videoDimensions?.get(idx - 1);
     const isPortrait = dims ? dims.height > dims.width : false;
-    
+
     // Process input i into label sv_i
     const chain: string[] = [`[${idx}:v]setpts=PTS-STARTPTS,fps=15`];
     if (isPortrait) {
@@ -194,8 +252,6 @@ function buildFfmpegArgs(params: {
   videoInputIndices: number[];
   audioInputIndices: number[];
   sdpPathsInOrder: string[];
-  targetWidth: number;
-  targetHeight: number;
   videoDimensions?: Map<number, { width: number; height: number }>;
 }) {
   const {
@@ -203,9 +259,13 @@ function buildFfmpegArgs(params: {
     videoInputIndices: originalVideoIndices,
     audioInputIndices: originalAudioIndices,
     sdpPathsInOrder,
-    targetWidth,
-    targetHeight,
   } = params;
+
+  // Dynamically compute canvas size based on actual participant dimensions
+  const { width: targetWidth, height: targetHeight } = computeCanvasSize(
+    params.videoDimensions ?? new Map(),
+    originalVideoIndices.length,
+  );
 
   const videoInputIndices = originalVideoIndices.map(i => i + 1);
   const audioInputIndices = originalAudioIndices.map(i => i + 1);
@@ -479,9 +539,7 @@ export async function startServerRecording(params: {
     videoInputIndices,
     audioInputIndices,
     sdpPathsInOrder,
-    targetWidth: 640,
-    targetHeight: 480,
-    videoDimensions
+    videoDimensions,
   });
 
   const ffmpegStderrPrefix = `[recording:${recordingId}] ffmpeg`;

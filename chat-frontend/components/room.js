@@ -1674,6 +1674,29 @@ const Room = ({
           // correct FFmpeg transpose filter when recording.
           let reportedWidth = videoSettings.width;
           let reportedHeight = videoSettings.height;
+
+          // Fallback: some mobile browsers return undefined from getSettings()
+          if (!reportedWidth || !reportedHeight) {
+            try {
+              const constraints = videoTrack.getConstraints();
+              if (!reportedWidth) {
+                const wc = constraints?.width;
+                reportedWidth = typeof wc === "object"
+                  ? (wc.exact || wc.ideal || wc.max)
+                  : wc;
+              }
+              if (!reportedHeight) {
+                const hc = constraints?.height;
+                reportedHeight = typeof hc === "object"
+                  ? (hc.exact || hc.ideal || hc.max)
+                  : hc;
+              }
+            } catch (_) {}
+          }
+          // Last resort default so the backend always has dimensions
+          if (!reportedWidth) reportedWidth = 480;
+          if (!reportedHeight) reportedHeight = 360;
+
           if (isMobileBrowser && typeof window !== "undefined") {
             const angle =
               screen?.orientation?.angle ?? window.orientation ?? 0;
