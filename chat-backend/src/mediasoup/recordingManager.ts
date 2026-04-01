@@ -345,13 +345,23 @@ export async function restartServerRecording(params: {
     const { ffmpegProcess, streams, allocatedPorts, keyframeTimer, commonStartMicros, segments } = session;
     if (keyframeTimer) clearInterval(keyframeTimer);
     
-    // Briefly wait for pending RTP buffer flush
+    // Wait for pending RTP buffer flush
     await new Promise((r) => setTimeout(r, 500));
     
-    try { ffmpegProcess.kill("SIGKILL"); } catch { }
+    // Graceful shutdown during restart so WebM header is valid
+    try { 
+       ffmpegProcess.stdin?.write("q\n");
+       ffmpegProcess.stdin?.end();
+    } catch { }
+
     await new Promise((resolve) => {
       ffmpegProcess.once("close", resolve);
-      setTimeout(resolve, 3000);
+      setTimeout(() => { 
+        if (activeSessions.has(recordingId)) {
+           try { ffmpegProcess.kill("SIGKILL"); } catch { }
+        }
+        resolve(null); 
+      }, 2000);
     });
 
     for (const st of streams) {
@@ -600,14 +610,22 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
         "-safe", "0",
         "-i", concatListPath,
         "-c", "copy",
-        "-fflags", "+genpts",
+        "-fflags", "+genpts+igndts",
         "-movflags", "+faststart",
         finalOutputPath
       ]);
+      
+      ffmpeg.stdout.on("data", (d) => console.log(`[recording:merge] stdout: ${d.toString().trim()}`));
+      ffmpeg.stderr.on("data", (d) => console.log(`[recording:merge] stderr: ${d.toString().trim()}`));
+
       await new Promise((resolve, reject) => {
         ffmpeg.on("close", (code) => {
-          if (code === 0) resolve(null);
-          else reject(new Error(`FFmpeg concat failed with code ${code}`));
+          if (code === 0) {
+            console.log(`[recording:merge] success: ${finalOutputPath}`);
+            resolve(null);
+          } else {
+            reject(new Error(`FFmpeg concat failed with code ${code}`));
+          }
         });
       });
       return { outputPath: finalOutputPath };
