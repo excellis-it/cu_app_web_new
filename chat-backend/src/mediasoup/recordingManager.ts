@@ -41,6 +41,7 @@ type RecordingSession = {
 };
 
 const activeSessions: Map<string, RecordingSession> = new Map();
+const restartLocks: Set<string> = new Set();
 
 const DEFAULT_RTP_BASE_PORT = 20000;
 const DEFAULT_RTP_MAX_PORT = 30000;
@@ -76,7 +77,13 @@ function allocatePortPair(): { rtpPort: number; rtcpPort: number } {
 }
 
 function releasePorts(ports: number[]) {
-  for (const p of ports) usedPorts.delete(p);
+  // Use a delay before freeing ports in memory to ensure OS sockets are fully closed
+  setTimeout(() => {
+    for (const p of ports) {
+      usedPorts.delete(p);
+    }
+    console.log(`[recording:server] ports released after cool-down: ${ports.join(", ")}`);
+  }, 5000); 
 }
 
 function getLocalIp() {
@@ -328,26 +335,39 @@ export async function restartServerRecording(params: {
   isAudioOnly: boolean;
 }): Promise<void> {
   const { roomId, recordingId } = params;
-  const session = activeSessions.get(recordingId);
-  if (!session) return;
+  if (restartLocks.has(recordingId)) return;
+  restartLocks.add(recordingId);
 
-  const { ffmpegProcess, streams, allocatedPorts, keyframeTimer, commonStartMicros, segments } = session;
-  if (keyframeTimer) clearInterval(keyframeTimer);
-  await new Promise((r) => setTimeout(r, 300));
-  try { ffmpegProcess.kill("SIGKILL"); } catch { }
-  await new Promise((resolve) => {
-    ffmpegProcess.once("close", resolve);
-    setTimeout(resolve, 3000);
-  });
+  try {
+    const session = activeSessions.get(recordingId);
+    if (!session) return;
 
-  for (const st of streams) {
-    try { st.consumer.close(); } catch { }
-    try { st.transport.close(); } catch { }
+    const { ffmpegProcess, streams, allocatedPorts, keyframeTimer, commonStartMicros, segments } = session;
+    if (keyframeTimer) clearInterval(keyframeTimer);
+    
+    // Briefly wait for pending RTP buffer flush
+    await new Promise((r) => setTimeout(r, 500));
+    
+    try { ffmpegProcess.kill("SIGKILL"); } catch { }
+    await new Promise((resolve) => {
+      ffmpegProcess.once("close", resolve);
+      setTimeout(resolve, 3000);
+    });
+
+    for (const st of streams) {
+      try { st.consumer.close(); } catch { }
+      try { st.transport.close(); } catch { }
+    }
+    releasePorts(allocatedPorts);
+    activeSessions.delete(recordingId);
+
+    // One more small gap for OS cleanup
+    await new Promise((r) => setTimeout(r, 500));
+
+    await startServerRecording({ ...params, existingSegments: segments, sharedStartMicros: commonStartMicros });
+  } finally {
+    restartLocks.delete(recordingId);
   }
-  releasePorts(allocatedPorts);
-  activeSessions.delete(recordingId);
-
-  await startServerRecording({ ...params, existingSegments: segments, sharedStartMicros: commonStartMicros });
 }
 
 export async function startServerRecording(params: {
@@ -445,38 +465,92 @@ export async function startServerRecording(params: {
   }
 
   const commonStartMicros = sharedStartMicros || Date.now() * 1000;
-  const args = buildFfmpegArgs({ outputPath, videoInputIndices, audioInputIndices, sdpPathsInOrder, targetWidth: 640, targetHeight: 480, videoDimensions });
-
-  const ffmpegStderrPrefix = `[recording:${recordingId}] ffmpeg`;
-  const ffmpegProcess = spawn(ffmpegBinary, args, { stdio: ["pipe", "pipe", "pipe"] });
-  ffmpegProcess.stderr.on("data", (chunk) => console.log(`${ffmpegStderrPrefix} ${chunk.toString().trim()}`));
-
-  await new Promise((r) => setTimeout(r, 400));
+  
+  // 1. Resume consumers first so media begins flowing to UDP ports
   await Promise.all(liveStreams.map(async (st) => {
     try {
       await st.consumer.resume();
-      if (st.kind === "video" && !st.consumer.closed) {
-        await (st.consumer as any).requestKeyFrame?.();
-        setTimeout(() => { if (!st.consumer.closed) (st.consumer as any).requestKeyFrame?.(); }, 500);
+      if (st.kind === "video") {
+        await (st.consumer as any).requestKeyFrame?.().catch(() => {});
       }
     } catch { }
   }));
 
+  // 2. Short wait for UDP buffers to populate
+  await new Promise((r) => setTimeout(r, 500));
+
+  const args = buildFfmpegArgs({ 
+    outputPath, 
+    videoInputIndices, 
+    audioInputIndices, 
+    sdpPathsInOrder, 
+    targetWidth: 640, 
+    targetHeight: 480, 
+    videoDimensions 
+  });
+
+  const ffmpegStderrPrefix = `[recording:${recordingId}] ffmpeg`;
+  const ffmpegProcess = spawn(ffmpegBinary, args, { stdio: ["pipe", "pipe", "pipe"] });
+  
+  ffmpegProcess.stderr.on("data", (chunk) => {
+    const lines = chunk.toString().split("\n");
+    for (const line of lines) {
+      if (line.trim()) console.log(`${ffmpegStderrPrefix} ${line.trim()}`);
+    }
+  });
+
+  // 3. Monitor for early exit (e.g. bind failure)
+  let ffmpegErred = false;
+  ffmpegProcess.on("error", (err) => {
+    console.error(`[recording:${recordingId}] ffmpeg spawn error:`, err);
+    ffmpegErred = true;
+  });
+
+  // Give it a moment to stabilize
+  await new Promise((r) => setTimeout(r, 800));
+  if (ffmpegProcess.exitCode !== null) {
+     console.error(`[recording:${recordingId}] ffmpeg exited immediately with code ${ffmpegProcess.exitCode}`);
+     throw new Error(`FFmpeg failed to start for segment ${segmentIndex}`);
+  }
+
+  // 4. Request another keyframe to ensure recording starts clean
+  for (const st of liveStreams) {
+    if (st.kind === "video") (st.consumer as any).requestKeyFrame?.().catch(() => {});
+  }
+
   const keyframeTimer = setInterval(() => {
     for (const st of liveStreams) {
-      if (st.kind === "video" && !st.consumer.closed) (st.consumer as any).requestKeyFrame?.().catch(() => {});
+      if (st.kind === "video" && !st.consumer.closed) {
+        (st.consumer as any).requestKeyFrame?.().catch(() => {});
+      }
     }
   }, 5000);
 
   const allocatedPorts = liveStreams.flatMap((st) => [st.rtpPort, st.rtcpPort]);
-  const session: RecordingSession = { roomId, recordingId, outputPath, sdpDir, ffmpegProcess, ffmpegStderrPrefix, streams: liveStreams, allocatedPorts, keyframeTimer, ffmpegExited: false, ffmpegExitCode: null, commonStartMicros, segments: [...existingSegments, outputPath] };
+  const session: RecordingSession = { 
+    roomId, 
+    recordingId, 
+    outputPath, 
+    sdpDir, 
+    ffmpegProcess, 
+    ffmpegStderrPrefix, 
+    streams: liveStreams, 
+    allocatedPorts, 
+    keyframeTimer, 
+    ffmpegExited: false, 
+    ffmpegExitCode: null, 
+    commonStartMicros, 
+    segments: [...existingSegments, outputPath] 
+  };
   activeSessions.set(recordingId, session);
 
   ffmpegProcess.once("close", (code) => {
     if (activeSessions.has(recordingId)) {
       const s = activeSessions.get(recordingId)!;
-      s.ffmpegExited = true; s.ffmpegExitCode = code;
+      s.ffmpegExited = true; 
+      s.ffmpegExitCode = code;
     }
+    console.log(`[recording:${recordingId}] ffmpeg process closed with code ${code}`);
   });
 
   return { outputPath };
@@ -489,14 +563,25 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
 
   const { ffmpegProcess, outputPath, allocatedPorts, keyframeTimer, segments } = session;
   if (keyframeTimer) clearInterval(keyframeTimer);
-  await new Promise((r) => setTimeout(r, 500));
+  
+  // Wait for pending buffers
+  await new Promise((r) => setTimeout(r, 1000));
 
   if (!session.ffmpegExited) {
-    try { ffmpegProcess.stdin?.write("q\n"); } catch { }
-    try { ffmpegProcess.stdin?.end(); } catch { }
+    try { 
+       ffmpegProcess.stdin?.write("q\n");
+       ffmpegProcess.stdin?.end();
+    } catch { }
+
     await new Promise((resolve) => {
       ffmpegProcess.once("close", resolve);
-      setTimeout(() => { ffmpegProcess.kill("SIGKILL"); resolve(null); }, 5000);
+      // More aggressive fallback if graceful 'q' fail
+      setTimeout(() => { 
+        if (!session.ffmpegExited) {
+          ffmpegProcess.kill("SIGKILL");
+        }
+        resolve(null);
+      }, 3000);
     });
   }
 
