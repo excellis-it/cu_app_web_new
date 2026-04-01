@@ -201,22 +201,26 @@ function buildFfmpegArgs(params: {
 
   const args: string[] = [
     "-fflags",
-    "+genpts+discardcorrupt",
+    "+genpts+discardcorrupt+nobuffer",
     "-analyzeduration",
-    "10000000",
+    "2000000",
     "-probesize",
-    "10000000",
+    "2000000",
     // Base black background starting at t=0
     "-f", "lavfi", "-i", `color=c=black:s=${targetWidth}x${targetHeight}:r=15`,
   ];
 
   for (const sdpPath of sdpPathsInOrder) {
     // thread_queue_size: buffer packets per input to prevent drops during compositing.
-    // max_delay: allow buffering before forcing packet consumption.
+    // max_delay: keep low (0.5s) to prevent FFmpeg from blocking on one input and starving others.
+    // reorder_queue_size=0: localhost RTP doesn't need packet reordering — skip it.
+    // buffer_size=2097152: increase UDP socket receive buffer to 2MB to survive bursts while FFmpeg reads other inputs.
     // use_wallclock_as_timestamps: force absolute sync across all A/V inputs based on arrival time.
     args.push(
       "-thread_queue_size", "8192",
-      "-max_delay", "5000000",
+      "-max_delay", "500000",
+      "-reorder_queue_size", "0",
+      "-buffer_size", "2097152",
       "-use_wallclock_as_timestamps", "1",
       "-protocol_whitelist", "file,udp,rtp,rtcp",
       "-i", sdpPath,
@@ -256,19 +260,18 @@ function buildFfmpegArgs(params: {
       "-map", "[vout_final]",
       "-map", "[aout]",
       "-c:v", "libvpx",
-      "-b:v", "2500k",            // balanced bitrate for quality vs CPU load
-      "-crf", "32",               // high constant quality
+      "-b:v", "2500k",            // target bitrate for VBR
+      "-crf", "20",               // good visual quality (lower = better, 10-20 is ideal range)
       "-quality", "realtime",
       "-deadline", "realtime",
-      "-cpu-used", "16",         // fastest possible mode for VP8
-      "-threads", "0",           // use all available cores for encoding
-      "-row-mt", "1",            // enable row-based multi-threading for VP8
-      "-lag-in-frames", "0",     // no look-ahead buffering
-      "-error-resilient", "1",   // handle dropped packets gracefully
-      "-auto-alt-ref", "0",      // disable alt reference frames (faster)
-      "-static-thresh", "1000",  // skip encoding similar frames (huge CPU saving)
+      "-cpu-used", "8",           // balanced speed/quality (valid 0-16, quality degrades above 8)
+      "-threads", "0",            // use all available cores for encoding
+      "-lag-in-frames", "0",      // no look-ahead buffering (required for realtime)
+      "-error-resilient", "1",    // handle dropped packets gracefully
+      "-auto-alt-ref", "0",       // disable alt reference frames (required for realtime)
+      "-static-thresh", "100",    // mild skip threshold — avoids major artifacts on slow motion
       "-c:a", "libopus",
-      "-b:a", "96k",
+      "-b:a", "128k",
     );
   } else {
     args.push(
