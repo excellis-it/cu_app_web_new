@@ -166,10 +166,9 @@ function buildVideoGridFilter(params: {
   videoInputIndices: number[];
   targetWidth: number;
   targetHeight: number;
-  videoDimensions?: Map<number, { width: number; height: number }>;
   baseLabel: string;
 }): { filterParts: string[]; videoOutputLabel: string } {
-  const { videoInputIndices, targetWidth, targetHeight, videoDimensions, baseLabel } = params;
+  const { videoInputIndices, targetWidth, targetHeight, baseLabel } = params;
   const n = videoInputIndices.length;
 
   if (n === 0) return { filterParts: [], videoOutputLabel: baseLabel };
@@ -185,17 +184,10 @@ function buildVideoGridFilter(params: {
   for (let i = 0; i < n; i++) {
     const idx = videoInputIndices[i];
     const label = `sv${i}`;
-    const dims = videoDimensions?.get(idx - 1);
-    const isPortrait = dims ? dims.height > dims.width : false;
-
-    // Process input i into label sv_i
+    // Scale each video to fit the cell, preserving aspect ratio.
+    // No rotation needed — cells are portrait-shaped (taller than wide)
+    // for ≤2 users, and the scale+pad handles any aspect ratio correctly.
     const chain: string[] = [`[${idx}:v]setpts=PTS-STARTPTS,fps=15`];
-    if (isPortrait) {
-      // Counter-clockwise rotation (transpose=2) fixes mobile cameras that send
-      // landscape-oriented frames for portrait capture. passthrough=portrait
-      // skips rotation when frames are already correctly oriented (e.g. mobile browsers).
-      chain.push("transpose=2:passthrough=portrait");
-    }
     chain.push(
       `scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear`,
       `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black`,
@@ -220,7 +212,6 @@ function buildFfmpegArgs(params: {
   videoInputIndices: number[];
   audioInputIndices: number[];
   sdpPathsInOrder: string[];
-  videoDimensions?: Map<number, { width: number; height: number }>;
 }) {
   const {
     outputPath,
@@ -229,9 +220,8 @@ function buildFfmpegArgs(params: {
     sdpPathsInOrder,
   } = params;
 
-  // Dynamically compute canvas size based on actual participant dimensions
   const { width: targetWidth, height: targetHeight } = computeCanvasSize(
-    params.videoDimensions ?? new Map(),
+    new Map(),
     originalVideoIndices.length,
   );
 
@@ -251,6 +241,7 @@ function buildFfmpegArgs(params: {
       "-thread_queue_size", "8192",
       "-analyzeduration", "20000",  // 20ms - minimal probing since codecs are pre-declared
       "-probesize", "32000",        // 32KB - just enough for a few RTP packets
+      "-fflags", "+discardcorrupt", // drop corrupt frames instead of showing pixelated garbage
       "-max_delay", "2000000",      // 2s — tolerate jitter / late packets before dropping
       "-reorder_queue_size", "256", // larger reorder buffer to reduce "missed N packets" warnings
       "-buffer_size", "20M",        // double buffer to absorb RTP bursts
@@ -272,7 +263,6 @@ function buildFfmpegArgs(params: {
       videoInputIndices,
       targetWidth,
       targetHeight,
-      videoDimensions: params.videoDimensions,
       baseLabel: "0:v"
     });
     filterParts.push(...grid.filterParts);
@@ -281,15 +271,15 @@ function buildFfmpegArgs(params: {
 
   for (let i = 0; i < audioInputIndices.length; i++) {
     const idx = audioInputIndices[i];
-    // Normalize each audio stream: reset PTS to 0, resample to fix jitter from RTP
     filterParts.push(`[${idx}:a]asetpts=PTS-STARTPTS,aresample=async=1000:first_pts=0[anorm${i}]`);
   }
   const normalizedAudioLabels = audioInputIndices.map((_, i) => `[anorm${i}]`).join("");
-  // amix combines all audio; final aresample generates strictly monotonic output
-  // timestamps. Using aresample instead of asetpts=N/SR/TB because the latter
-  // doesn't prevent backward-in-time packets when amix interleaves late-starting streams.
+  // asetpts=N/SR/TB generates purely sequential timestamps (sample 0, 1, 2...)
+  // regardless of what amix outputs. This prevents DTS resets when late-starting
+  // audio streams join mid-recording. Works correctly now that use_wallclock_as_timestamps
+  // is removed and RTP timestamps are consistent.
   filterParts.push(
-    `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=0,aresample=async=1:first_pts=0[aout]`
+    `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=0,asetpts=N/SR/TB[aout]`
   );
 
   args.push("-filter_complex", filterParts.join(";"));
@@ -404,24 +394,21 @@ export async function restartServerRecording(params: {
 
     const { ffmpegProcess, streams, allocatedPorts, keyframeTimer, commonStartMicros, segments } = session;
     if (keyframeTimer) clearInterval(keyframeTimer);
-    
-    // Wait for pending RTP buffer flush (reduced to 200ms)
-    await new Promise((r) => setTimeout(r, 200));
-    
-    // Graceful shutdown during restart so WebM header is valid
-    try { 
+
+    // Graceful shutdown — send 'q' and wait up to 500ms for clean exit
+    try {
        ffmpegProcess.stdin?.write("q\n");
        ffmpegProcess.stdin?.end();
     } catch { }
 
     await new Promise((resolve) => {
       ffmpegProcess.once("close", resolve);
-      setTimeout(() => { 
+      setTimeout(() => {
         if (activeSessions.has(recordingId)) {
            try { ffmpegProcess.kill("SIGKILL"); } catch { }
         }
-        resolve(null); 
-      }, 1000);
+        resolve(null);
+      }, 500);
     });
 
     for (const st of streams) {
@@ -431,9 +418,6 @@ export async function restartServerRecording(params: {
     }
     releasePorts(allocatedPorts);
     activeSessions.delete(recordingId);
-
-    // One more small gap for OS cleanup (reduced to 300ms)
-    await new Promise((r) => setTimeout(r, 300));
 
     await startServerRecording({ ...params, existingSegments: segments, sharedStartMicros: commonStartMicros });
   } finally {
@@ -550,13 +534,6 @@ export async function startServerRecording(params: {
     else audioInputIndices.push(i);
   }
 
-  const videoDimensions = new Map<number, { width: number; height: number }>();
-  for (let i = 0; i < liveStreams.length; i++) {
-    if (liveStreams[i].kind === "video" && liveStreams[i].width && liveStreams[i].height) {
-      videoDimensions.set(i, { width: liveStreams[i].width!, height: liveStreams[i].height! });
-    }
-  }
-
   const commonStartMicros = sharedStartMicros || Date.now() * 1000;
 
   // 1. Start FFmpeg FIRST so it opens UDP sockets before any data flows
@@ -565,7 +542,6 @@ export async function startServerRecording(params: {
     videoInputIndices,
     audioInputIndices,
     sdpPathsInOrder,
-    videoDimensions,
   });
 
   const ffmpegStderrPrefix = `[recording:${recordingId}] ffmpeg`;
@@ -585,7 +561,7 @@ export async function startServerRecording(params: {
   });
 
   // 2. Wait for FFmpeg to initialize and open UDP sockets
-  await new Promise((r) => setTimeout(r, 200));
+  await new Promise((r) => setTimeout(r, 100));
   if (ffmpegProcess.exitCode !== null) {
      console.error(`[recording:${recordingId}] ffmpeg exited immediately with code ${ffmpegProcess.exitCode}`);
      throw new Error(`FFmpeg failed to start for segment ${segmentIndex}`);
@@ -602,7 +578,7 @@ export async function startServerRecording(params: {
       }
     } catch { }
     // Give FFmpeg time to detect and start reading this input before the next one
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise((r) => setTimeout(r, 150));
   }
 
   // 4. Verify FFmpeg is still running after all consumers are up
@@ -711,20 +687,20 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
     await fsp.writeFile(concatListPath, concatContent, "utf8");
     try {
       console.log(`[recording:server] merging ${session.segments.length} segments into ${finalOutputPath}`);
-      // Re-encode audio during merge to fix non-monotonous DTS across segments.
-      // Video is stream-copied (fast); audio is re-muxed with proper timestamp generation.
+      // Re-encode audio during merge: asetpts=N/SR/TB generates sequential timestamps
+      // across the segment boundary, eliminating DTS jumps. Video is stream-copied (fast).
       const ffmpeg = spawn(ffmpegBinary, [
         "-y",
+        "-fflags", "+genpts+igndts",
         "-f", "concat",
         "-safe", "0",
         "-i", concatListPath,
         "-c:v", "copy",
         "-c:a", "aac",
         "-b:a", "128k",
-        "-af", "aresample=async=1000",
-        "-fflags", "+genpts+igndts",
+        "-af", "asetpts=N/SR/TB,aresample=async=1000",
         "-movflags", "+faststart",
-        "-max_muxing_queue_size", "1024",
+        "-max_muxing_queue_size", "4096",
         finalOutputPath
       ]);
       
