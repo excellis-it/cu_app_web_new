@@ -5,7 +5,12 @@ import { spawn } from "node:child_process";
 
 import { types } from "mediasoup";
 
-import { getOrCreateRoom, getRoomProducers } from "./mediaRoomManager";
+import { 
+  getOrCreateRoom, 
+  getRoomProducers, 
+  startKeyframeTimer, 
+  stopKeyframeTimer 
+} from "./mediaRoomManager";
 import { recordingConfig } from "../helpers/recordingConfig";
 import CallRecording from "../db/schemas/callrecording.schema";
 import ScreenRecording from "../db/schemas/screen-recording.schema";
@@ -217,21 +222,22 @@ function buildFfmpegArgs(params: {
   const audioInputIndices = originalAudioIndices.map(i => i + 1);
 
   const args: string[] = [
-    "-fflags", "+genpts+discardcorrupt+nobuffer",
-    "-analyzeduration", "2000000",
-    "-probesize", "2000000",
+    "-fflags", "+genpts+discardcorrupt+nobuffer+igndts",
+    "-analyzeduration", "100000",
+    "-probesize", "100000",
+    "-flags", "low_delay",
     "-f", "lavfi", "-i", `color=c=black:s=${targetWidth}x${targetHeight}:r=15`,
   ];
 
   for (const sdpPath of sdpPathsInOrder) {
     args.push(
       "-thread_queue_size", "4096",
-      "-analyzeduration", "500000",
-      "-probesize", "500000",
-      "-max_delay", "5000000",
+      "-analyzeduration", "100000",
+      "-probesize", "100000",
+      "-max_delay", "100000",
       "-reorder_queue_size", "128",
-      "-buffer_size", "8388608",
-      "-rw_timeout", "5000000",
+      "-buffer_size", "10M",
+      "-rw_timeout", "1000000",
       "-use_wallclock_as_timestamps", "1",
       "-protocol_whitelist", "file,udp,rtp,rtcp",
       "-i", sdpPath,
@@ -366,6 +372,7 @@ export async function restartServerRecording(params: {
     });
 
     for (const st of streams) {
+      stopKeyframeTimer(st.consumer.id);
       try { st.consumer.close(); } catch { }
       try { st.transport.close(); } catch { }
     }
@@ -429,6 +436,7 @@ export async function startServerRecording(params: {
     const consumer = await transport.consume({ producerId: s.producerId, rtpCapabilities: room.router.rtpCapabilities, paused: true });
     if (s.kind === "video") {
       try { await (consumer as any).setPreferredLayers?.({ spatialLayer: 0, temporalLayer: 0 }); } catch { }
+      startKeyframeTimer(consumer);
     }
     const sdpPath = path.join(sdpDir, `stream-${i}.sdp`);
     const sdp = buildSdpForConsumer({ kind: s.kind, sdpIp, rtpPort, consumer });
@@ -446,7 +454,8 @@ export async function startServerRecording(params: {
     });
   }
 
-  await new Promise((r) => setTimeout(r, 400));
+  // Minimal wait for transport readiness
+  await new Promise((r) => setTimeout(r, 100));
   const deadStreams = streams.filter((st) => st.consumer.closed);
   if (deadStreams.length > 0) {
     for (const st of deadStreams) {
@@ -481,17 +490,13 @@ export async function startServerRecording(params: {
   await Promise.all(liveStreams.map(async (st) => {
     try {
       await st.consumer.resume();
-      if (st.kind === "video") {
-        await (st.consumer as any).requestKeyFrame?.().catch(() => {});
-      }
+      if (st.kind === "video") (st.consumer as any).requestKeyFrame?.().catch(() => {});
     } catch { }
   }));
 
-  // 2. Short wait for UDP buffers to populate
-  await new Promise((r) => setTimeout(r, 500));
-
-  const args = buildFfmpegArgs({ 
-    outputPath, 
+  // 2. Start FFmpeg immediately
+  const args = buildFfmpegArgs({
+    outputPath,
     videoInputIndices, 
     audioInputIndices, 
     sdpPathsInOrder, 
@@ -518,7 +523,8 @@ export async function startServerRecording(params: {
   });
 
   // Give it a moment to stabilize
-  await new Promise((r) => setTimeout(r, 800));
+  // Short wait for process spawn only
+  await new Promise((r) => setTimeout(r, 300));
   if (ffmpegProcess.exitCode !== null) {
      console.error(`[recording:${recordingId}] ffmpeg exited immediately with code ${ffmpegProcess.exitCode}`);
      throw new Error(`FFmpeg failed to start for segment ${segmentIndex}`);
@@ -535,7 +541,21 @@ export async function startServerRecording(params: {
         (st.consumer as any).requestKeyFrame?.().catch(() => {});
       }
     }
-  }, 5000);
+  }, 3000); // slightly faster for recording recovery
+
+  // 5. Aggressive immediate poking for the first 2 seconds to force timeline sync
+  for (const st of liveStreams) {
+    if (st.kind === "video") {
+      let pokes = 0;
+      const pokeInterval = setInterval(() => {
+        if (st.consumer.closed || pokes++ > 4) {
+          clearInterval(pokeInterval);
+          return;
+        }
+        (st.consumer as any).requestKeyFrame?.().catch(() => {});
+      }, 500);
+    }
+  }
 
   const allocatedPorts = liveStreams.flatMap((st) => [st.rtpPort, st.rtcpPort]);
   const session: RecordingSession = { 
@@ -572,7 +592,7 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
   if (!session) throw new Error(`No session for ${recordingId}`);
   activeSessions.delete(recordingId);
 
-  const { ffmpegProcess, outputPath, allocatedPorts, keyframeTimer, segments } = session;
+  const { ffmpegProcess, outputPath, allocatedPorts, keyframeTimer, segments, streams } = session;
   if (keyframeTimer) clearInterval(keyframeTimer);
   
   // Wait for pending buffers
@@ -596,6 +616,11 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
     });
   }
 
+  for (const st of streams) {
+    stopKeyframeTimer(st.consumer.id);
+    try { st.consumer.close(); } catch { }
+    try { st.transport.close(); } catch { }
+  }
   releasePorts(allocatedPorts);
 
   if (session.segments.length > 1) {

@@ -28,7 +28,7 @@ const rooms: Map<string, RoomState> = new Map();
 // because the decoder can't reconstruct frames without a keyframe.
 const keyframeTimers: Map<string, NodeJS.Timeout> = new Map();
 
-function startKeyframeTimer(consumer: types.Consumer): void {
+export function startKeyframeTimer(consumer: types.Consumer): void {
   if (consumer.kind !== "video") return;
   if (keyframeTimers.has(consumer.id)) return;
   // Request immediately to give the decoder a clean start
@@ -44,7 +44,7 @@ function startKeyframeTimer(consumer: types.Consumer): void {
   keyframeTimers.set(consumer.id, timer);
 }
 
-function stopKeyframeTimer(consumerId: string): void {
+export function stopKeyframeTimer(consumerId: string): void {
   const timer = keyframeTimers.get(consumerId);
   if (timer) {
     clearInterval(timer);
