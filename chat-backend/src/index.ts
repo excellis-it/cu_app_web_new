@@ -16,6 +16,7 @@ import { cleanupOrphanedCalls } from "./app";
 import googleRouter from "./routes/google.routes";
 import { startScreenRecordingCleanupJob } from "./helpers/screenRecordingCleanup";
 import { cleanupOrphanedTempFiles } from "./helpers/screenRecordingProcessor";
+import { recoverStaleRecordings } from "./mediasoup/recordingManager";
 
 const port = process.env.PORT || 10018;
 const morgan = require("morgan");
@@ -43,6 +44,13 @@ setTimeout(() => {
 
 // Start daily cleanup of expired screen recordings (default: 30 days)
 startScreenRecordingCleanupJob();
+
+// Recover stale recording DB records from previous server runs
+setTimeout(() => {
+  recoverStaleRecordings()
+    .then(() => console.log("Stale recording recovery completed"))
+    .catch(err => console.error("Stale recording recovery failed:", err));
+}, 12000);
 
 // Clean up orphaned temp files from previous server runs
 setTimeout(() => {

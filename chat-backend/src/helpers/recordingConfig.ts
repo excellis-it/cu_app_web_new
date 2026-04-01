@@ -4,6 +4,7 @@ import path from "node:path";
 const DEFAULT_MAX_DURATION_SEC = 60 * 60; // 1 hour
 const DEFAULT_MAX_SIZE_BYTES = 4 * 1024 * 1024 * 1024; // 4 GB
 const DEFAULT_MAX_CHUNK_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+const DEFAULT_UPLOAD_SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 const DEFAULT_TEMP_UPLOAD_DIR = path.resolve(process.cwd(), "tmp", "recordings");
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -26,6 +27,10 @@ export const recordingConfig = {
   maxChunkSizeBytes: parsePositiveInt(
     process.env.RECORDING_MAX_CHUNK_SIZE_BYTES,
     DEFAULT_MAX_CHUNK_SIZE_BYTES,
+  ),
+  uploadSessionTimeoutMs: parsePositiveInt(
+    process.env.RECORDING_UPLOAD_SESSION_TIMEOUT_MS,
+    DEFAULT_UPLOAD_SESSION_TIMEOUT_MS,
   ),
 };
 

@@ -235,6 +235,19 @@ function getRecordingContentType(objectKey: string) {
   return "application/octet-stream";
 }
 
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 2000): Promise<T> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      if (attempt === retries) throw err;
+      console.warn(`[screen-recording:process] retry ${attempt}/${retries} after error: ${err?.message || String(err)}`);
+      await new Promise((r) => setTimeout(r, delayMs * attempt));
+    }
+  }
+  throw new Error("withRetry: unreachable");
+}
+
 async function uploadToS3CompatibleBucket(localFilePath: string, objectKey: string) {
   const accessKeyId = process.env.S3_ACCESS_KEY;
   const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
@@ -296,7 +309,7 @@ async function uploadFile(localFilePath: string, objectKey: string, recordingId:
 
   if (s3Ready) {
     console.log("[screen-recording:process] uploading to S3", { recordingId, objectKey });
-    const url = await uploadToS3CompatibleBucket(localFilePath, objectKey);
+    const url = await withRetry(() => uploadToS3CompatibleBucket(localFilePath, objectKey));
     console.log("[screen-recording:process] S3 upload done", { recordingId, url });
     return url;
   }
@@ -538,6 +551,30 @@ export async function processScreenRecordingInBackground(recordingId: string) {
       recordingId,
       error: error?.message || String(error),
     });
+
+    // Notify the room so the UI can stop showing "processing" state
+    try {
+      emitMessageToRoom(recording.groupId, {
+        type: "screen-recording-processing-failed",
+        recordingId,
+        groupId: recording.groupId,
+        errorMessage: error?.message || "Screen recording processing failed",
+      });
+    } catch {
+      // non-fatal
+    }
+
+    // Update placeholder message if one was created, so it doesn't stay stuck at "processing"
+    try {
+      const placeholderMsgId = recording.uploadSessionId;
+      if (placeholderMsgId) {
+        await Message.findByIdAndUpdate(placeholderMsgId, {
+          $set: { message: "Recording failed", fileName: "Screen Recording | Failed" },
+        });
+      }
+    } catch {
+      // non-fatal
+    }
 
     logError(error, {
       category: "screen-recording",

@@ -7,6 +7,8 @@ import { types } from "mediasoup";
 
 import { getOrCreateRoom, getRoomProducers } from "./mediaRoomManager";
 import { recordingConfig } from "../helpers/recordingConfig";
+import CallRecording from "../db/schemas/callrecording.schema";
+import ScreenRecording from "../db/schemas/screen-recording.schema";
 
 const ffmpegBinary = process.env.FFMPEG_PATH || "ffmpeg";
 
@@ -39,7 +41,9 @@ type RecordingSession = {
 const activeSessions: Map<string, RecordingSession> = new Map();
 
 const DEFAULT_RTP_BASE_PORT = 20000;
+const DEFAULT_RTP_MAX_PORT = 30000;
 const rtpBasePort = Number(process.env.RECORDING_RTP_BASE_PORT) || DEFAULT_RTP_BASE_PORT;
+const rtpMaxPort = Number(process.env.RECORDING_RTP_MAX_PORT) || DEFAULT_RTP_MAX_PORT;
 let nextPort = rtpBasePort;
 const usedPorts: Set<number> = new Set();
 
@@ -50,14 +54,22 @@ function ensureDir(dirPath: string) {
 function allocatePortPair(): { rtpPort: number; rtcpPort: number } {
   // PlainTransport uses RTP and RTCP ports (when rtcpMux=false)
   let rtpPort = nextPort;
+  let scanned = 0;
+  const totalRange = rtpMaxPort - rtpBasePort;
+
   while (usedPorts.has(rtpPort) || usedPorts.has(rtpPort + 1)) {
     rtpPort += 2;
+    if (rtpPort >= rtpMaxPort) rtpPort = rtpBasePort; // wraparound
+    scanned += 2;
+    if (scanned >= totalRange) {
+      throw new Error("RTP port pool exhausted — no free port pairs available.");
+    }
   }
 
   const rtcpPort = rtpPort + 1;
   usedPorts.add(rtpPort);
   usedPorts.add(rtcpPort);
-  nextPort = rtcpPort + 2;
+  nextPort = rtcpPort + 1 >= rtpMaxPort ? rtpBasePort : rtcpPort + 1;
 
   return { rtpPort, rtcpPort };
 }
@@ -239,18 +251,18 @@ function buildFfmpegArgs(params: {
 
   for (const sdpPath of sdpPathsInOrder) {
     // thread_queue_size: buffer packets per input to prevent drops during compositing.
-    // max_delay: keep low (0.5s) to prevent FFmpeg from blocking on one input and starving others.
-    // reorder_queue_size=0: localhost RTP doesn't need packet reordering — skip it.
-    // buffer_size=2097152: increase UDP socket receive buffer to 2MB to survive bursts while FFmpeg reads other inputs.
+    // max_delay: allow up to 5s so FFmpeg doesn't discard packets during transient encoding spikes.
+    // reorder_queue_size: allow modest reordering — even localhost UDP can arrive out-of-order under load.
+    // buffer_size: 8MB UDP receive buffer to absorb bursts while FFmpeg is busy encoding other frames.
     // rw_timeout=5000000: give up reading from a dead UDP socket after 5s (prevents infinite block if a stream dies mid-recording).
     // use_wallclock_as_timestamps: force absolute sync across all A/V inputs based on arrival time.
     args.push(
-      "-thread_queue_size", "8192",
+      "-thread_queue_size", "4096",
       "-analyzeduration", "500000",   // per-input: 0.5s probe (SDP declares codec, no need to wait)
       "-probesize", "500000",
-      "-max_delay", "500000",
-      "-reorder_queue_size", "0",
-      "-buffer_size", "2097152",
+      "-max_delay", "5000000",
+      "-reorder_queue_size", "128",
+      "-buffer_size", "8388608",
       "-rw_timeout", "5000000",
       "-use_wallclock_as_timestamps", "1",
       "-protocol_whitelist", "file,udp,rtp,rtcp",
@@ -297,16 +309,16 @@ function buildFfmpegArgs(params: {
       "-map", "[vout_final]",
       "-map", "[aout]",
       "-c:v", "libvpx",
-      "-b:v", "2500k",            // target bitrate for VBR
-      "-crf", "20",               // good visual quality (lower = better, 10-20 is ideal range)
+      "-b:v", "1200k",            // target bitrate for VBR (640x480 doesn't need more)
+      "-crf", "25",               // balanced quality for live capture (post-processor improves it)
       "-quality", "realtime",
       "-deadline", "realtime",
-      "-cpu-used", "8",           // balanced speed/quality (valid 0-16, quality degrades above 8)
+      "-cpu-used", "12",          // prioritize encoding speed over quality to prevent packet drops
       "-threads", "0",            // use all available cores for encoding
       "-lag-in-frames", "0",      // no look-ahead buffering (required for realtime)
       "-error-resilient", "1",    // handle dropped packets gracefully
       "-auto-alt-ref", "0",       // disable alt reference frames (required for realtime)
-      "-static-thresh", "100",    // mild skip threshold — avoids major artifacts on slow motion
+      "-static-thresh", "500",    // skip encoding visually static frames — reduces CPU spikes
       "-c:a", "libopus",
       "-b:a", "128k",
     );
@@ -324,6 +336,49 @@ function buildFfmpegArgs(params: {
 
 export function isRecordingActive(recordingId: string) {
   return activeSessions.has(recordingId);
+}
+
+/**
+ * Recover stale recording records on server startup.
+ * Any recording/screen-recording stuck in "recording" or "processing" state
+ * that is NOT backed by a live in-memory session is orphaned from a previous
+ * server run and should be marked "failed".
+ */
+export async function recoverStaleRecordings() {
+  const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+  const cutoff = new Date(Date.now() - STALE_THRESHOLD_MS);
+
+  try {
+    const staleCallRecordings = await CallRecording.updateMany(
+      {
+        status: { $in: ["recording", "processing"] },
+        updatedAt: { $lt: cutoff },
+      },
+      { $set: { status: "failed", errorMessage: "Server restarted — recording session was orphaned." } },
+    );
+
+    const staleScreenRecordings = await ScreenRecording.updateMany(
+      {
+        status: { $in: ["recording", "processing"] },
+        updatedAt: { $lt: cutoff },
+      },
+      { $set: { status: "failed", errorMessage: "Server restarted — recording session was orphaned." } },
+    );
+
+    const totalRecovered =
+      (staleCallRecordings.modifiedCount || 0) + (staleScreenRecordings.modifiedCount || 0);
+
+    if (totalRecovered > 0) {
+      console.log("[recording:recovery] marked stale recordings as failed on startup", {
+        callRecordings: staleCallRecordings.modifiedCount || 0,
+        screenRecordings: staleScreenRecordings.modifiedCount || 0,
+      });
+    }
+  } catch (err: any) {
+    console.error("[recording:recovery] startup recovery failed (non-fatal)", {
+      error: err?.message || String(err),
+    });
+  }
 }
 
 /**
@@ -538,14 +593,14 @@ export async function startServerRecording(params: {
   }
 
   // Use low resolution for live capture to minimize CPU usage and RTP packet drops.
-  // Phase 2 (HLS transcode) produces high quality from this source.
+  // The post-recording processor upscales/remuxes to higher quality.
   const args = buildFfmpegArgs({
     outputPath,
     videoInputIndices,
     audioInputIndices,
     sdpPathsInOrder,
-    targetWidth: 1280,
-    targetHeight: 720,
+    targetWidth: 640,
+    targetHeight: 480,
     videoDimensions,
   });
 
@@ -583,12 +638,12 @@ export async function startServerRecording(params: {
 
   // Request keyframes for video — burst to ensure FFmpeg gets one quickly.
   for (const st of liveStreams) {
-    if (st.kind !== "video") continue;
+    if (st.kind !== "video" || st.consumer.closed) continue;
     try {
       await (st.consumer as any).requestKeyFrame?.();
-      setTimeout(() => (st.consumer as any).requestKeyFrame?.().catch(() => {}), 500);
-      setTimeout(() => (st.consumer as any).requestKeyFrame?.().catch(() => {}), 1500);
-      setTimeout(() => (st.consumer as any).requestKeyFrame?.().catch(() => {}), 3000);
+      setTimeout(() => { if (!st.consumer.closed) (st.consumer as any).requestKeyFrame?.()?.catch?.(() => {}); }, 500);
+      setTimeout(() => { if (!st.consumer.closed) (st.consumer as any).requestKeyFrame?.()?.catch?.(() => {}); }, 1500);
+      setTimeout(() => { if (!st.consumer.closed) (st.consumer as any).requestKeyFrame?.()?.catch?.(() => {}); }, 3000);
     } catch {
       // ignore
     }

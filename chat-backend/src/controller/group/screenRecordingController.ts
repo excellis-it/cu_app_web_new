@@ -10,6 +10,14 @@ import USERS from "../../db/schemas/users.schema";
 import { recordingConfig, ensureRecordingTempDirectory } from "../../helpers/recordingConfig";
 import { processScreenRecordingInBackground } from "../../helpers/screenRecordingProcessor";
 
+const ALLOWED_MIME_TYPES = new Set([
+  "video/webm",
+  "video/mp4",
+  "video/x-matroska",
+  "audio/webm",
+  "audio/ogg",
+]);
+
 function toStringId(value: any) {
   return value?.toString?.() || "";
 }
@@ -67,6 +75,9 @@ export async function initScreenRecording(body: any, user: any) {
   const userId = toStringId(user?._id);
 
   if (!groupId) throw new Error("groupId is required.");
+  if (!ALLOWED_MIME_TYPES.has(mimeType)) {
+    throw new Error(`Unsupported mimeType: ${mimeType}. Allowed: ${[...ALLOWED_MIME_TYPES].join(", ")}`);
+  }
   if (!userId) throw new Error("User context is missing.");
 
   await ensureGroupMemberAccess(groupId, userId);
@@ -149,6 +160,15 @@ export async function uploadScreenRecordingChunk(body: any, user: any, file: any
     throw new Error("Upload session is invalid or expired.");
   }
 
+  // Check upload session timeout
+  const sessionAge = Date.now() - new Date(recording.updatedAt).getTime();
+  if (sessionAge > recordingConfig.uploadSessionTimeoutMs) {
+    recording.status = "failed";
+    recording.errorMessage = "Upload session timed out.";
+    await recording.save();
+    throw new Error("Upload session has expired. Please start a new recording.");
+  }
+
   const chunksDir = getChunksDir(recordingId);
   await fsp.mkdir(chunksDir, { recursive: true });
 
@@ -225,12 +245,24 @@ export async function completeScreenRecording(body: any, user: any) {
     throw new Error("Upload session is invalid or already completed.");
   }
 
-  if ((recording.receivedChunks || []).length < totalChunks) {
+  const receivedChunks = (recording.receivedChunks || []).sort((a: number, b: number) => a - b);
+  if (receivedChunks.length < totalChunks) {
     throw new Error("Not all chunks have been uploaded yet.");
   }
 
+  // Validate chunk indices form a continuous sequence [0, 1, ..., totalChunks-1]
+  for (let i = 0; i < totalChunks; i++) {
+    if (receivedChunks[i] !== i) {
+      throw new Error(`Missing chunk at index ${i}. Upload is incomplete or corrupted.`);
+    }
+  }
+
   recording.totalChunks = totalChunks;
-  recording.durationSec = durationSec;
+  // Prefer server-calculated duration from createdAt over client-supplied value
+  const serverDurationSec = recording.createdAt
+    ? Math.max(0, Math.round((Date.now() - new Date(recording.createdAt).getTime()) / 1000))
+    : durationSec;
+  recording.durationSec = serverDurationSec;
   recording.sizeBytes = await getSizeFromChunks(recordingId);
 
   if (recording.sizeBytes > recordingConfig.maxSizeBytes) {

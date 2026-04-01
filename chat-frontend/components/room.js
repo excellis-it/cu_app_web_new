@@ -11,6 +11,7 @@ import ReconnectModal from "./reconnectionModalComponant";
 import { useAppContext } from "../appContext/appContext";
 import { Device } from "mediasoup-client";
 import { createDummyMediaStream } from "../utils/createDummyMediaStream";
+import axios from "axios";
 import * as callService from "../utils/callService";
 
 const Room = ({
@@ -50,6 +51,9 @@ const Room = ({
   const [screenRecordingBusy, setScreenRecordingBusy] = useState(false);
   const screenRecordingStartTimeRef = useRef(null);
   const screenRecTimerRef = useRef(null);
+
+  // Call recording (server-side via mediasoup — started by group admin)
+  const [isCallRecording, setIsCallRecording] = useState(false);
 
   const isAudioOnlyCall = callType === "audio";
 
@@ -901,6 +905,25 @@ const Room = ({
           setScreenRecordingBusy(false);
         });
 
+        // Call recording socket events (server-side recording started by group admin)
+        socketRef.current.on("FE-recording-started", (payload) => {
+          try {
+            console.log("[room.js] FE-recording-started", payload);
+            setIsCallRecording(true);
+          } catch (e) {
+            console.error("[room.js] FE-recording-started handler error", e);
+          }
+        });
+
+        socketRef.current.on("FE-recording-stopped", (payload) => {
+          try {
+            console.log("[room.js] FE-recording-stopped", payload);
+            setIsCallRecording(false);
+          } catch (e) {
+            console.error("[room.js] FE-recording-stopped handler error", e);
+          }
+        });
+
         socketRef.current.on(
           "FE-user-leave",
           ({ userId, userName, fullName }) => {
@@ -1136,6 +1159,20 @@ const Room = ({
           toast.error(ack.error);
         } else {
           console.log("Joined room successfully:", ack);
+
+          // Check if a call recording is already ongoing (late joiner support)
+          try {
+            const token = globalUser?.data?.token;
+            const res = await axios.get("/api/groups/recordings/ongoing", {
+              headers: { "access-token": token },
+              params: { groupId: roomId },
+            });
+            if (res?.data?.data?.isRecording) {
+              setIsCallRecording(true);
+            }
+          } catch (e) {
+            console.error("[room.js] Failed to check ongoing recording", e);
+          }
         }
       } catch (err) {
         console.error("Error joining room:", err);
@@ -1928,6 +1965,8 @@ const Room = ({
       socketRef.current.off("FE-screen-recording-started");
       socketRef.current.off("FE-screen-recording-stopped");
       socketRef.current.off("FE-screen-recording-error");
+      socketRef.current.off("FE-recording-started");
+      socketRef.current.off("FE-recording-stopped");
       window.removeEventListener("popstate", goToBack);
       // Reset the flag when leaving the room
       hasReceivedInitialUsers.current = false;
@@ -2584,6 +2623,32 @@ const Room = ({
                   REC
                 </span>
               ) : null}
+              {/* Call recording indicator (visible to all participants) */}
+              {isCallRecording && (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    marginRight: "8px",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "#ef4444",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: "50%",
+                      backgroundColor: "#ef4444",
+                      animation: "blink 1s infinite",
+                    }}
+                  />
+                  REC
+                </span>
+              )}
             </div>
             <div
               style={{

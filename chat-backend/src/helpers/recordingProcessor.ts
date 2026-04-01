@@ -151,6 +151,19 @@ function getRecordingContentType(objectKey: string) {
   return "application/octet-stream";
 }
 
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 2000): Promise<T> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      if (attempt === retries) throw err;
+      console.warn(`[recording:process] retry ${attempt}/${retries} after error: ${err?.message || String(err)}`);
+      await new Promise((r) => setTimeout(r, delayMs * attempt));
+    }
+  }
+  throw new Error("withRetry: unreachable");
+}
+
 async function uploadToS3CompatibleBucket(localFilePath: string, objectKey: string) {
   const cdnBaseUrl = recordingConfig.cdnBaseUrl;
   if (!cdnBaseUrl) {
@@ -287,7 +300,7 @@ export async function processRecordingInBackground(recordingId: string) {
         playbackObjectKey,
         cdnBaseUrl: recordingConfig.cdnBaseUrl,
       });
-      playbackUrl = await uploadToS3CompatibleBucket(playbackFilePath, playbackObjectKey);
+      playbackUrl = await withRetry(() => uploadToS3CompatibleBucket(playbackFilePath, playbackObjectKey));
       console.log("[recording:process] cdn upload done", {
         recordingId: id,
         playbackUrl,
@@ -358,6 +371,18 @@ export async function processRecordingInBackground(recordingId: string) {
       recordingId: recordingId,
       error: error?.message || String(error),
     });
+
+    // Notify the room so the UI can stop showing "processing" state
+    try {
+      emitMessageToRoom(recording.groupId, {
+        type: "recording-processing-failed",
+        recordingId,
+        groupId: recording.groupId,
+        errorMessage: error?.message || "Recording processing failed",
+      });
+    } catch {
+      // non-fatal
+    }
 
     logError(error, {
       category: "call",
