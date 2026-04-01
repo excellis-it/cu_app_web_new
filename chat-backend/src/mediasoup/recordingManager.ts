@@ -165,11 +165,14 @@ function buildVideoGridFilter(params: {
     // Process input i into label sv_i
     const chain: string[] = [`[${idx}:v]setpts=PTS-STARTPTS,fps=15`];
     if (isPortrait) {
-      chain.push("transpose=1:passthrough=portrait");
+      // Counter-clockwise rotation (transpose=2) fixes mobile cameras that send
+      // landscape-oriented frames for portrait capture. passthrough=portrait
+      // skips rotation when frames are already correctly oriented (e.g. mobile browsers).
+      chain.push("transpose=2:passthrough=portrait");
     }
     chain.push(
       `scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear`,
-      `pad=${cellW}:${cellH}:(ow-ih)/2:(oh-ih)/2:color=black`,
+      `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black`,
     );
     filterParts.push(`${chain.join(",")}[${label}]`);
 
