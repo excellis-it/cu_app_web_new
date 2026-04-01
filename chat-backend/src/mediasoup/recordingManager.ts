@@ -218,12 +218,12 @@ function buildFfmpegArgs(params: {
   for (const sdpPath of sdpPathsInOrder) {
     args.push(
       "-thread_queue_size", "4096",
-      "-analyzeduration", "100000", // 100ms - very fast probing
-      "-probesize", "100000",
+      "-analyzeduration", "20000",  // 20ms - minimal probing since codecs are pre-declared
+      "-probesize", "32000",        // 32KB - just enough for a few RTP packets
       "-max_delay", "500000",
-      "-reorder_queue_size", "128",
+      "-reorder_queue_size", "64",
       "-buffer_size", "10M",
-      "-rw_timeout", "1000000",
+      "-rw_timeout", "5000000",     // 5s - allow time for late-starting streams
       "-use_wallclock_as_timestamps", "1",
       "-protocol_whitelist", "file,udp,rtp,rtcp",
     );
@@ -251,11 +251,11 @@ function buildFfmpegArgs(params: {
 
   for (let i = 0; i < audioInputIndices.length; i++) {
     const idx = audioInputIndices[i];
-    filterParts.push(`[${idx}:a]asetpts=PTS-STARTPTS[anorm${i}]`);
+    filterParts.push(`[${idx}:a]asetpts=PTS-STARTPTS,aresample=async=1000:first_pts=0[anorm${i}]`);
   }
   const normalizedAudioLabels = audioInputIndices.map((_, i) => `[anorm${i}]`).join("");
   filterParts.push(
-    `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=0,aresample=async=1000[aout]`
+    `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=0,asetpts=N/SR/TB[aout]`
   );
 
   args.push("-filter_complex", filterParts.join(";"));
@@ -283,7 +283,7 @@ function buildFfmpegArgs(params: {
     );
   }
 
-  args.push("-f", "mp4", "-y", outputPath);
+  args.push("-max_muxing_queue_size", "1024", "-f", "mp4", "-y", outputPath);
   return args;
 }
 
@@ -469,29 +469,21 @@ export async function startServerRecording(params: {
   }
 
   const commonStartMicros = sharedStartMicros || Date.now() * 1000;
-  
-  // 1. Resume consumers first so media begins flowing to UDP ports
-  await Promise.all(liveStreams.map(async (st) => {
-    try {
-      await st.consumer.resume();
-      if (st.kind === "video") (st.consumer as any).requestKeyFrame?.().catch(() => {});
-    } catch { }
-  }));
 
-  // 2. Start FFmpeg immediately
+  // 1. Start FFmpeg FIRST so it opens UDP sockets before any data flows
   const args = buildFfmpegArgs({
     outputPath,
-    videoInputIndices, 
-    audioInputIndices, 
-    sdpPathsInOrder, 
-    targetWidth: 640, 
-    targetHeight: 480, 
-    videoDimensions 
+    videoInputIndices,
+    audioInputIndices,
+    sdpPathsInOrder,
+    targetWidth: 640,
+    targetHeight: 480,
+    videoDimensions
   });
 
   const ffmpegStderrPrefix = `[recording:${recordingId}] ffmpeg`;
   const ffmpegProcess = spawn(ffmpegBinary, args, { stdio: ["pipe", "pipe", "pipe"] });
-  
+
   ffmpegProcess.stderr.on("data", (chunk) => {
     const lines = chunk.toString().split("\n");
     for (const line of lines) {
@@ -499,22 +491,40 @@ export async function startServerRecording(params: {
     }
   });
 
-  // 3. Monitor for early exit (e.g. bind failure)
   let ffmpegErred = false;
   ffmpegProcess.on("error", (err) => {
     console.error(`[recording:${recordingId}] ffmpeg spawn error:`, err);
     ffmpegErred = true;
   });
 
-  // Give it a moment to stabilize
-  // Short wait for process spawn only
-  await new Promise((r) => setTimeout(r, 300));
+  // 2. Wait for FFmpeg to initialize and open UDP sockets
+  await new Promise((r) => setTimeout(r, 200));
   if (ffmpegProcess.exitCode !== null) {
      console.error(`[recording:${recordingId}] ffmpeg exited immediately with code ${ffmpegProcess.exitCode}`);
      throw new Error(`FFmpeg failed to start for segment ${segmentIndex}`);
   }
 
-  // 4. Request another keyframe to ensure recording starts clean
+  // 3. Resume consumers ONE BY ONE with gaps — FFmpeg probes inputs sequentially,
+  //    so staggering prevents later inputs' UDP buffers from overflowing while
+  //    FFmpeg is still probing earlier inputs
+  for (const st of liveStreams) {
+    try {
+      await st.consumer.resume();
+      if (st.kind === "video") {
+        (st.consumer as any).requestKeyFrame?.().catch(() => {});
+      }
+    } catch { }
+    // Give FFmpeg time to detect and start reading this input before the next one
+    await new Promise((r) => setTimeout(r, 300));
+  }
+
+  // 4. Verify FFmpeg is still running after all consumers are up
+  if (ffmpegProcess.exitCode !== null) {
+     console.error(`[recording:${recordingId}] ffmpeg exited during consumer setup with code ${ffmpegProcess.exitCode}`);
+     throw new Error(`FFmpeg failed during startup for segment ${segmentIndex}`);
+  }
+
+  // 5. Request keyframes from all video consumers for a clean start
   for (const st of liveStreams) {
     if (st.kind === "video") (st.consumer as any).requestKeyFrame?.().catch(() => {});
   }
@@ -525,9 +535,9 @@ export async function startServerRecording(params: {
         (st.consumer as any).requestKeyFrame?.().catch(() => {});
       }
     }
-  }, 2000); // 2s is safer for stable recording
+  }, 2000);
 
-  // 5. Aggressive immediate poking for the first 3 seconds to force timeline sync
+  // 6. Aggressive keyframe poking for the first 3 seconds to force timeline sync
   for (const st of liveStreams) {
     if (st.kind === "video") {
       let pokes = 0;
@@ -537,7 +547,7 @@ export async function startServerRecording(params: {
           return;
         }
         (st.consumer as any).requestKeyFrame?.().catch(() => {});
-      }, 200); // poke every 200ms for 3 seconds
+      }, 200);
     }
   }
 
