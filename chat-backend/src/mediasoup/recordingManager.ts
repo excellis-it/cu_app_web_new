@@ -158,7 +158,7 @@ function buildVideoGridFilter(params: {
     //    to portrait, but leaves already-portrait pixels untouched)
     // 3. scale to fit cell while preserving aspect ratio
     // 4. pad to exact cell size (center video, fill remainder with black — required by xstack)
-    const chain: string[] = [`[${idx}:v]fps=15`];
+    const chain: string[] = [`[${idx}:v]setpts=PTS-STARTPTS,fps=15`];
 
     if (isPortrait) {
       chain.push("transpose=1:passthrough=portrait");
@@ -266,10 +266,16 @@ function buildFfmpegArgs(params: {
     videoOutputLabel = grid.videoOutputLabel;
   }
 
-  // Audio mix
-  const audioLabels = audioInputIndices.map((i) => `[${i}:a]`).join("");
+  // Audio mix: normalize each audio input's timestamps to start from 0 (asetpts),
+  // mix them together (amix), then resync to video timeline (aresample async).
+  // Without this, wall-clock timestamp differences between inputs cause A/V drift.
+  for (let i = 0; i < audioInputIndices.length; i++) {
+    const idx = audioInputIndices[i];
+    filterParts.push(`[${idx}:a]asetpts=PTS-STARTPTS[anorm${i}]`);
+  }
+  const normalizedAudioLabels = audioInputIndices.map((_, i) => `[anorm${i}]`).join("");
   filterParts.push(
-    `${audioLabels}amix=inputs=${audioInputIndices.length}:duration=longest[aout]`
+    `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest,aresample=async=1000[aout]`
   );
 
   // Overlay the grid on top of the persistent black background (input index 0)

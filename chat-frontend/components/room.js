@@ -2551,10 +2551,7 @@ const Room = ({
                           animation: "blink 1s infinite",
                         }}
                       />
-                      <span data-screc-duration style={{ fontVariantNumeric: "tabular-nums" }}>
-                        00:00
-                      </span>
-                      {screenRecordingBusy ? " Saving..." : " Stop"}
+                      {screenRecordingBusy ? "Saving..." : "Stop"}
                     </>
                   ) : screenRecordingBusy ? (
                     "Saving..."
@@ -2584,7 +2581,7 @@ const Room = ({
                       animation: "blink 1s infinite",
                     }}
                   />
-                  REC <span data-screc-duration>00:00</span>
+                  REC
                 </span>
               ) : null}
             </div>
