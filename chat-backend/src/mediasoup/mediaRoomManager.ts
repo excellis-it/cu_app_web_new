@@ -12,6 +12,7 @@ export interface PeerState {
   transports: Map<string, PeerTransport>;
   producers: Map<string, types.Producer>;
   consumers: Map<string, types.Consumer>;
+  producerMeta: Map<string, { width?: number; height?: number }>;
 }
 
 export interface RoomState {
@@ -137,6 +138,7 @@ export async function addPeer(roomId: string, userId: string): Promise<PeerState
       transports: new Map(),
       producers: new Map(),
       consumers: new Map(),
+      producerMeta: new Map(),
     };
     room.peers.set(userId, peer);
   }
@@ -280,7 +282,8 @@ export async function createProducer(
   transportId: string,
   kind: types.MediaKind,
   rtpParameters: types.RtpParameters,
-  encodings?: types.RtpEncodingParameters[]
+  encodings?: types.RtpEncodingParameters[],
+  appData?: { width?: number; height?: number },
 ): Promise<types.Producer | null> {
   const room = rooms.get(roomId);
   if (!room) return null;
@@ -299,6 +302,11 @@ export async function createProducer(
     rtpParameters: producerRtpParameters,
   });
   peer.producers.set(producer.id, producer);
+
+  if (appData && (appData.width || appData.height)) {
+    peer.producerMeta.set(producer.id, { width: appData.width, height: appData.height });
+  }
+
   return producer;
 }
 
@@ -406,20 +414,23 @@ export async function restartTransportIce(
 export function getRoomProducers(
   roomId: string,
   excludeUserId?: string
-): { producerId: string; userId: string; kind: types.MediaKind }[] {
+): { producerId: string; userId: string; kind: types.MediaKind; width?: number; height?: number }[] {
   const room = rooms.get(roomId);
   if (!room) return [];
 
-  const result: { producerId: string; userId: string; kind: types.MediaKind }[] = [];
+  const result: { producerId: string; userId: string; kind: types.MediaKind; width?: number; height?: number }[] = [];
 
   for (const [userId, peer] of room.peers.entries()) {
     if (excludeUserId && userId === excludeUserId) continue;
 
     peer.producers.forEach((producer, producerId) => {
+      const meta = peer.producerMeta.get(producerId);
       result.push({
         producerId,
         userId,
         kind: producer.kind,
+        width: meta?.width,
+        height: meta?.height,
       });
     });
   }

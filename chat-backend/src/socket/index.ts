@@ -1953,6 +1953,7 @@ export default function initializeSocket() {
           kind,
           rtpParameters,
           encodings,
+          appData,
         }: {
           roomId: string;
           userId: string;
@@ -1960,6 +1961,7 @@ export default function initializeSocket() {
           kind: MediasoupTypes.MediaKind;
           rtpParameters: MediasoupTypes.RtpParameters;
           encodings?: MediasoupTypes.RtpEncodingParameters[];
+          appData?: { width?: number; height?: number };
         },
         cb: (payload: any) => void,
       ) => {
@@ -1972,6 +1974,7 @@ export default function initializeSocket() {
               kind,
               rtpParameters,
               encodings,
+              appData,
             );
             if (!producer) {
               cb && cb({ ok: false, error: "no-producer" });

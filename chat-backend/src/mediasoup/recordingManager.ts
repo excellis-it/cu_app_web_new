@@ -18,6 +18,8 @@ type ServerStream = {
   rtpPort: number;
   rtcpPort: number;
   sdpPath: string;
+  width?: number;
+  height?: number;
 };
 
 type RecordingSession = {
@@ -124,8 +126,9 @@ function buildVideoGridFilter(params: {
   videoInputIndices: number[];
   targetWidth: number;
   targetHeight: number;
+  videoDimensions?: Map<number, { width: number; height: number }>;
 }): { filterParts: string[]; videoOutputLabel: string } {
-  const { videoInputIndices, targetWidth, targetHeight } = params;
+  const { videoInputIndices, targetWidth, targetHeight, videoDimensions } = params;
   const n = videoInputIndices.length;
 
   if (n === 0) return { filterParts: [], videoOutputLabel: "" };
@@ -139,13 +142,34 @@ function buildVideoGridFilter(params: {
   const filterParts: string[] = [];
   const stackInputLabels: string[] = [];
 
-  // Scale each video input to the cell size (with padding to maintain aspect ratio)
+  // Scale each video input to the cell size, handle portrait rotation, and pad to exact cell size.
   for (let i = 0; i < n; i++) {
     const idx = videoInputIndices[i];
     const label = `sv${i}`;
-    filterParts.push(
-      `[${idx}:v]fps=15,scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear[${label}]`
+
+    // Check if the frontend reported portrait dimensions (height > width).
+    // videoDimensions is keyed by the original stream index (before +1 shift for lavfi background).
+    const dims = videoDimensions?.get(idx - 1);
+    const isPortrait = dims ? dims.height > dims.width : false;
+
+    // Build per-input filter chain:
+    // 1. fps=15 (normalize frame rate)
+    // 2. transpose=1:passthrough=portrait (only for portrait streams — rotates landscape pixels
+    //    to portrait, but leaves already-portrait pixels untouched)
+    // 3. scale to fit cell while preserving aspect ratio
+    // 4. pad to exact cell size (center video, fill remainder with black — required by xstack)
+    const chain: string[] = [`[${idx}:v]fps=15`];
+
+    if (isPortrait) {
+      chain.push("transpose=1:passthrough=portrait");
+    }
+
+    chain.push(
+      `scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear`,
+      `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black`,
     );
+
+    filterParts.push(`${chain.join(",")}[${label}]`);
     stackInputLabels.push(`[${label}]`);
   }
 
@@ -184,6 +208,7 @@ function buildFfmpegArgs(params: {
   sdpPathsInOrder: string[];
   targetWidth: number;
   targetHeight: number;
+  videoDimensions?: Map<number, { width: number; height: number }>;
 }) {
   const {
     outputPath,
@@ -218,6 +243,8 @@ function buildFfmpegArgs(params: {
     // use_wallclock_as_timestamps: force absolute sync across all A/V inputs based on arrival time.
     args.push(
       "-thread_queue_size", "8192",
+      "-analyzeduration", "500000",   // per-input: 0.5s probe (SDP declares codec, no need to wait)
+      "-probesize", "500000",
       "-max_delay", "500000",
       "-reorder_queue_size", "0",
       "-buffer_size", "2097152",
@@ -234,7 +261,7 @@ function buildFfmpegArgs(params: {
   const hasVideo = videoInputIndices.length > 0;
   let videoOutputLabel = "";
   if (hasVideo) {
-    const grid = buildVideoGridFilter({ videoInputIndices, targetWidth, targetHeight });
+    const grid = buildVideoGridFilter({ videoInputIndices, targetWidth, targetHeight, videoDimensions: params.videoDimensions });
     filterParts.push(...grid.filterParts);
     videoOutputLabel = grid.videoOutputLabel;
   }
@@ -345,8 +372,8 @@ export async function startServerRecording(params: {
 
   // Consume each selected producer and send its RTP to a dedicated localhost port for FFmpeg.
   // Video producers first, then audio — so FFmpeg input indices are predictable.
-  const selectedStreams: { producerId: string; kind: types.MediaKind }[] = [
-    ...selectedVideoProducers.map((p) => ({ producerId: p.producerId, kind: "video" as const })),
+  const selectedStreams: { producerId: string; kind: types.MediaKind; width?: number; height?: number }[] = [
+    ...selectedVideoProducers.map((p) => ({ producerId: p.producerId, kind: "video" as const, width: p.width, height: p.height })),
     ...selectedAudioProducers.map((p) => ({ producerId: p.producerId, kind: "audio" as const })),
   ];
 
@@ -390,6 +417,8 @@ export async function startServerRecording(params: {
       rtpPort,
       rtcpPort,
       sdpPath,
+      width: s.width,
+      height: s.height,
     });
   }
 
@@ -412,6 +441,14 @@ export async function startServerRecording(params: {
     audioStreams: audioInputIndices.length,
   });
 
+  // Build video dimensions map for portrait detection in the FFmpeg filter.
+  const videoDimensions = new Map<number, { width: number; height: number }>();
+  for (let i = 0; i < streams.length; i++) {
+    if (streams[i].kind === "video" && streams[i].width && streams[i].height) {
+      videoDimensions.set(i, { width: streams[i].width!, height: streams[i].height! });
+    }
+  }
+
   // Use low resolution for live capture to minimize CPU usage and RTP packet drops.
   // Phase 2 (HLS transcode) produces high quality from this source.
   const args = buildFfmpegArgs({
@@ -421,6 +458,7 @@ export async function startServerRecording(params: {
     sdpPathsInOrder,
     targetWidth: 1280,
     targetHeight: 720,
+    videoDimensions,
   });
 
   const ffmpegStderrPrefix = `[recording:${recordingId}] ffmpeg`;
@@ -440,26 +478,31 @@ export async function startServerRecording(params: {
     console.log(`${ffmpegStderrPrefix} ${chunk.toString().trim()}`);
   });
 
-  // Resume consumers after FFmpeg has been spawned and request keyframes for video.
-  // We request multiple keyframes quickly at the start to overcome FFmpeg's initial buffering delay.
+  // Wait for FFmpeg to open all SDP inputs before resuming consumers.
+  // Each input takes ~0.5s to probe (analyzeduration), so total startup ≈ N × 0.5s.
+  // Resuming too early wastes keyframes that arrive before FFmpeg is listening.
+  const ffmpegStartupMs = streams.length * 600; // 0.6s per input with margin
+  await new Promise((r) => setTimeout(r, ffmpegStartupMs));
+
+  // Resume consumers and request keyframes AFTER FFmpeg is ready to receive.
   for (const st of streams) {
     try {
       await st.consumer.resume();
     } catch {
       // ignore
     }
-    if (st.kind === "video") {
-      try {
-        await (st.consumer as any).requestKeyFrame?.();
-        // Burst: Request keyframe every 1s for the first 4s of the call
-        // to overcome any initial UDP packet loss or startup delay.
-        setTimeout(() => (st.consumer as any).requestKeyFrame?.().catch(() => {}), 1000);
-        setTimeout(() => (st.consumer as any).requestKeyFrame?.().catch(() => {}), 2000);
-        setTimeout(() => (st.consumer as any).requestKeyFrame?.().catch(() => {}), 3000);
-        setTimeout(() => (st.consumer as any).requestKeyFrame?.().catch(() => {}), 4000);
-      } catch {
-        // ignore
-      }
+  }
+
+  // Request keyframes for video — burst to ensure FFmpeg gets one quickly.
+  for (const st of streams) {
+    if (st.kind !== "video") continue;
+    try {
+      await (st.consumer as any).requestKeyFrame?.();
+      setTimeout(() => (st.consumer as any).requestKeyFrame?.().catch(() => {}), 500);
+      setTimeout(() => (st.consumer as any).requestKeyFrame?.().catch(() => {}), 1500);
+      setTimeout(() => (st.consumer as any).requestKeyFrame?.().catch(() => {}), 3000);
+    } catch {
+      // ignore
     }
   }
 

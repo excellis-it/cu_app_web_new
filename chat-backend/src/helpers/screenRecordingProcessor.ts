@@ -157,17 +157,17 @@ async function transcodeWebmToHls(inputFilePath: string, hlsDir: string): Promis
     // Video: H.264 baseline for max compatibility
     "-c:v", "libx264",
     "-preset", "fast",
-    "-crf", "28",
-    "-profile:v", "baseline",
+    "-crf", "23",
+    "-profile:v", "main",
     "-level", "3.1",
     "-pix_fmt", "yuv420p",
-    "-vf", "scale='min(854,iw)':'min(480,ih)':force_original_aspect_ratio=decrease:flags=lanczos",
-    "-maxrate", "700k",
-    "-bufsize", "1400k",
-    // Audio: AAC mono
+    "-vf", "scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease:flags=lanczos",
+    "-maxrate", "2500k",
+    "-bufsize", "5000k",
+    // Audio: AAC stereo (preserves spatial separation of speakers)
     "-c:a", "aac",
-    "-b:a", "64k",
-    "-ac", "1",
+    "-b:a", "128k",
+    "-ac", "2",
     // HLS settings
     "-f", "hls",
     "-hls_time", "4",                 // shorter segments improve startup/seek smoothness

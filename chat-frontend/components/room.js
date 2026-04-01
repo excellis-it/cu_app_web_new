@@ -1255,7 +1255,7 @@ const Room = ({
 
       sendTransport.on(
         "produce",
-        ({ kind, rtpParameters }, callback, errback) => {
+        ({ kind, rtpParameters, appData }, callback, errback) => {
           console.log("[room.js] sendTransport produce requested", { kind });
           socket.emit(
             "MS-produce",
@@ -1265,6 +1265,7 @@ const Room = ({
               transportId: sendTransport.id,
               kind,
               rtpParameters,
+              appData,
             },
             (res) => {
               if (res && res.ok && res.id) callback({ id: res.id });
@@ -1629,9 +1630,14 @@ const Room = ({
             },
           ];
 
+          const videoSettings = videoTrack.getSettings();
           videoProducerRef.current = await sendTransport.produce({
             track: videoTrack,
             encodings: videoEncodings,
+            appData: {
+              width: videoSettings.width,
+              height: videoSettings.height,
+            },
           });
           console.log("[room.js] video producer created", {
             id: videoProducerRef.current.id,
