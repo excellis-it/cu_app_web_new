@@ -9,6 +9,7 @@ import CallRecording from "../../db/schemas/callrecording.schema";
 
 import { recordingConfig, ensureRecordingTempDirectory } from "../../helpers/recordingConfig";
 import { processRecordingInBackground } from "../../helpers/recordingProcessor";
+import ScreenRecording from "../../db/schemas/screen-recording.schema";
 
 function toStringId(value: any) {
   return value?.toString?.() || "";
@@ -170,20 +171,20 @@ export async function uploadRecordingChunk(body: any, user: any, file: any) {
       query: { recordingId, roomId, uploadSessionId, status: "uploading" },
       dbDoc: dbDoc
         ? {
-            _id: String(dbDoc._id),
-            groupId: dbDoc.groupId,
-            uploadSessionId: dbDoc.uploadSessionId,
-            status: dbDoc.status,
-            callId: String(dbDoc.callId ?? ""),
-          }
+          _id: String(dbDoc._id),
+          groupId: dbDoc.groupId,
+          uploadSessionId: dbDoc.uploadSessionId,
+          status: dbDoc.status,
+          callId: String(dbDoc.callId ?? ""),
+        }
         : "NO_DOCUMENT_AT_ALL",
       fieldMatch: dbDoc
         ? {
-            id: String(dbDoc._id) === String(recordingId),
-            groupId: dbDoc.groupId === roomId,
-            uploadSessionId: dbDoc.uploadSessionId === uploadSessionId,
-            status: dbDoc.status === "uploading",
-          }
+          id: String(dbDoc._id) === String(recordingId),
+          groupId: dbDoc.groupId === roomId,
+          uploadSessionId: dbDoc.uploadSessionId === uploadSessionId,
+          status: dbDoc.status === "uploading",
+        }
         : null,
     });
     throw new Error("Upload session is invalid or expired.");
@@ -319,7 +320,7 @@ export async function checkRecordingOngoing(query: any, user: any) {
 
   await ensureGroupMemberAccess(groupId, userId);
 
-  const ongoingRecording = await CallRecording.findOne(
+  const ongoingRecording = await ScreenRecording.findOne(
     { groupId, status: "recording" },
     { _id: 1, groupId: 1, callId: 1, startedBy: 1, status: 1, createdAt: 1 },
   ).lean();
