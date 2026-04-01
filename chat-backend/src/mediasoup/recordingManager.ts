@@ -141,11 +141,12 @@ function buildVideoGridFilter(params: {
   targetWidth: number;
   targetHeight: number;
   videoDimensions?: Map<number, { width: number; height: number }>;
+  baseLabel: string;
 }): { filterParts: string[]; videoOutputLabel: string } {
-  const { videoInputIndices, targetWidth, targetHeight, videoDimensions } = params;
+  const { videoInputIndices, targetWidth, targetHeight, videoDimensions, baseLabel } = params;
   const n = videoInputIndices.length;
 
-  if (n === 0) return { filterParts: [], videoOutputLabel: "" };
+  if (n === 0) return { filterParts: [], videoOutputLabel: baseLabel };
 
   const cols = Math.ceil(Math.sqrt(n));
   const rows = Math.ceil(n / cols);
@@ -153,51 +154,36 @@ function buildVideoGridFilter(params: {
   const cellH = Math.floor(targetHeight / rows) & ~1;
 
   const filterParts: string[] = [];
-  const stackInputLabels: string[] = [];
+  let currentBase = baseLabel;
 
   for (let i = 0; i < n; i++) {
     const idx = videoInputIndices[i];
     const label = `sv${i}`;
     const dims = videoDimensions?.get(idx - 1);
     const isPortrait = dims ? dims.height > dims.width : false;
+    
+    // Process input i into label sv_i
     const chain: string[] = [`[${idx}:v]setpts=PTS-STARTPTS,fps=15`];
-
     if (isPortrait) {
       chain.push("transpose=1:passthrough=portrait");
     }
-
     chain.push(
       `scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear`,
       `pad=${cellW}:${cellH}:(ow-ih)/2:(oh-ih)/2:color=black`,
     );
-
     filterParts.push(`${chain.join(",")}[${label}]`);
-    stackInputLabels.push(`[${label}]`);
-  }
 
-  if (n === 1) {
-    return { filterParts, videoOutputLabel: "sv0" };
-  }
-
-  const totalCells = cols * rows;
-  for (let i = n; i < totalCells; i++) {
-    const label = `blk${i}`;
-    filterParts.push(`color=black:s=${cellW}x${cellH}:r=1[${label}]`);
-    stackInputLabels.push(`[${label}]`);
-  }
-
-  const layoutParts: string[] = [];
-  for (let i = 0; i < totalCells; i++) {
+    // Overlay sv_i onto currentBase
     const col = i % cols;
     const row = Math.floor(i / cols);
-    layoutParts.push(`${col * cellW}_${row * cellH}`);
+    const x = col * cellW;
+    const y = row * cellH;
+    const nextBase = `ovl${i}`;
+    filterParts.push(`[${currentBase}][${label}]overlay=x=${x}:y=${y}:eof_action=pass:repeatlast=1[${nextBase}]`);
+    currentBase = nextBase;
   }
 
-  filterParts.push(
-    `${stackInputLabels.join("")}xstack=inputs=${totalCells}:layout=${layoutParts.join("|")}[vout]`
-  );
-
-  return { filterParts, videoOutputLabel: "vout" };
+  return { filterParts, videoOutputLabel: currentBase };
 }
 
 function buildFfmpegArgs(params: {
@@ -223,8 +209,8 @@ function buildFfmpegArgs(params: {
 
   const args: string[] = [
     "-fflags", "+genpts+discardcorrupt+nobuffer+igndts",
-    "-analyzeduration", "100000",
-    "-probesize", "100000",
+    "-analyzeduration", "1000000", // 1s for the background screen
+    "-probesize", "1000000",
     "-flags", "low_delay",
     "-f", "lavfi", "-i", `color=c=black:s=${targetWidth}x${targetHeight}:r=15`,
   ];
@@ -232,9 +218,9 @@ function buildFfmpegArgs(params: {
   for (const sdpPath of sdpPathsInOrder) {
     args.push(
       "-thread_queue_size", "4096",
-      "-analyzeduration", "100000",
-      "-probesize", "100000",
-      "-max_delay", "100000",
+      "-analyzeduration", "500000", // slightly more time to find video headers
+      "-probesize", "500000",
+      "-max_delay", "500000",
       "-reorder_queue_size", "128",
       "-buffer_size", "10M",
       "-rw_timeout", "1000000",
@@ -246,13 +232,15 @@ function buildFfmpegArgs(params: {
 
   const filterParts: string[] = [];
   const hasVideo = videoInputIndices.length > 0;
-  let videoOutputLabel = "";
+  let videoOutputLabel = "0:v";
+  
   if (hasVideo) {
     const grid = buildVideoGridFilter({
       videoInputIndices,
       targetWidth,
       targetHeight,
       videoDimensions: params.videoDimensions,
+      baseLabel: "0:v"
     });
     filterParts.push(...grid.filterParts);
     videoOutputLabel = grid.videoOutputLabel;
@@ -264,18 +252,14 @@ function buildFfmpegArgs(params: {
   }
   const normalizedAudioLabels = audioInputIndices.map((_, i) => `[anorm${i}]`).join("");
   filterParts.push(
-    `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest,aresample=async=1000[aout]`
+    `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=0,aresample=async=1000[aout]`
   );
-
-  if (hasVideo) {
-    filterParts.push(`[0:v][${videoOutputLabel}]overlay=shortest=0[vout_final]`);
-  }
 
   args.push("-filter_complex", filterParts.join(";"));
 
   if (hasVideo) {
     args.push(
-      "-map", "[vout_final]",
+      "-map", `[${videoOutputLabel}]`,
       "-map", "[aout]",
       "-c:v", "libvpx",
       "-b:v", "1200k",
@@ -352,8 +336,8 @@ export async function restartServerRecording(params: {
     const { ffmpegProcess, streams, allocatedPorts, keyframeTimer, commonStartMicros, segments } = session;
     if (keyframeTimer) clearInterval(keyframeTimer);
     
-    // Wait for pending RTP buffer flush
-    await new Promise((r) => setTimeout(r, 500));
+    // Wait for pending RTP buffer flush (reduced to 200ms)
+    await new Promise((r) => setTimeout(r, 200));
     
     // Graceful shutdown during restart so WebM header is valid
     try { 
@@ -368,7 +352,7 @@ export async function restartServerRecording(params: {
            try { ffmpegProcess.kill("SIGKILL"); } catch { }
         }
         resolve(null); 
-      }, 2000);
+      }, 1000);
     });
 
     for (const st of streams) {
@@ -379,8 +363,8 @@ export async function restartServerRecording(params: {
     releasePorts(allocatedPorts);
     activeSessions.delete(recordingId);
 
-    // One more small gap for OS cleanup (increased to 1s)
-    await new Promise((r) => setTimeout(r, 1000));
+    // One more small gap for OS cleanup (reduced to 300ms)
+    await new Promise((r) => setTimeout(r, 300));
 
     await startServerRecording({ ...params, existingSegments: segments, sharedStartMicros: commonStartMicros });
   } finally {
@@ -541,19 +525,19 @@ export async function startServerRecording(params: {
         (st.consumer as any).requestKeyFrame?.().catch(() => {});
       }
     }
-  }, 3000); // slightly faster for recording recovery
+  }, 2000); // 2s is safer for stable recording
 
-  // 5. Aggressive immediate poking for the first 2 seconds to force timeline sync
+  // 5. Aggressive immediate poking for the first 3 seconds to force timeline sync
   for (const st of liveStreams) {
     if (st.kind === "video") {
       let pokes = 0;
       const pokeInterval = setInterval(() => {
-        if (st.consumer.closed || pokes++ > 4) {
+        if (st.consumer.closed || pokes++ > 15) {
           clearInterval(pokeInterval);
           return;
         }
         (st.consumer as any).requestKeyFrame?.().catch(() => {});
-      }, 500);
+      }, 200); // poke every 200ms for 3 seconds
     }
   }
 
