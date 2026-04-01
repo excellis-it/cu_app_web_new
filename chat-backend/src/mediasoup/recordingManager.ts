@@ -508,10 +508,26 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
     const concatContent = session.segments.map(s => `file '${path.resolve(s).replaceAll("\\", "/")}'`).join("\n");
     await fsp.writeFile(concatListPath, concatContent, "utf8");
     try {
-      const ffmpeg = spawn(ffmpegBinary, ["-y", "-f", "concat", "-safe", "0", "-i", concatListPath, "-c", "copy", finalOutputPath]);
-      await new Promise((resolve, reject) => { ffmpeg.on("close", (code) => code === 0 ? resolve(null) : reject(new Error("Merge failed"))); });
+      console.log(`[recording:server] merging ${session.segments.length} segments into ${finalOutputPath}`);
+      const ffmpeg = spawn(ffmpegBinary, [
+        "-y",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", concatListPath,
+        "-c", "copy",
+        "-fflags", "+genpts",
+        "-movflags", "+faststart",
+        finalOutputPath
+      ]);
+      await new Promise((resolve, reject) => {
+        ffmpeg.on("close", (code) => {
+          if (code === 0) resolve(null);
+          else reject(new Error(`FFmpeg concat failed with code ${code}`));
+        });
+      });
       return { outputPath: finalOutputPath };
-    } catch {
+    } catch (err: any) {
+      console.error("[recording:server] merge failed, returning latest segment only", err);
       return { outputPath };
     }
   }

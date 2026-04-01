@@ -450,55 +450,42 @@ export async function processScreenRecordingInBackground(recordingId: string) {
     });
 
     // ============================================================
-    // PHASE 2: Transcode to HLS in background → chunked streaming
-    // Runs async — doesn't block Phase 1 completion or cleanup
+    // PHASE 2: Transcode to MP4 in background → optimized for web
+    // Runs async — doesn't block Phase 1 completion
     // ============================================================
     const rawFilePathCopy = sourceFilePath;
-    const baseDirCopy = baseDir;
+    const mp4FilePath = path.join(baseDir, "recording.mp4");
+    const mp4ObjectKey = `screen-recordings/${id}/recording.mp4`;
 
     // Don't await — let it run completely in background
     (async () => {
-      const hlsDir = path.join(baseDirCopy, "hls");
-      const hlsBaseKey = `screen-recordings/${id}/hls`;
-
       try {
-        console.log("[screen-recording:process] phase 2: transcoding to HLS", { recordingId: id });
-        const hlsFiles = await transcodeWebmToHls(rawFilePathCopy, hlsDir);
+        console.log("[screen-recording:process] phase 2: transcoding to optimized MP4", { recordingId: id });
+        await transcodeWebmToMp4(rawFilePathCopy, mp4FilePath);
 
-        // Upload all HLS files (playlist + segments) to S3
-        let totalHlsBytes = 0;
-        let hlsPlaylistUrl = "";
-        for (const filePath of hlsFiles) {
-          const fileName = path.basename(filePath);
-          const objectKey = `${hlsBaseKey}/${fileName}`;
-          const url = await uploadFile(filePath, objectKey, id);
-          totalHlsBytes += fs.statSync(filePath).size;
-          if (fileName === "playlist.m3u8") hlsPlaylistUrl = url;
-        }
+        const mp4Url = await uploadFile(mp4FilePath, mp4ObjectKey, id);
 
-        // Update DB with HLS playlist URL
+        // Update DB with MP4 URL as the primary playbackUrl
         await ScreenRecording.findByIdAndUpdate(id, {
           $set: {
-            rawObjectKey: `${hlsBaseKey}/playlist.m3u8`,
-            playbackUrl: hlsPlaylistUrl,
-            sizeBytes: totalHlsBytes,
+            rawObjectKey: mp4ObjectKey,
+            playbackUrl: mp4Url,
             status: "ready",
             errorMessage: "",
           },
         });
 
-        console.log("[screen-recording:process] phase 2 ready (HLS)", {
+        console.log("[screen-recording:process] phase 2 ready (MP4)", {
           recordingId: id,
-          playbackUrl: hlsPlaylistUrl,
-          segments: hlsFiles.length - 1,
-          totalHlsBytes,
+          playbackUrl: mp4Url,
+          durationSec,
         });
 
-        // Emit updated URL to chat — player switches to HLS streaming
+        // Emit updated URL to chat — player switches to optimized MP4
         try {
           const updatedRecording = await ScreenRecording.findById(id);
           if (updatedRecording) {
-            await emitRecordingMessage(updatedRecording, hlsPlaylistUrl, durationSec);
+            await emitRecordingMessage(updatedRecording, mp4Url, durationSec);
           }
         } catch (emitErr: any) {
           console.warn("[screen-recording:process] phase 2 emit failed (non-fatal)", {
@@ -507,7 +494,7 @@ export async function processScreenRecordingInBackground(recordingId: string) {
           });
         }
       } catch (transcodeError: any) {
-        console.warn("[screen-recording:process] phase 2 HLS failed (WebM still available)", {
+        console.warn("[screen-recording:process] phase 2 MP4 failed (WebM still available)", {
           recordingId: id,
           error: transcodeError?.message || String(transcodeError),
         });
@@ -534,13 +521,11 @@ export async function processScreenRecordingInBackground(recordingId: string) {
           });
         }
       } finally {
-        // ALWAYS clean up temp files — regardless of success or failure
+        // ALWAYS clean up temp files
         try {
-          await fsp.rm(baseDirCopy, { recursive: true, force: true });
+          await fsp.rm(baseDir, { recursive: true, force: true });
           console.log("[screen-recording:process] temp files cleaned up", { recordingId: id });
-        } catch {
-          // ignore
-        }
+        } catch { }
       }
     })();
   } catch (error: any) {

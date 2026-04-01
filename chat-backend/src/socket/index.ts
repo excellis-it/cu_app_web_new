@@ -2154,23 +2154,21 @@ export default function initializeSocket() {
 
             // If a recording is active for this room and a new video producer appears,
             // restart the recording to include the late-joining participant.
-            if (kind === "video") {
-              const activeRecordingId = getActiveRecordingForRoom(roomId);
-              if (activeRecordingId) {
-                const producersNow = getRoomProducers(roomId);
-                const isAudioOnly = !producersNow.some((p) => p.kind === "video");
-                restartServerRecording({
+            const activeRecordingId = getActiveRecordingForRoom(roomId);
+            if (activeRecordingId) {
+              const producersNow = getRoomProducers(roomId);
+              const isAudioOnly = !producersNow.some((p) => p.kind === "video");
+              restartServerRecording({
+                roomId,
+                recordingId: activeRecordingId,
+                isAudioOnly,
+              }).catch((err) => {
+                console.error("[MS-produce] recording restart failed", {
                   roomId,
                   recordingId: activeRecordingId,
-                  isAudioOnly,
-                }).catch((err) => {
-                  console.error("[MS-produce] recording restart failed", {
-                    roomId,
-                    recordingId: activeRecordingId,
-                    error: err?.message || String(err),
-                  });
+                  error: err?.message || String(err),
                 });
-              }
+              });
             }
           } catch (err) {
             console.error("MS-produce error:", err);
