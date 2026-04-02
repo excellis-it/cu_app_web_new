@@ -48,6 +48,7 @@ type RecordingSession = {
   latestEncodedTimeSec: number;
   commonStartMicros: number;
   startedAtMs: number;
+  topologySignature: string;
   segments: string[];
 };
 
@@ -476,6 +477,16 @@ export function isRecordingActive(recordingId: string) {
  */
 const pendingRestarts: Map<string, NodeJS.Timeout> = new Map();
 const RESTART_DEBOUNCE_MS = 2000;
+const MIN_RESTART_SESSION_AGE_MS = 6000;
+
+function buildTopologySignature(
+  producers: Array<{ producerId: string; kind: types.MediaKind }>,
+): string {
+  return producers
+    .map((p) => `${p.kind}:${p.producerId}`)
+    .sort()
+    .join("|");
+}
 
 export function scheduleRecordingRestart(roomId: string, recordingId: string) {
   const key = `${roomId}:${recordingId}`;
@@ -484,9 +495,39 @@ export function scheduleRecordingRestart(roomId: string, recordingId: string) {
 
   const timer = setTimeout(() => {
     pendingRestarts.delete(key);
-    if (!activeSessions.has(recordingId)) return;
+    const session = activeSessions.get(recordingId);
+    if (!session) return;
+
+    const sessionAgeMs = Date.now() - session.startedAtMs;
+    if (sessionAgeMs < MIN_RESTART_SESSION_AGE_MS) {
+      const deferMs = Math.max(500, MIN_RESTART_SESSION_AGE_MS - sessionAgeMs);
+      const deferred = setTimeout(() => {
+        scheduleRecordingRestart(roomId, recordingId);
+      }, deferMs);
+      pendingRestarts.set(key, deferred);
+      console.log("[recording:restart] deferring restart for young session", {
+        roomId,
+        recordingId,
+        sessionAgeMs,
+        deferMs,
+      });
+      return;
+    }
 
     const producersNow = getRoomProducers(roomId);
+    const currentTopologySignature = buildTopologySignature(
+      producersNow.map((p) => ({ producerId: p.producerId, kind: p.kind })),
+    );
+
+    if (currentTopologySignature === session.topologySignature) {
+      console.log("[recording:restart] skip restart (topology unchanged)", {
+        roomId,
+        recordingId,
+        topologySignature: currentTopologySignature,
+      });
+      return;
+    }
+
     const isAudioOnly = !producersNow.some((p) => p.kind === "video");
 
     console.log(`[recording:restart] debounced restart for room=${roomId}, recording=${recordingId}`);
@@ -670,6 +711,9 @@ export async function startServerRecording(params: {
     })),
     ...selectedAudioProducers.map((p) => ({ producerId: p.producerId, kind: "audio" as const })),
   ];
+  const topologySignature = buildTopologySignature(
+    selectedStreams.map((s) => ({ producerId: s.producerId, kind: s.kind })),
+  );
 
   for (let i = 0; i < selectedStreams.length; i++) {
     const s = selectedStreams[i];
@@ -895,16 +939,21 @@ export async function startServerRecording(params: {
     latestEncodedTimeSec: 0,
     commonStartMicros, 
     startedAtMs: Date.now(),
+    topologySignature,
     segments: [...existingSegments, outputPath] 
   };
   activeSessions.set(recordingId, session);
   sessionRef = session;
 
   ffmpegProcess.once("close", (code) => {
-    if (activeSessions.has(recordingId)) {
-      const s = activeSessions.get(recordingId)!;
-      s.ffmpegExited = true; 
-      s.ffmpegExitCode = code;
+    if (sessionRef) {
+      sessionRef.ffmpegExited = true;
+      sessionRef.ffmpegExitCode = code;
+    }
+    const active = activeSessions.get(recordingId);
+    if (active && active !== sessionRef) {
+      active.ffmpegExited = true;
+      active.ffmpegExitCode = code;
     }
     console.log(`[recording:${recordingId}] ffmpeg process closed with code ${code}`);
   });
