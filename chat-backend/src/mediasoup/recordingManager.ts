@@ -16,6 +16,7 @@ import CallRecording from "../db/schemas/callrecording.schema";
 import ScreenRecording from "../db/schemas/screen-recording.schema";
 
 const ffmpegBinary = process.env.FFMPEG_PATH || "ffmpeg";
+const ffprobeBinary = ffmpegBinary.replace(/ffmpeg(\.exe)?$/, "ffprobe$1");
 
 type ServerStream = {
   producerId: string;
@@ -124,10 +125,49 @@ function isUsableRecordingFile(filePath: string): boolean {
   }
 }
 
-function findLatestUsableSegment(segments: string[]): string | null {
+async function getMediaDurationSeconds(filePath: string): Promise<number> {
+  return new Promise((resolve) => {
+    const proc = spawn(
+      ffprobeBinary,
+      [
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        path.resolve(filePath),
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+
+    let stdout = "";
+    proc.stdout.on("data", (chunk: any) => {
+      stdout += chunk.toString();
+    });
+    proc.on("error", () => resolve(0));
+    proc.on("close", (code: any) => {
+      if (code !== 0) {
+        resolve(0);
+        return;
+      }
+      const duration = Number.parseFloat(String(stdout).trim());
+      resolve(Number.isFinite(duration) && duration > 0 ? duration : 0);
+    });
+  });
+}
+
+async function isPlayableRecordingFile(filePath: string): Promise<boolean> {
+  if (!isUsableRecordingFile(filePath)) return false;
+  const duration = await getMediaDurationSeconds(filePath);
+  return duration > 0;
+}
+
+async function findLatestPlayableSegment(segments: string[]): Promise<string | null> {
   for (let i = segments.length - 1; i >= 0; i -= 1) {
     const segmentPath = segments[i];
-    if (isUsableRecordingFile(segmentPath)) return segmentPath;
+    // eslint-disable-next-line no-await-in-loop
+    if (await isPlayableRecordingFile(segmentPath)) return segmentPath;
   }
   return null;
 }
@@ -412,7 +452,7 @@ function buildFfmpegArgs(params: {
   for (let i = 0; i < audioInputIndices.length; i++) {
     const idx = audioInputIndices[i];
     filterParts.push(
-      `[${idx}:a]aresample=async=1000:min_hard_comp=0.100:first_pts=0,asetpts=N/SR/TB[anorm${i}]`,
+      `[${idx}:a]aresample=async=1000:min_hard_comp=0.100,asetpts=N/SR/TB[anorm${i}]`,
     );
   }
   if (audioInputIndices.length === 1) {
@@ -421,8 +461,8 @@ function buildFfmpegArgs(params: {
   } else {
     const normalizedAudioLabels = audioInputIndices.map((_, i) => `[anorm${i}]`).join("");
     // Keep audio timeline monotonic and resilient to late/jittery RTP.
-    // Per-stream aresample already handles async gap-filling and first_pts=0.
-    // A second aresample with first_pts=0 after amix can reset its internal
+    // Per-stream aresample already handles async gap-filling.
+    // A second aresample with forced first_pts after amix can reset its internal
     // timestamp origin when late RTP drops cause discontinuities, which cascades
     // into non-monotonous DTS in the MP4 muxer. Using only asetpts=N/SR/TB
     // after amix guarantees a strictly monotonic sample-counter timeline.
@@ -1048,8 +1088,26 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
       throw new Error(`No usable segment files found for recordingId=${recordingId}`);
     }
 
-    if (usableSegments.length === 1) {
-      const fallbackSegment = usableSegments[0];
+    const playableSegments: string[] = [];
+    for (const segmentPath of usableSegments) {
+      // eslint-disable-next-line no-await-in-loop
+      if (await isPlayableRecordingFile(segmentPath)) {
+        playableSegments.push(segmentPath);
+      }
+    }
+    if (playableSegments.length === 0) {
+      throw new Error(`No playable segment files found for recordingId=${recordingId}`);
+    }
+    if (playableSegments.length !== usableSegments.length) {
+      console.warn("[recording:server] excluding non-playable segments before merge", {
+        recordingId,
+        usableCount: usableSegments.length,
+        playableCount: playableSegments.length,
+      });
+    }
+
+    if (playableSegments.length === 1) {
+      const fallbackSegment = playableSegments[0];
       if (path.resolve(fallbackSegment) !== path.resolve(finalOutputPath)) {
         try {
           await fsp.copyFile(fallbackSegment, finalOutputPath);
@@ -1057,17 +1115,17 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
           // Best-effort copy; fallback to original segment path.
         }
       }
-      const resolvedFallbackPath = isUsableRecordingFile(finalOutputPath)
+      const resolvedFallbackPath = (await isPlayableRecordingFile(finalOutputPath))
         ? finalOutputPath
         : fallbackSegment;
       return { outputPath: resolvedFallbackPath };
     }
 
     const concatListPath = path.join(path.dirname(outputPath), "concat-list-server.txt");
-    const concatContent = usableSegments.map(s => `file '${path.resolve(s).replaceAll("\\", "/")}'`).join("\n");
+    const concatContent = playableSegments.map(s => `file '${path.resolve(s).replaceAll("\\", "/")}'`).join("\n");
     await fsp.writeFile(concatListPath, concatContent, "utf8");
     try {
-      console.log(`[recording:server] merging ${usableSegments.length} segments into ${finalOutputPath}`);
+      console.log(`[recording:server] merging ${playableSegments.length} segments into ${finalOutputPath}`);
       // Re-encode audio during merge: asetpts=N/SR/TB generates sequential timestamps
       // across the segment boundary, eliminating DTS jumps. Video is stream-copied (fast).
       const ffmpeg = spawn(ffmpegBinary, [
@@ -1098,7 +1156,7 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
           }
         });
       });
-      if (!isUsableRecordingFile(finalOutputPath)) {
+      if (!(await isPlayableRecordingFile(finalOutputPath))) {
         throw new Error(`Merged output missing or invalid: ${finalOutputPath}`);
       }
       return { outputPath: finalOutputPath };
@@ -1107,7 +1165,7 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
         error: err?.message || String(err),
         recordingId,
       });
-      const fallbackSegment = findLatestUsableSegment(usableSegments);
+      const fallbackSegment = await findLatestPlayableSegment(playableSegments);
       if (!fallbackSegment) {
         throw new Error(`Merge failed and no fallback segment available for recordingId=${recordingId}`);
       }
@@ -1118,7 +1176,7 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
           // Best-effort copy; fallback to original segment path.
         }
       }
-      const resolvedFallbackPath = isUsableRecordingFile(finalOutputPath)
+      const resolvedFallbackPath = (await isPlayableRecordingFile(finalOutputPath))
         ? finalOutputPath
         : fallbackSegment;
       return { outputPath: resolvedFallbackPath };
@@ -1135,9 +1193,13 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
       }
     });
   }
-  if (!isUsableRecordingFile(finalOutputPath)) {
-    if (isUsableRecordingFile(outputPath)) {
+  if (!(await isPlayableRecordingFile(finalOutputPath))) {
+    if (await isPlayableRecordingFile(outputPath)) {
       return { outputPath };
+    }
+    const fallbackSegment = await findLatestPlayableSegment(session.segments);
+    if (fallbackSegment) {
+      return { outputPath: fallbackSegment };
     }
     throw new Error(`Recording output file missing after stop for recordingId=${recordingId}`);
   }

@@ -286,6 +286,53 @@ function findServerRecordingFallback(baseDir: string): string | null {
   return null;
 }
 
+function listServerRecordingCandidates(baseDir: string): string[] {
+  const candidates: string[] = [];
+  const mergedPath = path.join(baseDir, "raw.mp4");
+  if (fs.existsSync(mergedPath)) candidates.push(mergedPath);
+
+  try {
+    const rawSegments = fs
+      .readdirSync(baseDir)
+      .filter((name: string) => /^raw_\d+\.mp4$/i.test(name))
+      .sort((a: string, b: string) => {
+        const aIdx = Number((a.match(/\d+/) || ["0"])[0]);
+        const bIdx = Number((b.match(/\d+/) || ["0"])[0]);
+        return bIdx - aIdx;
+      });
+
+    for (const segment of rawSegments) {
+      candidates.push(path.join(baseDir, segment));
+    }
+  } catch {
+    // Ignore directory listing errors.
+  }
+
+  return Array.from(new Set(candidates));
+}
+
+async function findPlayableServerRecordingFallback(
+  baseDir: string,
+  excludedPaths: string[] = [],
+): Promise<string | null> {
+  const excluded = new Set(excludedPaths.map((p) => path.resolve(p)));
+  const candidates = listServerRecordingCandidates(baseDir);
+
+  for (const candidate of candidates) {
+    if (excluded.has(path.resolve(candidate))) continue;
+    if (!isUsableRecordingFile(candidate)) continue;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const duration = await getMediaDuration(candidate);
+      if (duration > 0) return candidate;
+    } catch {
+      // Try next candidate.
+    }
+  }
+
+  return null;
+}
+
 /**
  * Helper: upload a file to S3 or local, returning the playback URL.
  */
@@ -410,12 +457,6 @@ export async function processScreenRecordingInBackground(recordingId: string) {
       sourceFilePath = rawFilePath;
     }
 
-    if (rawFilePathFromDb !== rawFilePath) {
-      await ScreenRecording.findByIdAndUpdate(id, {
-        $set: { rawFilePath },
-      });
-    }
-
     const rawSizeBytes = fs.statSync(sourceFilePath).size;
     if (rawSizeBytes < minScreenRecordingOutputBytes) {
       throw new Error(
@@ -424,9 +465,47 @@ export async function processScreenRecordingInBackground(recordingId: string) {
     }
 
     // Probe duration from the source file and require a valid media timeline.
-    const durationSec = await getMediaDuration(sourceFilePath);
+    let durationSec = 0;
+    try {
+      durationSec = await getMediaDuration(sourceFilePath);
+    } catch (probeError: any) {
+      const fallbackPath = await findPlayableServerRecordingFallback(baseDir, [sourceFilePath]);
+      if (!fallbackPath) {
+        throw probeError;
+      }
+      console.warn("[screen-recording:process] ffprobe failed for primary source, using playable fallback", {
+        recordingId: id,
+        sourceFilePath,
+        fallbackPath,
+        error: probeError?.message || String(probeError),
+      });
+      sourceFilePath = fallbackPath;
+      rawFilePath = fallbackPath;
+      durationSec = await getMediaDuration(sourceFilePath);
+    }
+
     if (durationSec <= 0) {
-      throw new Error("Screen recording output duration is invalid (ffprobe <= 0). Aborting publish.");
+      const fallbackPath = await findPlayableServerRecordingFallback(baseDir, [sourceFilePath]);
+      if (!fallbackPath) {
+        throw new Error("Screen recording output duration is invalid (ffprobe <= 0). Aborting publish.");
+      }
+      console.warn("[screen-recording:process] duration invalid for primary source, using playable fallback", {
+        recordingId: id,
+        sourceFilePath,
+        fallbackPath,
+      });
+      sourceFilePath = fallbackPath;
+      rawFilePath = fallbackPath;
+      durationSec = await getMediaDuration(sourceFilePath);
+      if (durationSec <= 0) {
+        throw new Error("Screen recording output duration is invalid (ffprobe <= 0) after fallback.");
+      }
+    }
+
+    if (rawFilePathFromDb !== rawFilePath) {
+      await ScreenRecording.findByIdAndUpdate(id, {
+        $set: { rawFilePath },
+      });
     }
 
     const isMp4 = sourceFilePath.endsWith(".mp4");
