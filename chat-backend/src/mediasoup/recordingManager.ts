@@ -246,11 +246,21 @@ function waitForProcessClose(
   });
 }
 
+function safeEndFfmpegStdin(ffmpegProcess: ReturnType<typeof spawn>) {
+  try {
+    ffmpegProcess.stdin?.end();
+  } catch {
+    // ignore
+  }
+}
+
 async function shutdownFfmpegProcess(params: {
   session: RecordingSession;
   ffmpegProcess: ReturnType<typeof spawn>;
   recordingId: string;
   context: "stop" | "restart";
+  /** Extra time for graceful quit when encode wall-clock is behind realtime (e.g. RTP backlog). */
+  shutdownTimeoutMs?: number;
 }): Promise<void> {
   const {
     session,
@@ -259,17 +269,26 @@ async function shutdownFfmpegProcess(params: {
     context,
   } = params;
 
+  const quitTimeoutMs = Math.max(
+    recordingStopTimeoutMs,
+    params.shutdownTimeoutMs ?? recordingStopTimeoutMs,
+  );
+
   if (session.ffmpegExited || ffmpegProcess.exitCode !== null) return;
 
   try {
+    // Send interactive quit; avoid calling stdin.end() until after quit or kill so an
+    // early EOF does not race the demuxer on some FFmpeg builds.
     ffmpegProcess.stdin?.write("q\n");
-    ffmpegProcess.stdin?.end();
   } catch {
     // ignore
   }
 
-  let closed = await waitForProcessClose(ffmpegProcess, recordingStopTimeoutMs);
-  if (closed || session.ffmpegExited) return;
+  let closed = await waitForProcessClose(ffmpegProcess, quitTimeoutMs);
+  if (closed || session.ffmpegExited) {
+    safeEndFfmpegStdin(ffmpegProcess);
+    return;
+  }
 
   console.warn(`[recording:${recordingId}] ffmpeg did not exit after q, sending SIGINT`, {
     context,
@@ -281,7 +300,10 @@ async function shutdownFfmpegProcess(params: {
   }
 
   closed = await waitForProcessClose(ffmpegProcess, recordingSigintTimeoutMs);
-  if (closed || session.ffmpegExited) return;
+  if (closed || session.ffmpegExited) {
+    safeEndFfmpegStdin(ffmpegProcess);
+    return;
+  }
 
   console.warn(`[recording:${recordingId}] ffmpeg still running after SIGINT, sending SIGTERM`, {
     context,
@@ -293,7 +315,10 @@ async function shutdownFfmpegProcess(params: {
   }
 
   closed = await waitForProcessClose(ffmpegProcess, recordingSigtermTimeoutMs);
-  if (closed || session.ffmpegExited) return;
+  if (closed || session.ffmpegExited) {
+    safeEndFfmpegStdin(ffmpegProcess);
+    return;
+  }
 
   console.warn(`[recording:${recordingId}] ffmpeg still running after SIGTERM, sending SIGKILL`, {
     context,
@@ -305,6 +330,7 @@ async function shutdownFfmpegProcess(params: {
   }
 
   await waitForProcessClose(ffmpegProcess, 2000);
+  safeEndFfmpegStdin(ffmpegProcess);
 }
 
 async function repairNonPlayableSegment(segmentPath: string, recordingId: string): Promise<string | null> {
@@ -734,7 +760,9 @@ function buildFfmpegArgs(params: {
       "-threads", "0",             // auto-detect: use all available CPU cores
       "-c:a", "aac",
       "-b:a", "128k",
-      "-movflags", "+faststart",
+      // Do NOT use +faststart on live RTP capture: FFmpeg finishes with a second-pass moov
+      // relocation; under load SIGINT hits during that step and leaves a file with no moov.
+      // Apply +faststart only in merge / repair / upload pipelines on complete files.
       "-muxpreload", "0",
       "-muxdelay", "0",
     );
@@ -743,7 +771,6 @@ function buildFfmpegArgs(params: {
       "-map", "[aout]",
       "-c:a", "aac",
       "-b:a", "128k",
-      "-movflags", "+faststart",
     );
   }
 
@@ -1291,11 +1318,19 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
     });
   }
 
+  // If the muxer is far behind wall clock, allow extra time for 'q' to flush (avoids SIGINT
+  // while finalizing MP4).
+  const shutdownTimeoutMs = Math.min(
+    120_000,
+    Math.max(recordingStopTimeoutMs, Math.ceil(lagSec * 1000) + 20_000),
+  );
+
   await shutdownFfmpegProcess({
     session,
     ffmpegProcess,
     recordingId,
     context: "stop",
+    shutdownTimeoutMs,
   });
 
   for (const st of streams) {
