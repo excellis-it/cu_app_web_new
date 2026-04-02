@@ -815,7 +815,9 @@ function buildFfmpegArgs(params: {
 
   const args: string[] = [
     "-fflags", "+genpts+igndts+discardcorrupt",
-    "-max_interleave_delta", "1000000",
+    // Do NOT set max_interleave_delta — the default (unlimited) prevents the
+    // muxer from blocking one stream while waiting for the other when audio/
+    // video DTS drift, which otherwise cascades into a full pipeline freeze.
   ];
   if (useLavfiCanvas) {
     args.push(
@@ -830,6 +832,9 @@ function buildFfmpegArgs(params: {
     args.push(
       "-thread_queue_size", String(recordingInputThreadQueueSize),
       "-fflags", "+genpts+igndts+discardcorrupt",
+      // Wall-clock PTS so every SDP input shares the same time base —
+      // eliminates cross-input RTP timestamp desync that blocks the demuxer.
+      "-use_wallclock_as_timestamps", "1",
       "-analyzeduration", "300000",
       "-probesize", "300000",
       "-max_delay", String(recordingInputMaxDelayUs),
