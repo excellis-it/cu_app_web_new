@@ -2162,6 +2162,13 @@ export default function initializeSocket() {
               producerId: producer.id,
               userId,
               kind,
+              ...(kind === "video" && appData
+                ? {
+                    width: appData.width,
+                    height: appData.height,
+                    rotation: appData.rotation,
+                  }
+                : {}),
             });
 
             cb && cb({ ok: true, id: producer.id });
