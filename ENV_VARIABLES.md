@@ -5,6 +5,7 @@ This document lists all environment variables required for the ExTalk project.
 ## 📋 Overview
 
 The project consists of three main services:
+
 1. **chat-backend** - Express/TypeScript backend with Socket.IO
 2. **chat-frontend** - Next.js frontend application
 3. **chat-admin** - Next.js admin panel
@@ -88,6 +89,10 @@ TURN_CREDENTIAL=your_turn_credential
 # Keep default false to avoid accidental 180° flips from unstable mobile metadata.
 # Set true only if your deployment consistently requires half-turn correction.
 RECORDING_APPLY_180_ROTATION=false
+# Server-side screen recording stability:
+# Keep default false to avoid FFmpeg teardown/rebuild when new producers join mid-recording.
+# Set true only if you must include late-joiners immediately in the same screen-recording segment.
+RECORDING_SCREEN_RESTART_ON_PRODUCER_JOIN=false
 ```
 
 ---
@@ -163,18 +168,21 @@ The `docker-compose.yaml` file automatically sets some environment variables, bu
 ### Current Docker Compose Configuration:
 
 **chat-backend:**
+
 - `NODE_ENV=development` ✅ (set in docker-compose)
 - `PORT=9000` ✅ (set in docker-compose)
 - `HOST=0.0.0.0` ✅ (set in docker-compose)
 - Other variables should be in `./chat-backend/.env` file
 
 **chat-frontend:**
+
 - `NODE_ENV=development` ✅ (set in docker-compose)
 - `NEXT_PUBLIC_PROXY=http://chat-backend:9000` ✅ (set in docker-compose)
 - `NEXT_PUBLIC_SOCKET_URL=http://chat-backend:9000` ✅ (set in docker-compose)
 - Other variables should be in `./chat-frontend/.env` file
 
 **chat-admin:**
+
 - `NODE_ENV=development` ✅ (set in docker-compose)
 - `NEXTAUTH_URL=http://localhost:5001` ✅ (set in docker-compose)
 - `NEXT_PUBLIC_PROXY=http://chat-backend:9000` ✅ (set in docker-compose)
@@ -185,11 +193,13 @@ The `docker-compose.yaml` file automatically sets some environment variables, bu
 ## ✅ Environment Variable Status
 
 ### Currently Configured in Docker:
+
 - ✅ `NEXT_PUBLIC_PROXY` - Set in docker-compose.yaml
 - ✅ `NEXT_PUBLIC_SOCKET_URL` - Set in docker-compose.yaml (recently added)
 - ✅ `NEXTAUTH_URL` - Set in docker-compose.yaml (for admin)
 
 ### Required but Not in Docker (should be in .env files):
+
 - ⚠️ `MONGO_URI` - Required for backend
 - ⚠️ `JWT_SECRET` / `JWT_SECRET_KEY` - Required for authentication
 - ⚠️ Email credentials - Required for sending emails

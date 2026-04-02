@@ -121,6 +121,13 @@ const recordingInputRwTimeoutUs = Math.max(
 /** When true, screen recordings ingest only one video (primary user's largest track) + all audio. When false (default), all cameras are composited (grid). Set RECORDING_SCREEN_PRIMARY_VIDEO_ONLY=true if you need the lighter single-track mode for large rooms. */
 const screenRecordingPrimaryVideoOnly =
   String(process.env.RECORDING_SCREEN_PRIMARY_VIDEO_ONLY ?? "false").toLowerCase() === "true";
+/**
+ * Restart-on-join is expensive for screen recordings because FFmpeg must teardown
+ * and rebuild while RTP keeps flowing. Keep it disabled by default for stability.
+ * Enable only when you explicitly need late-joiners included mid-recording.
+ */
+const screenRecordingRestartOnProducerJoin =
+  String(process.env.RECORDING_SCREEN_RESTART_ON_PRODUCER_JOIN ?? "false").toLowerCase() === "true";
 /** Screen recordings default to a lighter canvas than call recordings to keep VP8 decode + x264 ahead of realtime when multiple audio tracks are mixed. Override via RECORDING_CANVAS_* if needed. */
 const screenRecordingCanvasWidth = Math.max(
   320,
@@ -868,11 +875,11 @@ function buildFfmpegArgs(params: {
   }
 
   // Per-input: normalize format + async resample after PTS-STARTPTS.
-  // Final stage uses asetpts=N/SR/TB (sample-count PTS) so audio DTS is
-  // always monotonic — PTS-STARTPTS can reset when a late-joining stream
-  // causes amix/aresample to emit a discontinuity.
+  // Do NOT force first_pts=0 on each branch; when late streams join, that can
+  // rewind branch timelines and create Non-monotonous DTS storms at the muxer.
+  // Final stage keeps sample-count timestamps via asetpts=N/SR/TB.
   const aformat = "aformat=sample_rates=48000:sample_fmts=fltp:channel_layouts=stereo";
-  const branchResample = "aresample=async=1000:min_hard_comp=0.100:first_pts=0";
+  const branchResample = "aresample=async=1000:min_hard_comp=0.100";
   if (audioInputIndicesFfmpeg.length === 1) {
     const idx = audioInputIndicesFfmpeg[0];
     filterParts.push(
@@ -887,7 +894,7 @@ function buildFfmpegArgs(params: {
     }
     const mixInputs = audioInputIndicesFfmpeg.map((_, i) => `[a_r${i}]`).join("");
     filterParts.push(
-      `${mixInputs}amix=inputs=${audioInputIndicesFfmpeg.length}:duration=longest:dropout_transition=3:normalize=0[a_mix];[a_mix]aresample=async=1000:min_hard_comp=0.150:first_pts=0,${aformat},asetpts=N/SR/TB[aout]`,
+      `${mixInputs}amix=inputs=${audioInputIndicesFfmpeg.length}:duration=longest:dropout_transition=3:normalize=0[a_mix];[a_mix]aresample=async=1000:min_hard_comp=0.150,${aformat},asetpts=N/SR/TB[aout]`,
     );
   }
 
@@ -1036,6 +1043,14 @@ export function scheduleRecordingRestart(roomId: string, recordingId: string) {
     const session = activeSessions.get(recordingId);
     if (!session) return;
 
+    if (session.recordingScope === "screen" && !screenRecordingRestartOnProducerJoin) {
+      console.log("[recording:restart] skip for screen scope (restart-on-producer-join disabled)", {
+        roomId,
+        recordingId,
+      });
+      return;
+    }
+
     const sessionAgeMs = Date.now() - session.startedAtMs;
     if (sessionAgeMs < MIN_RESTART_SESSION_AGE_MS) {
       const deferMs = Math.max(500, MIN_RESTART_SESSION_AGE_MS - sessionAgeMs);
@@ -1053,9 +1068,18 @@ export function scheduleRecordingRestart(roomId: string, recordingId: string) {
     }
 
     const producersNow = getRoomProducers(roomId);
-    const currentTopologySignature = buildTopologySignature(
-      producersNow.map((p) => ({ producerId: p.producerId, kind: p.kind })),
-    );
+    const isAudioOnly = !producersNow.some((p) => p.kind === "video");
+    const audioNow = producersNow.filter((p) => p.kind === "audio");
+    const videoNow = producersNow.filter((p) => p.kind === "video");
+    const selectedVideoNow = selectRecordingVideoProducers(videoNow, {
+      isAudioOnly,
+      recordingScope: session.recordingScope,
+      primaryUserId: session.primaryUserId,
+    });
+    const currentTopologySignature = buildTopologySignature([
+      ...selectedVideoNow.map((p) => ({ producerId: p.producerId, kind: p.kind })),
+      ...audioNow.map((p) => ({ producerId: p.producerId, kind: p.kind })),
+    ]);
 
     if (currentTopologySignature === session.topologySignature) {
       console.log("[recording:restart] skip restart (topology unchanged)", {
@@ -1065,8 +1089,6 @@ export function scheduleRecordingRestart(roomId: string, recordingId: string) {
       });
       return;
     }
-
-    const isAudioOnly = !producersNow.some((p) => p.kind === "video");
 
     console.log(`[recording:restart] debounced restart for room=${roomId}, recording=${recordingId}`);
     restartServerRecording({ roomId, recordingId, isAudioOnly }).catch((err) => {
