@@ -57,6 +57,22 @@ const DEFAULT_RTP_MAX_PORT = 59999;
 const rtpBasePort = Number(process.env.RECORDING_RTP_BASE_PORT) || DEFAULT_RTP_BASE_PORT;
 const rtpMaxPort = Number(process.env.RECORDING_RTP_MAX_PORT) || DEFAULT_RTP_MAX_PORT;
 const applyHalfTurnRotation = String(process.env.RECORDING_APPLY_180_ROTATION || "").toLowerCase() === "true";
+const recordingOutputFps = Math.max(
+  8,
+  Math.min(30, Number(process.env.RECORDING_OUTPUT_FPS) || 12),
+);
+const recordingCanvasWidth = Math.max(
+  320,
+  Number(process.env.RECORDING_CANVAS_WIDTH) || 960,
+) & ~1;
+const recordingCanvasHeight = Math.max(
+  240,
+  Number(process.env.RECORDING_CANVAS_HEIGHT) || 540,
+) & ~1;
+const recordingStopTimeoutMs = Math.max(
+  3000,
+  Number(process.env.RECORDING_FFMPEG_STOP_TIMEOUT_MS) || 10000,
+);
 let nextPort = rtpBasePort;
 const usedPorts: Set<number> = new Set();
 
@@ -155,29 +171,34 @@ function hasVideoOrientationExtmap(consumer: types.Consumer): boolean {
 }
 
 /**
- * Compute the optimal canvas size based on the actual participant video
- * dimensions instead of using a fixed 640×480 for every call.
+ * Compute a reliability-first canvas size.
  *
- *  • 1 participant  → match their native aspect ratio (capped to 1280×720)
- *  • N participants → grid-aware sizing that respects the dominant orientation
- */
-/**
- * Fixed 1280×720 canvas that fills the entire frame like a real screen.
+ * Lowering total pixel count for larger rooms keeps encode speed >= realtime,
+ * which prevents packet-backlog drops and truncated output duration.
  *
- *  - 1 user  → full 1280×720
- *  - 2 users → two 640×720 cells side-by-side
- *  - 3 users → 2×2 grid (640×360 each, one cell blank)
- *  - 4 users → 2×2 grid (640×360 each)
- *  - etc.
- *
- * The grid cell sizes are computed in buildVideoGridFilter by dividing
- * the canvas by cols/rows, so we just return the fixed canvas here.
+ * Values can be tuned via env:
+ * - RECORDING_CANVAS_WIDTH
+ * - RECORDING_CANVAS_HEIGHT
  */
 function computeCanvasSize(
   _videoDimensions: Map<number, { width: number; height: number }>,
-  _videoCount: number,
+  videoCount: number,
 ): { width: number; height: number } {
-  return { width: 1280, height: 720 };
+  if (videoCount >= 5) {
+    return {
+      width: Math.min(recordingCanvasWidth, 640),
+      height: Math.min(recordingCanvasHeight, 360),
+    };
+  }
+
+  if (videoCount >= 3) {
+    return {
+      width: Math.min(recordingCanvasWidth, 854),
+      height: Math.min(recordingCanvasHeight, 480),
+    };
+  }
+
+  return { width: recordingCanvasWidth, height: recordingCanvasHeight };
 }
 
 function buildVideoGridFilter(params: {
@@ -239,7 +260,9 @@ function buildVideoGridFilter(params: {
     //    dimensions and rotation=0, force portrait transpose.
     // 3) Keep legacy portrait fallback for streams that do not expose
     //    video-orientation extmap metadata.
-    const chain: string[] = [`[${idx}:v]setpts=PTS-STARTPTS,fps=15`];
+    const chain: string[] = [
+      `[${idx}:v]setpts=PTS-STARTPTS,fps=${recordingOutputFps}`,
+    ];
     if (streamHasVideoOrientationExtmap && hasExplicitRotation) {
       console.log("[recording:orientation] video-orientation extmap present; still honoring explicit appData.rotation", {
         streamIndex: i,
@@ -326,23 +349,22 @@ function buildFfmpegArgs(params: {
   const audioInputIndices = originalAudioIndices.map(i => i + 1);
 
   const args: string[] = [
-    "-fflags", "+genpts+discardcorrupt+nobuffer+igndts",
-    "-analyzeduration", "1000000", // 1s for the background screen
-    "-probesize", "1000000",
-    "-flags", "low_delay",
-    "-f", "lavfi", "-i", `color=c=black:s=${targetWidth}x${targetHeight}:r=15`,
+    "-fflags", "+genpts+discardcorrupt",
+    "-max_interleave_delta", "0",
+    "-f", "lavfi", "-i", `color=c=black:s=${targetWidth}x${targetHeight}:r=${recordingOutputFps}`,
   ];
 
   for (const sdpPath of sdpPathsInOrder) {
     args.push(
-      "-thread_queue_size", "8192",
-      "-analyzeduration", "20000",  // 20ms - minimal probing since codecs are pre-declared
-      "-probesize", "32000",        // 32KB - just enough for a few RTP packets
-      "-fflags", "+discardcorrupt", // drop corrupt frames instead of showing pixelated garbage
-      "-max_delay", "2000000",      // 2s — tolerate jitter / late packets before dropping
-      "-reorder_queue_size", "256", // larger reorder buffer to reduce "missed N packets" warnings
-      "-buffer_size", "20M",        // double buffer to absorb RTP bursts
-      "-rw_timeout", "5000000",     // 5s - allow time for late-starting streams
+      "-thread_queue_size", "32768",
+      "-use_wallclock_as_timestamps", "1",
+      "-fflags", "+genpts+discardcorrupt",
+      "-analyzeduration", "1500000",
+      "-probesize", "1500000",
+      "-max_delay", "10000000",
+      "-reorder_queue_size", "2048",
+      "-buffer_size", "64M",
+      "-rw_timeout", "15000000",
       "-protocol_whitelist", "file,udp,rtp,rtcp",
     );
 
@@ -370,15 +392,16 @@ function buildFfmpegArgs(params: {
 
   for (let i = 0; i < audioInputIndices.length; i++) {
     const idx = audioInputIndices[i];
-    filterParts.push(`[${idx}:a]asetpts=PTS-STARTPTS,aresample=async=1000:first_pts=0[anorm${i}]`);
+    filterParts.push(
+      `[${idx}:a]aresample=async=1:min_hard_comp=0.100:first_pts=0,asetpts=PTS-STARTPTS[anorm${i}]`,
+    );
   }
   const normalizedAudioLabels = audioInputIndices.map((_, i) => `[anorm${i}]`).join("");
-  // asetpts=N/SR/TB generates purely sequential timestamps (sample 0, 1, 2...)
-  // regardless of what amix outputs. This prevents DTS resets when late-starting
-  // audio streams join mid-recording. Works correctly now that use_wallclock_as_timestamps
-  // is removed and RTP timestamps are consistent.
+  // Keep audio timeline monotonic and resilient to late/jittery RTP.
+  // Using aresample async here avoids hard DTS resets seen with sample-counter
+  // rewrites under packet jitter and mixed-client start offsets.
   filterParts.push(
-    `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=0,asetpts=N/SR/TB[aout]`
+    `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=2:normalize=0,aresample=async=1:min_hard_comp=0.100:first_pts=0[aout]`
   );
 
   args.push("-filter_complex", filterParts.join(";"));
@@ -390,15 +413,17 @@ function buildFfmpegArgs(params: {
       "-c:v", "libx264",
       "-preset", "ultrafast",
       "-tune", "zerolatency",
-      "-crf", "28",
+      "-crf", "30",
       "-pix_fmt", "yuv420p",
-      "-g", "30",                  // keyframe every 2s at 15fps
+      "-r", String(recordingOutputFps),
+      "-vsync", "cfr",
+      "-g", String(recordingOutputFps * 2),
       "-bf", "0",                  // no B-frames
       "-x264-params", "rc-lookahead=0:ref=1:me=dia:subme=0:trellis=0:weightp=0:scenecut=0",
       "-threads", "0",             // auto-detect: use all available CPU cores
       "-c:a", "aac",
       "-b:a", "128k",
-      "-movflags", "+frag_keyframe+empty_moov+default_base_moof", // fragmented MP4 for crash resilience
+      "-movflags", "+faststart",
     );
   } else {
     args.push(
@@ -408,7 +433,7 @@ function buildFfmpegArgs(params: {
     );
   }
 
-  args.push("-max_muxing_queue_size", "4096", "-f", "mp4", "-y", outputPath);
+  args.push("-max_muxing_queue_size", "8192", "-f", "mp4", "-y", outputPath);
   return args;
 }
 
@@ -682,6 +707,15 @@ export async function startServerRecording(params: {
     videoDimensions,
   });
 
+  console.log("[recording:profile]", {
+    recordingId,
+    targetWidth: computeCanvasSize(videoDimensions, videoInputIndices.length).width,
+    targetHeight: computeCanvasSize(videoDimensions, videoInputIndices.length).height,
+    fps: recordingOutputFps,
+    videoInputs: videoInputIndices.length,
+    audioInputs: audioInputIndices.length,
+  });
+
   const ffmpegStderrPrefix = `[recording:${recordingId}] ffmpeg`;
   const ffmpegProcess = spawn(ffmpegBinary, args, { stdio: ["pipe", "pipe", "pipe"] });
 
@@ -791,7 +825,7 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
   if (keyframeTimer) clearInterval(keyframeTimer);
   
   // Wait for pending buffers
-  await new Promise((r) => setTimeout(r, 1000));
+  await new Promise((r) => setTimeout(r, 1500));
 
   if (!session.ffmpegExited) {
     try { 
@@ -807,7 +841,7 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
           ffmpegProcess.kill("SIGKILL");
         }
         resolve(null);
-      }, 3000);
+      }, recordingStopTimeoutMs);
     });
   }
 
