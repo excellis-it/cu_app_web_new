@@ -39,6 +39,8 @@ import {
   getActiveRecordingForRoom,
   scheduleRecordingRestart,
   notifyRecordingStopPending,
+  notifyRoomRecordingStopPending,
+  clearRoomRecordingStopPending,
 } from "../mediasoup/recordingManager";
 import { processRecordingInBackground } from "../helpers/recordingProcessor";
 import { processScreenRecordingInBackground } from "../helpers/screenRecordingProcessor";
@@ -88,6 +90,7 @@ async function autoStopRecordingsForRoom(roomId: string, io: Server) {
     }).lean() as any;
 
     if (activeCallRec?._id) {
+      notifyRoomRecordingStopPending(roomId);
       const recordingIdStr = activeCallRec._id.toString();
       const createdAt = activeCallRec.createdAt ? new Date(activeCallRec.createdAt) : null;
       const durationSec = createdAt
@@ -147,6 +150,7 @@ async function autoStopRecordingsForRoom(roomId: string, io: Server) {
     }).lean() as any;
 
     if (activeScreenRec?._id) {
+      notifyRoomRecordingStopPending(roomId);
       const recordingId = activeScreenRec._id.toString();
       const createdAt = activeScreenRec.createdAt ? new Date(activeScreenRec.createdAt) : null;
       const durationSec = createdAt
@@ -1356,6 +1360,8 @@ export default function initializeSocket() {
         return;
       }
 
+      notifyRoomRecordingStopPending(roomId);
+
       try {
         console.log("[BE-stop-recording] received", {
           roomId,
@@ -1371,6 +1377,7 @@ export default function initializeSocket() {
           ),
         );
         if (!isAdmin) {
+          clearRoomRecordingStopPending(roomId);
           console.warn("[BE-stop-recording] not admin", {
             roomId,
             userId: userId?.toString?.() || userId,
@@ -1390,6 +1397,7 @@ export default function initializeSocket() {
         ).lean();
 
         if (!updatedRecording?._id) {
+          clearRoomRecordingStopPending(roomId);
           console.warn("[BE-stop-recording] no active recording to update", {
             roomId,
             recordingId: recordingId?.toString?.() || recordingId,
@@ -1446,6 +1454,8 @@ export default function initializeSocket() {
               message: e?.message || "Failed to stop server-side recording.",
             });
             return;
+          } finally {
+            clearRoomRecordingStopPending(roomId);
           }
 
           await CallRecording.findByIdAndUpdate(recordingIdStr, {
@@ -1483,6 +1493,7 @@ export default function initializeSocket() {
           });
         })();
       } catch (error: any) {
+        clearRoomRecordingStopPending(roomId);
         console.error("BE-stop-recording error:", error);
         socket.emit("FE-recording-error", {
           roomId,
@@ -1608,10 +1619,13 @@ export default function initializeSocket() {
         return;
       }
 
+      notifyRoomRecordingStopPending(roomId);
+
       try {
         // Role check
         const userDoc: any = await USERS.findById(userId, { userType: 1 }).lean();
         if (!userDoc || (userDoc.userType !== "SuperAdmin" && userDoc.userType !== "admin")) {
+          clearRoomRecordingStopPending(roomId);
           socket.emit("FE-screen-recording-error", {
             roomId,
             message: "Only SuperAdmin and Admin can stop screen recording.",
@@ -1627,6 +1641,7 @@ export default function initializeSocket() {
         );
 
         if (!recording?._id) {
+          clearRoomRecordingStopPending(roomId);
           socket.emit("FE-screen-recording-error", {
             roomId,
             message: "No active screen recording found to stop.",
@@ -1679,6 +1694,8 @@ export default function initializeSocket() {
               message: e?.message || "Failed to stop server-side recording.",
             });
             return;
+          } finally {
+            clearRoomRecordingStopPending(roomId);
           }
 
           // Save the output path
@@ -1759,6 +1776,7 @@ export default function initializeSocket() {
           });
         })();
       } catch (error: any) {
+        clearRoomRecordingStopPending(roomId);
         console.error("BE-stop-screen-recording error:", error);
         socket.emit("FE-screen-recording-error", {
           roomId,

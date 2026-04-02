@@ -59,6 +59,9 @@ const restartLocks: Set<string> = new Set();
 /** Stop handler set this so an in-flight recording restart yields before killing FFmpeg. */
 const recordingStopClaimed: Set<string> = new Set();
 
+/** Set synchronously when stop begins (before DB); blocks restart for the whole room. */
+const roomsWithPendingRecordingStop: Set<string> = new Set();
+
 /** Only one graceful FFmpeg shutdown per recordingId at a time (restart + stop race). */
 const inflightFfmpegShutdown: Map<string, Promise<void>> = new Map();
 
@@ -82,6 +85,15 @@ const recordingCanvasHeight = Math.max(
 const recordingStopTimeoutMs = Math.max(
   3000,
   Number(process.env.RECORDING_FFMPEG_STOP_TIMEOUT_MS) || 20000,
+);
+/** Floor for graceful `q` when the muxer lags realtime (encoder backlog). Default 90s. */
+const recordingShutdownMinMs = Math.max(
+  45_000,
+  Number(process.env.RECORDING_FFMPEG_MIN_SHUTDOWN_MS) || 90_000,
+);
+const recordingShutdownMaxMs = Math.max(
+  recordingShutdownMinMs,
+  Number(process.env.RECORDING_FFMPEG_MAX_SHUTDOWN_MS) || 180_000,
 );
 const recordingInputThreadQueueSize = Math.max(
   1024,
@@ -255,9 +267,10 @@ function waitForProcessClose(
 function computeShutdownTimeoutMsFromSession(session: RecordingSession): number {
   const wallElapsedSec = Math.max(0, (Date.now() - session.startedAtMs) / 1000);
   const lagSec = Math.max(0, wallElapsedSec - session.latestEncodedTimeSec);
+  const extraHeadroom = Math.ceil(lagSec * 1000) + 45_000;
   return Math.min(
-    120_000,
-    Math.max(recordingStopTimeoutMs, Math.ceil(lagSec * 1000) + 20_000),
+    recordingShutdownMaxMs,
+    Math.max(recordingStopTimeoutMs, recordingShutdownMinMs, extraHeadroom),
   );
 }
 
@@ -286,11 +299,17 @@ async function runExclusiveFfmpegShutdown(params: {
   const existing = inflightFfmpegShutdown.get(recordingId);
   if (existing) return existing;
 
+  const effectiveContext: "stop" | "restart" =
+    recordingStopClaimed.has(recordingId) ||
+    roomsWithPendingRecordingStop.has(params.session.roomId)
+      ? "stop"
+      : params.context;
+
   const p = shutdownFfmpegProcess({
     session: params.session,
     ffmpegProcess: params.ffmpegProcess,
     recordingId,
-    context: params.context,
+    context: effectiveContext,
     shutdownTimeoutMs: params.shutdownTimeoutMs,
   }).finally(() => {
     if (inflightFfmpegShutdown.get(recordingId) === p) {
@@ -851,7 +870,26 @@ const MIN_RESTART_SESSION_AGE_MS = 6000;
  * Call as soon as a stop is decided (before async teardown). Cancels debounced
  * recording restarts and causes restartServerRecording to yield so stop owns FFmpeg.
  */
+/**
+ * Call synchronously as soon as stop is requested (you have roomId, before any await).
+ * Prevents restart from entering FFmpeg shutdown ahead of stop teardown.
+ */
+export function notifyRoomRecordingStopPending(roomId: string) {
+  for (const [key, timer] of [...pendingRestarts.entries()]) {
+    if (key.startsWith(`${roomId}:`)) {
+      clearTimeout(timer);
+      pendingRestarts.delete(key);
+    }
+  }
+  roomsWithPendingRecordingStop.add(roomId);
+}
+
+export function clearRoomRecordingStopPending(roomId: string) {
+  roomsWithPendingRecordingStop.delete(roomId);
+}
+
 export function notifyRecordingStopPending(roomId: string, recordingId: string) {
+  notifyRoomRecordingStopPending(roomId);
   const key = `${roomId}:${recordingId}`;
   const pending = pendingRestarts.get(key);
   if (pending) clearTimeout(pending);
@@ -873,6 +911,7 @@ function buildTopologySignature(
 }
 
 export function scheduleRecordingRestart(roomId: string, recordingId: string) {
+  if (roomsWithPendingRecordingStop.has(roomId)) return;
   if (recordingStopClaimed.has(recordingId)) return;
 
   const key = `${roomId}:${recordingId}`;
@@ -881,6 +920,7 @@ export function scheduleRecordingRestart(roomId: string, recordingId: string) {
 
   const timer = setTimeout(() => {
     pendingRestarts.delete(key);
+    if (roomsWithPendingRecordingStop.has(roomId)) return;
     if (recordingStopClaimed.has(recordingId)) return;
 
     const session = activeSessions.get(recordingId);
@@ -967,6 +1007,13 @@ export async function restartServerRecording(params: {
 }): Promise<void> {
   const { roomId, recordingId } = params;
   if (restartLocks.has(recordingId)) return;
+  if (roomsWithPendingRecordingStop.has(roomId)) {
+    console.log("[recording:restart] skip — room recording stop in progress", {
+      roomId,
+      recordingId,
+    });
+    return;
+  }
   restartLocks.add(recordingId);
 
   try {
@@ -984,6 +1031,14 @@ export async function restartServerRecording(params: {
         recordingId,
         callStatus: callRecBefore?.status,
         screenStatus: screenRecBefore?.status,
+      });
+      return;
+    }
+
+    if (roomsWithPendingRecordingStop.has(roomId) || recordingStopClaimed.has(recordingId)) {
+      console.log("[recording:restart] abort — stop signaled after DB check", {
+        roomId,
+        recordingId,
       });
       return;
     }
@@ -1016,7 +1071,7 @@ export async function restartServerRecording(params: {
     }
     await new Promise((r) => setTimeout(r, 250));
 
-    if (recordingStopClaimed.has(recordingId)) {
+    if (roomsWithPendingRecordingStop.has(roomId) || recordingStopClaimed.has(recordingId)) {
       for (const st of streams) {
         try {
           await st.consumer.resume();
@@ -1372,6 +1427,7 @@ export async function startServerRecording(params: {
 }
 
 export async function stopServerRecording(recordingId: string): Promise<{ outputPath: string }> {
+  let sessionRoomId: string | null = null;
   try {
     let session = activeSessions.get(recordingId);
     if (!session && restartLocks.has(recordingId)) {
@@ -1384,6 +1440,7 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
       }
     }
     if (!session) throw new Error(`No session for ${recordingId}`);
+    sessionRoomId = session.roomId;
     activeSessions.delete(recordingId);
 
     const { ffmpegProcess, outputPath, allocatedPorts, segments, streams } = session;
@@ -1613,5 +1670,6 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
     return { outputPath: finalOutputPath };
   } finally {
     clearRecordingStopClaim(recordingId);
+    if (sessionRoomId) clearRoomRecordingStopPending(sessionRoomId);
   }
 }
