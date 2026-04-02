@@ -862,13 +862,16 @@ function buildFfmpegArgs(params: {
     videoOutputLabel = grid.videoOutputLabel;
   }
 
-  // Per-input: normalize format + async resample after PTS-STARTPTS. For amix, one more resample + PTS-STARTPTS on the mix output keeps AAC/muxer timestamps monotonic.
+  // Per-input: normalize format + async resample after PTS-STARTPTS.
+  // Final stage uses asetpts=N/SR/TB (sample-count PTS) so audio DTS is
+  // always monotonic — PTS-STARTPTS can reset when a late-joining stream
+  // causes amix/aresample to emit a discontinuity.
   const aformat = "aformat=sample_rates=48000:sample_fmts=fltp:channel_layouts=stereo";
   const branchResample = "aresample=async=1000:min_hard_comp=0.100:first_pts=0";
   if (audioInputIndicesFfmpeg.length === 1) {
     const idx = audioInputIndicesFfmpeg[0];
     filterParts.push(
-      `[${idx}:a]asetpts=PTS-STARTPTS,${aformat},${branchResample},asetpts=PTS-STARTPTS[aout]`,
+      `[${idx}:a]asetpts=PTS-STARTPTS,${aformat},${branchResample},asetpts=N/SR/TB[aout]`,
     );
   } else {
     for (let i = 0; i < audioInputIndicesFfmpeg.length; i++) {
@@ -879,7 +882,7 @@ function buildFfmpegArgs(params: {
     }
     const mixInputs = audioInputIndicesFfmpeg.map((_, i) => `[a_r${i}]`).join("");
     filterParts.push(
-      `${mixInputs}amix=inputs=${audioInputIndicesFfmpeg.length}:duration=longest:dropout_transition=3:normalize=0[a_mix];[a_mix]aresample=async=1000:min_hard_comp=0.150:first_pts=0,${aformat},asetpts=PTS-STARTPTS[aout]`,
+      `${mixInputs}amix=inputs=${audioInputIndicesFfmpeg.length}:duration=longest:dropout_transition=3:normalize=0[a_mix];[a_mix]aresample=async=1000:min_hard_comp=0.150:first_pts=0,${aformat},asetpts=N/SR/TB[aout]`,
     );
   }
 
