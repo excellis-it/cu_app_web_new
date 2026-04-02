@@ -1498,9 +1498,13 @@ export async function startServerRecording(params: {
 
   const ffmpegStderrPrefix = `[recording:${recordingId}] ffmpeg`;
   const ffmpegProcess = spawnRecordingFfmpeg(args, ["pipe", "pipe", "pipe"]);
+  const ffmpegStderr = ffmpegProcess.stderr;
+  if (!ffmpegStderr) {
+    throw new Error(`[recording:${recordingId}] ffmpeg spawn missing stderr pipe`);
+  }
   let sessionRef: RecordingSession | null = null;
 
-  ffmpegProcess.stderr.on("data", (chunk) => {
+  ffmpegStderr.on("data", (chunk) => {
     const lines = chunk.toString().split("\n");
     for (const line of lines) {
       const trimmed = line.trim();
