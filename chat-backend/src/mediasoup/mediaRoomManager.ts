@@ -99,7 +99,9 @@ async function getWorker(): Promise<types.Worker> {
   return worker;
 }
 
-// Group-call codec policy: force Opus for audio and VP8 for video.
+const SUPPORTED_VIDEO_MIME_TYPES = new Set(["video/h264", "video/vp8"]);
+
+// Group-call codec policy: Opus audio + H264 preferred video with VP8 fallback.
 const mediaCodecs: types.RtpCodecCapability[] = [
   {
     kind: "audio",
@@ -107,6 +109,20 @@ const mediaCodecs: types.RtpCodecCapability[] = [
     clockRate: 48000,
     channels: 2,
     preferredPayloadType: 111,
+  },
+  {
+    kind: "video",
+    mimeType: "video/H264",
+    clockRate: 90000,
+    preferredPayloadType: 102,
+    parameters: {
+      "packetization-mode": 1,
+      "level-asymmetry-allowed": 1,
+      "profile-level-id": "42e01f",
+      "x-google-start-bitrate": 500,
+      "x-google-max-bitrate": 2500,
+      "x-google-min-bitrate": 150,
+    },
   },
   {
     kind: "video",
@@ -137,17 +153,18 @@ function filterSupportedConsumeCapabilities(
   rtpCapabilities: types.RtpCapabilities,
 ): types.RtpCapabilities {
   const codecs = rtpCapabilities.codecs || [];
-  const vp8PayloadTypes = new Set<number>();
+  const supportedVideoPayloadTypes = new Set<number>();
   for (const codec of codecs) {
-    if ((codec.mimeType || "").toLowerCase() !== "video/vp8") continue;
+    const mimeType = (codec.mimeType || "").toLowerCase();
+    if (!SUPPORTED_VIDEO_MIME_TYPES.has(mimeType)) continue;
     if (typeof codec.preferredPayloadType === "number") {
-      vp8PayloadTypes.add(codec.preferredPayloadType);
+      supportedVideoPayloadTypes.add(codec.preferredPayloadType);
     }
   }
 
   const filteredCodecs = codecs.filter((codec) => {
     const mimeType = (codec.mimeType || "").toLowerCase();
-    if (mimeType === "audio/opus" || mimeType === "video/vp8") {
+    if (mimeType === "audio/opus" || SUPPORTED_VIDEO_MIME_TYPES.has(mimeType)) {
       return true;
     }
     if (mimeType !== "video/rtx") {
@@ -155,7 +172,7 @@ function filterSupportedConsumeCapabilities(
     }
 
     const apt = Number((codec.parameters as Record<string, unknown> | undefined)?.apt);
-    return Number.isFinite(apt) && vp8PayloadTypes.has(apt);
+    return Number.isFinite(apt) && supportedVideoPayloadTypes.has(apt);
   });
 
   return { ...rtpCapabilities, codecs: filteredCodecs };
@@ -428,7 +445,13 @@ export async function createProducer(
   if (kind === "audio" && !hasCodecMimeType(producerRtpParameters, "audio/opus")) {
     return null;
   }
-  if (kind === "video" && !hasCodecMimeType(producerRtpParameters, "video/vp8")) {
+  if (
+    kind === "video" &&
+    !(
+      hasCodecMimeType(producerRtpParameters, "video/h264") ||
+      hasCodecMimeType(producerRtpParameters, "video/vp8")
+    )
+  ) {
     return null;
   }
 

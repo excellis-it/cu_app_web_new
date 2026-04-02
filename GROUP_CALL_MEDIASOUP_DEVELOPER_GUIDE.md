@@ -32,7 +32,7 @@ This project now includes cross-platform and recording-oriented updates for grou
 
 1. `MS-produce` supports video metadata via `appData: { width, height, rotation }`.
 2. `MS-get-producers` can return `width/height/rotation` for video producers.
-3. Group-call media codec policy is now strict: **audio/opus + video/VP8 only**.
+3. Group-call media codec policy is now **audio/opus + video/H264 (preferred) with video/VP8 fallback**.
 4. Server recorder now preserves RTP header extensions (`a=extmap`) and applies explicit rotation transforms (`90/180/270`) when provided.
 
 ### App developer update checklist
@@ -41,7 +41,7 @@ This project now includes cross-platform and recording-oriented updates for grou
 2. Keep sending `appData.width` and `appData.height` for video producers.
 3. Do not strip RTP header extensions from produced RTP params (especially `urn:3gpp:video-orientation`).
 4. Continue consume flow exactly: `MS-consume` → attach track → `MS-resume-consumer`.
-5. Ensure clients send/consume **Opus + VP8** capabilities and do not publish H264 in group-call flows.
+5. Ensure clients send/consume **Opus + H264/VP8** capabilities. Prefer H264 for produce when supported, otherwise fallback to VP8.
 
 ---
 
@@ -145,8 +145,30 @@ Server actions:
   "ok": true,
   "rtpCapabilities": {
     "codecs": [
-      { "kind": "audio", "mimeType": "audio/opus", "clockRate": 48000, "channels": 2, "preferredPayloadType": 111 },
-      { "kind": "video", "mimeType": "video/VP8", "clockRate": 90000, "preferredPayloadType": 96 }
+      {
+        "kind": "audio",
+        "mimeType": "audio/opus",
+        "clockRate": 48000,
+        "channels": 2,
+        "preferredPayloadType": 111
+      },
+      {
+        "kind": "video",
+        "mimeType": "video/H264",
+        "clockRate": 90000,
+        "preferredPayloadType": 102,
+        "parameters": {
+          "packetization-mode": 1,
+          "level-asymmetry-allowed": 1,
+          "profile-level-id": "42e01f"
+        }
+      },
+      {
+        "kind": "video",
+        "mimeType": "video/VP8",
+        "clockRate": 90000,
+        "preferredPayloadType": 96
+      }
     ],
     "headerExtensions": [],
     "fecMechanisms": []
@@ -179,7 +201,10 @@ No payload; callback only.
   "iceServers": [
     { "urls": "stun:142.93.74.226:3478" },
     {
-      "urls": ["turn:142.93.74.226:3478?transport=udp", "turn:142.93.74.226:3478?transport=tcp"],
+      "urls": [
+        "turn:142.93.74.226:3478?transport=udp",
+        "turn:142.93.74.226:3478?transport=tcp"
+      ],
       "username": "cuapp_turn",
       "credential": "TurnPass123!"
     }
@@ -244,7 +269,10 @@ When mediasoup-client transport emits `connect`, client sends:
   "roomId": "69b81151f7369a77bd3c5da6",
   "userId": "69b8108df7369a77bd3c5d3a",
   "transportId": "21c692ab-da92-4a1f-b90d-22a8640dbae4",
-  "dtlsParameters": { "role": "client", "fingerprints": [{ "algorithm": "sha-256", "value": "..." }] }
+  "dtlsParameters": {
+    "role": "client",
+    "fingerprints": [{ "algorithm": "sha-256", "value": "..." }]
+  }
 }
 ```
 
@@ -270,8 +298,16 @@ When send transport emits `produce`, client sends:
   "userId": "69b8108df7369a77bd3c5d3a",
   "transportId": "21c692ab-da92-4a1f-b90d-22a8640dbae4",
   "kind": "video",
-  "rtpParameters": { "mid": "0", "codecs": [], "headerExtensions": [], "encodings": [], "rtcp": {} },
-  "encodings": [{ "maxBitrate": 450000, "maxFramerate": 15, "scalabilityMode": "L1T1" }],
+  "rtpParameters": {
+    "mid": "0",
+    "codecs": [],
+    "headerExtensions": [],
+    "encodings": [],
+    "rtcp": {}
+  },
+  "encodings": [
+    { "maxBitrate": 450000, "maxFramerate": 15, "scalabilityMode": "L1T1" }
+  ],
   "appData": { "width": 360, "height": 640, "rotation": 90 }
 }
 ```
@@ -434,7 +470,11 @@ When transport becomes `disconnected`/`failed`, client attempts lightweight reco
 ```json
 {
   "ok": true,
-  "iceParameters": { "usernameFragment": "...", "password": "...", "iceLite": true }
+  "iceParameters": {
+    "usernameFragment": "...",
+    "password": "...",
+    "iceLite": true
+  }
 }
 ```
 
@@ -691,7 +731,7 @@ Client should:
 3. Confirm recorder receives/extmaps in SDP (`a=extmap`) and does not double-rotate when extmap is present
 4. If 180-degree flips are needed for a specific deployment, enable `RECORDING_APPLY_180_ROTATION=true`; otherwise keep default
 5. For legacy clients without `rotation`, confirm fallback portrait transpose still works
-5. Confirm web player uses `object-fit: contain` without additional CSS transform rotation
+6. Confirm web player uses `object-fit: contain` without additional CSS transform rotation
 
 ## 10.2) Debug checklist for `cannot-consume` in mixed Web/Flutter rooms
 

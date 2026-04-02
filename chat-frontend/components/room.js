@@ -95,10 +95,13 @@ const Room = ({
 
   const filterPreferredCodecs = (caps) => {
     if (!caps || !Array.isArray(caps.codecs)) return caps;
-    const vp8PayloadTypes = new Set(
+    const supportedVideoMimeTypes = new Set(["video/h264", "video/vp8"]);
+    const videoPayloadTypes = new Set(
       caps.codecs
-        .filter(
-          (codec) => String(codec?.mimeType || "").toLowerCase() === "video/vp8",
+        .filter((codec) =>
+          supportedVideoMimeTypes.has(
+            String(codec?.mimeType || "").toLowerCase(),
+          ),
         )
         .map((codec) => codec.preferredPayloadType)
         .filter((pt) => typeof pt === "number"),
@@ -108,14 +111,29 @@ const Room = ({
       ...caps,
       codecs: caps.codecs.filter((codec) => {
         const mimeType = String(codec?.mimeType || "").toLowerCase();
-        if (mimeType === "audio/opus" || mimeType === "video/vp8") return true;
+        if (
+          mimeType === "audio/opus" ||
+          supportedVideoMimeTypes.has(mimeType)
+        ) {
+          return true;
+        }
         if (mimeType !== "video/rtx") return false;
         const apt = Number(codec?.parameters?.apt);
-        return Number.isFinite(apt) && vp8PayloadTypes.has(apt);
+        return Number.isFinite(apt) && videoPayloadTypes.has(apt);
       }),
     };
   };
 
+  const getPreferredVideoCodec = (codecs) => {
+    if (!Array.isArray(codecs)) return undefined;
+    const h264Codec = codecs.find(
+      (codec) => String(codec?.mimeType || "").toLowerCase() === "video/h264",
+    );
+    if (h264Codec) return h264Codec;
+    return codecs.find(
+      (codec) => String(codec?.mimeType || "").toLowerCase() === "video/vp8",
+    );
+  };
 
   const boxRef = useRef(null);
   const [dragging, setDragging] = useState(false);
@@ -124,7 +142,6 @@ const Room = ({
     y: 0,
   });
   const [offset, setOffset] = useState({ x: 0, y: 0 });
-
 
   useEffect(() => {
     const handleOffline = (e) => {
@@ -900,27 +917,45 @@ const Room = ({
         // Screen recording socket events
         socketRef.current.on("FE-screen-recording-started", (payload) => {
           try {
-            console.log("[room.js][SCREC] FE-screen-recording-started", payload);
+            console.log(
+              "[room.js][SCREC] FE-screen-recording-started",
+              payload,
+            );
             setIsScreenRecording(true);
-            toast.info("Recording started", { position: "top-right", autoClose: 2000 });
+            toast.info("Recording started", {
+              position: "top-right",
+              autoClose: 2000,
+            });
             // Start duration timer for non-admin participants (admin starts it locally)
             if (!screenRecordingStartTimeRef.current) {
               screenRecordingStartTimeRef.current = Date.now();
             }
             startDurationTimer();
           } catch (e) {
-            console.error("[room.js] FE-screen-recording-started handler error", e);
+            console.error(
+              "[room.js] FE-screen-recording-started handler error",
+              e,
+            );
           }
         });
 
         socketRef.current.on("FE-screen-recording-stopped", (payload) => {
           try {
-            console.log("[room.js][SCREC] FE-screen-recording-stopped", payload);
+            console.log(
+              "[room.js][SCREC] FE-screen-recording-stopped",
+              payload,
+            );
             setIsScreenRecording(false);
-            toast.info("Recording stopped. Processing...", { position: "top-right", autoClose: 3000 });
+            toast.info("Recording stopped. Processing...", {
+              position: "top-right",
+              autoClose: 3000,
+            });
             stopDurationTimer();
           } catch (e) {
-            console.error("[room.js] FE-screen-recording-stopped handler error", e);
+            console.error(
+              "[room.js] FE-screen-recording-stopped handler error",
+              e,
+            );
           }
         });
 
@@ -1243,7 +1278,9 @@ const Room = ({
       // 1) Get RTP capabilities
       let rtpCaps;
       try {
-        const routerCaps = await callService.getRtpCapabilities(socket, { roomId });
+        const routerCaps = await callService.getRtpCapabilities(socket, {
+          roomId,
+        });
         rtpCaps = filterPreferredCodecs(routerCaps);
         console.log("[room.js] got rtpCaps", rtpCaps);
       } catch (e) {
@@ -1274,9 +1311,15 @@ const Room = ({
         const iceConfig = await callService.getIceServers(socket);
         iceServers = iceConfig.iceServers || [];
         iceTransportPolicy = iceConfig.iceTransportPolicy || "all";
-        console.log("[room.js] got iceServers", { count: iceServers.length, iceTransportPolicy });
+        console.log("[room.js] got iceServers", {
+          count: iceServers.length,
+          iceTransportPolicy,
+        });
       } catch (e) {
-        console.warn("[room.js] getIceServers failed, continuing without TURN", e);
+        console.warn(
+          "[room.js] getIceServers failed, continuing without TURN",
+          e,
+        );
       }
 
       // 3) Create send transport
@@ -1673,10 +1716,11 @@ const Room = ({
           isMobileBrowser,
         });
         const audioCodec = (device.rtpCapabilities?.codecs || []).find(
-          (codec) => String(codec?.mimeType || "").toLowerCase() === "audio/opus",
+          (codec) =>
+            String(codec?.mimeType || "").toLowerCase() === "audio/opus",
         );
-        const videoCodec = (device.rtpCapabilities?.codecs || []).find(
-          (codec) => String(codec?.mimeType || "").toLowerCase() === "video/vp8",
+        const videoCodec = getPreferredVideoCodec(
+          device.rtpCapabilities?.codecs || [],
         );
         if (audioTrack) {
           audioProducerRef.current = await sendTransport.produce({
@@ -1690,6 +1734,9 @@ const Room = ({
         // For pure audio calls, do not create a video producer so that
         // no video track is broadcast to other participants.
         if (videoTrack && !isAudioOnlyCall) {
+          console.log("[room.js] selected video codec", {
+            mimeType: String(videoCodec?.mimeType || "auto"),
+          });
           // Keep video on a conservative single layer to improve stability
           // on lossy links and avoid simulcast layer churn freezes.
           const videoEncodings = [
@@ -1719,15 +1766,13 @@ const Room = ({
               const constraints = videoTrack.getConstraints();
               if (!reportedWidth) {
                 const wc = constraints?.width;
-                reportedWidth = typeof wc === "object"
-                  ? (wc.exact || wc.ideal || wc.max)
-                  : wc;
+                reportedWidth =
+                  typeof wc === "object" ? wc.exact || wc.ideal || wc.max : wc;
               }
               if (!reportedHeight) {
                 const hc = constraints?.height;
-                reportedHeight = typeof hc === "object"
-                  ? (hc.exact || hc.ideal || hc.max)
-                  : hc;
+                reportedHeight =
+                  typeof hc === "object" ? hc.exact || hc.ideal || hc.max : hc;
               }
             } catch (_) {}
           }
@@ -1736,8 +1781,7 @@ const Room = ({
           if (!reportedHeight) reportedHeight = 360;
 
           if (isMobileBrowser && typeof window !== "undefined") {
-            const angle =
-              screen?.orientation?.angle ?? window.orientation ?? 0;
+            const angle = screen?.orientation?.angle ?? window.orientation ?? 0;
             const normalizedAngle = ((Number(angle) % 360) + 360) % 360;
             if (normalizedAngle === 90 || normalizedAngle === 270) {
               reportedRotation = normalizedAngle;
@@ -1746,14 +1790,8 @@ const Room = ({
             }
             const isPortraitOrientation =
               normalizedAngle === 0 || normalizedAngle === 180;
-            if (
-              isPortraitOrientation &&
-              reportedWidth > reportedHeight
-            ) {
-              [reportedWidth, reportedHeight] = [
-                reportedHeight,
-                reportedWidth,
-              ];
+            if (isPortraitOrientation && reportedWidth > reportedHeight) {
+              [reportedWidth, reportedHeight] = [reportedHeight, reportedWidth];
             }
           }
           videoProducerRef.current = await sendTransport.produce({
@@ -2521,7 +2559,9 @@ const Room = ({
     stopDurationTimer();
     const tick = () => {
       if (!screenRecordingStartTimeRef.current) return;
-      const elapsed = Math.floor((Date.now() - screenRecordingStartTimeRef.current) / 1000);
+      const elapsed = Math.floor(
+        (Date.now() - screenRecordingStartTimeRef.current) / 1000,
+      );
       // Update all duration display elements directly — zero re-renders
       document.querySelectorAll("[data-screc-duration]").forEach((el) => {
         el.textContent = formatDuration(elapsed);
@@ -2550,8 +2590,14 @@ const Room = ({
     }
 
     setScreenRecordingBusy(true);
-    console.log("[room.js][SCREC] requesting server-side start", { roomId, currentUser });
-    socketRef.current.emit("BE-start-screen-recording", { roomId, userId: currentUser });
+    console.log("[room.js][SCREC] requesting server-side start", {
+      roomId,
+      currentUser,
+    });
+    socketRef.current.emit("BE-start-screen-recording", {
+      roomId,
+      userId: currentUser,
+    });
     // UI update happens when FE-screen-recording-started is received
     setTimeout(() => setScreenRecordingBusy(false), 3000); // fallback in case event doesn't arrive
   }
@@ -2564,8 +2610,14 @@ const Room = ({
       return;
     }
 
-    console.log("[room.js][SCREC] requesting server-side stop", { roomId, currentUser });
-    socketRef.current.emit("BE-stop-screen-recording", { roomId, userId: currentUser });
+    console.log("[room.js][SCREC] requesting server-side stop", {
+      roomId,
+      currentUser,
+    });
+    socketRef.current.emit("BE-stop-screen-recording", {
+      roomId,
+      userId: currentUser,
+    });
     // UI update happens when FE-screen-recording-stopped is received
   }
 

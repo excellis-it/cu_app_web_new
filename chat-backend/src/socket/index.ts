@@ -2162,11 +2162,14 @@ export default function initializeSocket() {
               || (rtpParameters?.codecs || []).some(
                 (codec) => String(codec?.mimeType || "").toLowerCase() === "audio/opus",
               );
-            const isVp8Video = kind !== "video"
+            const isSupportedVideo = kind !== "video"
               || (rtpParameters?.codecs || []).some(
-                (codec) => String(codec?.mimeType || "").toLowerCase() === "video/vp8",
+                (codec) => {
+                  const mimeType = String(codec?.mimeType || "").toLowerCase();
+                  return mimeType === "video/h264" || mimeType === "video/vp8";
+                },
               );
-            if (!isOpusAudio || !isVp8Video) {
+            if (!isOpusAudio || !isSupportedVideo) {
               cb && cb({ ok: false, error: "unsupported-codec" });
               return;
             }
