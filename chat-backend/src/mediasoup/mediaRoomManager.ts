@@ -113,6 +113,8 @@ const mediaCodecs: types.RtpCodecCapability[] = [
   },
 ];
 
+const VIDEO_ORIENTATION_URI = "urn:3gpp:video-orientation";
+
 function hasCodecMimeType(
   rtpParameters: types.RtpParameters,
   mimeType: string,
@@ -149,6 +151,76 @@ function filterSupportedConsumeCapabilities(
   });
 
   return { ...rtpCapabilities, codecs: filteredCodecs };
+}
+
+function getHeaderExtensions(
+  rtpCapabilities: types.RtpCapabilities,
+): types.RtpHeaderExtension[] {
+  const value = (rtpCapabilities as any).headerExtensions;
+  return Array.isArray(value) ? value.filter(Boolean) : [];
+}
+
+function hasHeaderExtension(
+  headerExtensions: types.RtpHeaderExtension[],
+  uri: string,
+  kind?: types.MediaKind,
+): boolean {
+  const expectedUri = uri.toLowerCase();
+  const expectedKind = kind?.toLowerCase();
+
+  return headerExtensions.some((ext) => {
+    const extUri = String((ext as any).uri || "").toLowerCase();
+    if (extUri !== expectedUri) return false;
+
+    if (!expectedKind) return true;
+
+    const extKind = String((ext as any).kind || "").toLowerCase();
+    return extKind === expectedKind;
+  });
+}
+
+function ensureConsumeHeaderExtensions(
+  consumeCaps: types.RtpCapabilities,
+  routerCaps: types.RtpCapabilities,
+): types.RtpCapabilities {
+  const consumeHeaderExtensions = getHeaderExtensions(consumeCaps);
+  const routerHeaderExtensions = getHeaderExtensions(routerCaps);
+
+  if (routerHeaderExtensions.length === 0) {
+    return consumeCaps;
+  }
+
+  if (consumeHeaderExtensions.length === 0) {
+    return {
+      ...(consumeCaps as any),
+      headerExtensions: routerHeaderExtensions,
+    } as types.RtpCapabilities;
+  }
+
+  if (
+    hasHeaderExtension(
+      consumeHeaderExtensions,
+      VIDEO_ORIENTATION_URI,
+      "video",
+    )
+  ) {
+    return consumeCaps;
+  }
+
+  const routerVideoOrientation = routerHeaderExtensions.find((ext) => {
+    const uri = String((ext as any).uri || "").toLowerCase();
+    const kind = String((ext as any).kind || "").toLowerCase();
+    return uri === VIDEO_ORIENTATION_URI && kind === "video";
+  });
+
+  if (!routerVideoOrientation) {
+    return consumeCaps;
+  }
+
+  return {
+    ...(consumeCaps as any),
+    headerExtensions: [...consumeHeaderExtensions, routerVideoOrientation],
+  } as types.RtpCapabilities;
 }
 
 export async function getOrCreateRoom(roomId: string): Promise<RoomState> {
@@ -372,7 +444,10 @@ export async function createConsumer(
   const room = rooms.get(roomId);
   if (!room) return null;
 
-  const consumeRtpCapabilities = filterSupportedConsumeCapabilities(rtpCapabilities);
+  const consumeRtpCapabilities = ensureConsumeHeaderExtensions(
+    filterSupportedConsumeCapabilities(rtpCapabilities),
+    room.router.rtpCapabilities,
+  );
   if (!room.router.canConsume({ producerId, rtpCapabilities: consumeRtpCapabilities })) {
     return null;
   }
