@@ -12,7 +12,7 @@ export interface PeerState {
   transports: Map<string, PeerTransport>;
   producers: Map<string, types.Producer>;
   consumers: Map<string, types.Consumer>;
-  producerMeta: Map<string, { width?: number; height?: number }>;
+  producerMeta: Map<string, { width?: number; height?: number; rotation?: number }>;
 }
 
 export interface RoomState {
@@ -91,7 +91,7 @@ async function getWorker(): Promise<types.Worker> {
   return worker;
 }
 
-// Basic audio/video codecs – keep H264 available for mobile/Flutter interop.
+// Group-call codec policy: force Opus for audio and VP8 for video.
 const mediaCodecs: types.RtpCodecCapability[] = [
   {
     kind: "audio",
@@ -99,20 +99,6 @@ const mediaCodecs: types.RtpCodecCapability[] = [
     clockRate: 48000,
     channels: 2,
     preferredPayloadType: 111,
-  },
-  {
-    kind: "video",
-    mimeType: "video/H264",
-    clockRate: 90000,
-    preferredPayloadType: 102,
-    parameters: {
-      "packetization-mode": 1,
-      "profile-level-id": "42e01f",
-      "level-asymmetry-allowed": 1,
-      "x-google-start-bitrate": 500,  // kbps - start lower to avoid immediate congestion
-      "x-google-max-bitrate": 2500,   // kbps - allow higher quality if link supports it
-      "x-google-min-bitrate": 150,    // kbps
-    },
   },
   {
     kind: "video",
@@ -126,6 +112,44 @@ const mediaCodecs: types.RtpCodecCapability[] = [
     },
   },
 ];
+
+function hasCodecMimeType(
+  rtpParameters: types.RtpParameters,
+  mimeType: string,
+): boolean {
+  const expectedMimeType = mimeType.toLowerCase();
+  return (rtpParameters.codecs || []).some(
+    (codec) => (codec.mimeType || "").toLowerCase() === expectedMimeType,
+  );
+}
+
+function filterSupportedConsumeCapabilities(
+  rtpCapabilities: types.RtpCapabilities,
+): types.RtpCapabilities {
+  const codecs = rtpCapabilities.codecs || [];
+  const vp8PayloadTypes = new Set<number>();
+  for (const codec of codecs) {
+    if ((codec.mimeType || "").toLowerCase() !== "video/vp8") continue;
+    if (typeof codec.preferredPayloadType === "number") {
+      vp8PayloadTypes.add(codec.preferredPayloadType);
+    }
+  }
+
+  const filteredCodecs = codecs.filter((codec) => {
+    const mimeType = (codec.mimeType || "").toLowerCase();
+    if (mimeType === "audio/opus" || mimeType === "video/vp8") {
+      return true;
+    }
+    if (mimeType !== "video/rtx") {
+      return false;
+    }
+
+    const apt = Number((codec.parameters as Record<string, unknown> | undefined)?.apt);
+    return Number.isFinite(apt) && vp8PayloadTypes.has(apt);
+  });
+
+  return { ...rtpCapabilities, codecs: filteredCodecs };
+}
 
 export async function getOrCreateRoom(roomId: string): Promise<RoomState> {
   let room = rooms.get(roomId);
@@ -301,7 +325,7 @@ export async function createProducer(
   kind: types.MediaKind,
   rtpParameters: types.RtpParameters,
   encodings?: types.RtpEncodingParameters[],
-  appData?: { width?: number; height?: number },
+  appData?: { width?: number; height?: number; rotation?: number },
 ): Promise<types.Producer | null> {
   const room = rooms.get(roomId);
   if (!room) return null;
@@ -315,14 +339,25 @@ export async function createProducer(
     ? { ...rtpParameters, encodings }
     : rtpParameters;
 
+  if (kind === "audio" && !hasCodecMimeType(producerRtpParameters, "audio/opus")) {
+    return null;
+  }
+  if (kind === "video" && !hasCodecMimeType(producerRtpParameters, "video/vp8")) {
+    return null;
+  }
+
   const producer = await transport.produce({
     kind,
     rtpParameters: producerRtpParameters,
   });
   peer.producers.set(producer.id, producer);
 
-  if (appData && (appData.width || appData.height)) {
-    peer.producerMeta.set(producer.id, { width: appData.width, height: appData.height });
+  if (appData && (appData.width || appData.height || appData.rotation !== undefined)) {
+    peer.producerMeta.set(producer.id, {
+      width: appData.width,
+      height: appData.height,
+      rotation: appData.rotation,
+    });
   }
 
   return producer;
@@ -337,7 +372,8 @@ export async function createConsumer(
   const room = rooms.get(roomId);
   if (!room) return null;
 
-  if (!room.router.canConsume({ producerId, rtpCapabilities })) {
+  const consumeRtpCapabilities = filterSupportedConsumeCapabilities(rtpCapabilities);
+  if (!room.router.canConsume({ producerId, rtpCapabilities: consumeRtpCapabilities })) {
     return null;
   }
 
@@ -366,7 +402,7 @@ export async function createConsumer(
 
   const consumer = await transport.consume({
     producerId,
-    rtpCapabilities,
+    rtpCapabilities: consumeRtpCapabilities,
     paused: true,  // Always start paused; client must explicitly resume after setup
   });
 
@@ -432,11 +468,11 @@ export async function restartTransportIce(
 export function getRoomProducers(
   roomId: string,
   excludeUserId?: string
-): { producerId: string; userId: string; kind: types.MediaKind; width?: number; height?: number }[] {
+): { producerId: string; userId: string; kind: types.MediaKind; width?: number; height?: number; rotation?: number }[] {
   const room = rooms.get(roomId);
   if (!room) return [];
 
-  const result: { producerId: string; userId: string; kind: types.MediaKind; width?: number; height?: number }[] = [];
+  const result: { producerId: string; userId: string; kind: types.MediaKind; width?: number; height?: number; rotation?: number }[] = [];
 
   for (const [userId, peer] of room.peers.entries()) {
     if (excludeUserId && userId === excludeUserId) continue;
@@ -449,6 +485,7 @@ export function getRoomProducers(
         kind: producer.kind,
         width: meta?.width,
         height: meta?.height,
+        rotation: meta?.rotation,
       });
     });
   }

@@ -91,6 +91,30 @@ const Room = ({
   const recoveryInProgressRef = useRef(false);
   const unmountingRef = useRef(false);
   const iceRestartInProgressRef = useRef(false); // true while an ICE restart is pending
+  const consumeRtpCapabilitiesRef = useRef(null);
+
+  const filterPreferredCodecs = (caps) => {
+    if (!caps || !Array.isArray(caps.codecs)) return caps;
+    const vp8PayloadTypes = new Set(
+      caps.codecs
+        .filter(
+          (codec) => String(codec?.mimeType || "").toLowerCase() === "video/vp8",
+        )
+        .map((codec) => codec.preferredPayloadType)
+        .filter((pt) => typeof pt === "number"),
+    );
+
+    return {
+      ...caps,
+      codecs: caps.codecs.filter((codec) => {
+        const mimeType = String(codec?.mimeType || "").toLowerCase();
+        if (mimeType === "audio/opus" || mimeType === "video/vp8") return true;
+        if (mimeType !== "video/rtx") return false;
+        const apt = Number(codec?.parameters?.apt);
+        return Number.isFinite(apt) && vp8PayloadTypes.has(apt);
+      }),
+    };
+  };
 
 
   const boxRef = useRef(null);
@@ -346,7 +370,8 @@ const Room = ({
             roomId: rId,
             userId: myUserId,
             producerId: p.producerId,
-            rtpCapabilities: device.rtpCapabilities,
+            rtpCapabilities:
+              consumeRtpCapabilitiesRef.current || device.rtpCapabilities,
           });
           const consumer = await recvTransport.consume({
             id: consumeInfo.id,
@@ -1204,6 +1229,7 @@ const Room = ({
       sendTransportRef.current = null; // invalidate stale refs so old retries don't pass readiness check
       recvTransportRef.current = null;
       deviceRef.current = null;
+      consumeRtpCapabilitiesRef.current = null;
       if (socket) {
         socket.mediasoupDevice = null;
         socket.mediasoupRecvTransport = null;
@@ -1217,7 +1243,8 @@ const Room = ({
       // 1) Get RTP capabilities
       let rtpCaps;
       try {
-        rtpCaps = await callService.getRtpCapabilities(socket, { roomId });
+        const routerCaps = await callService.getRtpCapabilities(socket, { roomId });
+        rtpCaps = filterPreferredCodecs(routerCaps);
         console.log("[room.js] got rtpCaps", rtpCaps);
       } catch (e) {
         console.error("[room.js] getRtpCapabilities failed", e);
@@ -1230,6 +1257,9 @@ const Room = ({
         "[room.js] Device created, loading with routerRtpCapabilities",
       );
       await device.load({ routerRtpCapabilities: rtpCaps });
+      consumeRtpCapabilitiesRef.current = filterPreferredCodecs(
+        device.rtpCapabilities,
+      );
       deviceRef.current = device;
       socket.mediasoupDevice = device; // Persist on socket for fetchAndConsumeProducers (survives remounts)
       console.log("[room.js] Device loaded and stored", {
@@ -1642,9 +1672,16 @@ const Room = ({
           isSafariBrowser,
           isMobileBrowser,
         });
+        const audioCodec = (device.rtpCapabilities?.codecs || []).find(
+          (codec) => String(codec?.mimeType || "").toLowerCase() === "audio/opus",
+        );
+        const videoCodec = (device.rtpCapabilities?.codecs || []).find(
+          (codec) => String(codec?.mimeType || "").toLowerCase() === "video/vp8",
+        );
         if (audioTrack) {
           audioProducerRef.current = await sendTransport.produce({
             track: audioTrack,
+            codec: audioCodec,
           });
           console.log("[room.js] audio producer created", {
             id: audioProducerRef.current.id,
@@ -1722,6 +1759,7 @@ const Room = ({
           videoProducerRef.current = await sendTransport.produce({
             track: videoTrack,
             encodings: videoEncodings,
+            codec: videoCodec,
             appData: {
               width: reportedWidth,
               height: reportedHeight,
@@ -1756,7 +1794,8 @@ const Room = ({
               roomId,
               userId,
               producerId: p.producerId,
-              rtpCapabilities: device.rtpCapabilities,
+              rtpCapabilities:
+                consumeRtpCapabilitiesRef.current || device.rtpCapabilities,
             });
             console.log(
               "[room.js] consume existing producer response",
@@ -1859,7 +1898,8 @@ const Room = ({
               roomId,
               userId,
               producerId,
-              rtpCapabilities: device.rtpCapabilities,
+              rtpCapabilities:
+                consumeRtpCapabilitiesRef.current || device.rtpCapabilities,
             });
 
             const consumer = await recvTransport.consume({

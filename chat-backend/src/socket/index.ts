@@ -2116,12 +2116,25 @@ export default function initializeSocket() {
           kind: MediasoupTypes.MediaKind;
           rtpParameters: MediasoupTypes.RtpParameters;
           encodings?: MediasoupTypes.RtpEncodingParameters[];
-          appData?: { width?: number; height?: number };
+          appData?: { width?: number; height?: number; rotation?: number };
         },
         cb: (payload: any) => void,
       ) => {
         (async () => {
           try {
+            const isOpusAudio = kind !== "audio"
+              || (rtpParameters?.codecs || []).some(
+                (codec) => String(codec?.mimeType || "").toLowerCase() === "audio/opus",
+              );
+            const isVp8Video = kind !== "video"
+              || (rtpParameters?.codecs || []).some(
+                (codec) => String(codec?.mimeType || "").toLowerCase() === "video/vp8",
+              );
+            if (!isOpusAudio || !isVp8Video) {
+              cb && cb({ ok: false, error: "unsupported-codec" });
+              return;
+            }
+
             const producer = await createProducer(
               roomId,
               userId.toString(),

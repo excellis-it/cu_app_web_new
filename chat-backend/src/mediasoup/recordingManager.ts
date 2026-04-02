@@ -27,6 +27,7 @@ type ServerStream = {
   sdpPath: string;
   width?: number;
   height?: number;
+  rotation?: number;
 };
 
 type RecordingSession = {
@@ -120,6 +121,10 @@ function buildSdpForConsumer(params: {
     fmtpEntries.length > 0
       ? `a=fmtp:${payloadType} ${fmtpEntries.map(([k, v]) => `${k}=${v}`).join(";")}`
       : "";
+  const extmapLines = (rtpParameters.headerExtensions || []).map((ext) => {
+    const encryptFlag = ext.encrypt ? "/encrypt" : "";
+    return `a=extmap:${ext.id}${encryptFlag} ${ext.uri}`;
+  });
 
   const media = kind === "audio" ? "audio" : "video";
   return [
@@ -131,6 +136,9 @@ function buildSdpForConsumer(params: {
     `m=${media} ${rtpPort} RTP/AVP ${payloadType}`,
     rtpmap,
     fmtpLine,
+    ...extmapLines,
+    "a=recvonly",
+    "a=rtcp-mux",
   ]
     .filter(Boolean)
     .join("\n");
@@ -166,7 +174,7 @@ function buildVideoGridFilter(params: {
   videoInputIndices: number[];
   targetWidth: number;
   targetHeight: number;
-  videoDimensions?: Map<number, { width: number; height: number }>;
+  videoDimensions?: Map<number, { width: number; height: number; rotation?: number }>;
   baseLabel: string;
 }): { filterParts: string[]; videoOutputLabel: string } {
   const { videoInputIndices, targetWidth, targetHeight, videoDimensions, baseLabel } = params;
@@ -186,12 +194,30 @@ function buildVideoGridFilter(params: {
     const idx = videoInputIndices[i];
     const label = `sv${i}`;
     const dims = videoDimensions?.get(idx - 1);
-    const isPortrait = dims ? dims.height > dims.width : false;
+    const hasExplicitRotation = !!dims && typeof dims.rotation === "number";
+    const normalizedRotation = (() => {
+      if (!dims || typeof dims.rotation !== "number") return 0;
+      const r = ((dims.rotation % 360) + 360) % 360;
+      if (r === 90 || r === 180 || r === 270) return r;
+      return 0;
+    })();
+    const effectiveWidth =
+      dims && normalizedRotation % 180 !== 0 ? dims.height : dims?.width;
+    const effectiveHeight =
+      dims && normalizedRotation % 180 !== 0 ? dims.width : dims?.height;
+    const isPortrait = !!(effectiveWidth && effectiveHeight && effectiveHeight > effectiveWidth);
 
     // Scale each video to fit the cell, preserving aspect ratio.
-    // For portrait streams, rotate once so recordings do not end up sideways.
+    // If client provided rotation metadata, apply only that rotation.
+    // Otherwise, for portrait streams use a single transpose fallback for legacy clients.
     const chain: string[] = [`[${idx}:v]setpts=PTS-STARTPTS,fps=15`];
-    if (isPortrait) {
+    if (normalizedRotation === 90) {
+      chain.push("transpose=1");
+    } else if (normalizedRotation === 270) {
+      chain.push("transpose=2:passthrough=portrait");
+    } else if (normalizedRotation === 180) {
+      chain.push("hflip,vflip");
+    } else if (!hasExplicitRotation && isPortrait) {
       chain.push("transpose=2:passthrough=portrait");
     }
     chain.push(
@@ -218,7 +244,7 @@ function buildFfmpegArgs(params: {
   videoInputIndices: number[];
   audioInputIndices: number[];
   sdpPathsInOrder: string[];
-  videoDimensions?: Map<number, { width: number; height: number }>;
+  videoDimensions?: Map<number, { width: number; height: number; rotation?: number }>;
 }) {
   const {
     outputPath,
@@ -470,7 +496,13 @@ export async function startServerRecording(params: {
   const sdpIp = getLocalIp();
   const streams: ServerStream[] = [];
   const selectedStreams = [
-    ...selectedVideoProducers.map((p) => ({ producerId: p.producerId, kind: "video" as const, width: p.width, height: p.height })),
+    ...selectedVideoProducers.map((p) => ({
+      producerId: p.producerId,
+      kind: "video" as const,
+      width: p.width,
+      height: p.height,
+      rotation: p.rotation,
+    })),
     ...selectedAudioProducers.map((p) => ({ producerId: p.producerId, kind: "audio" as const })),
   ];
 
@@ -517,6 +549,7 @@ export async function startServerRecording(params: {
       sdpPath,
       width: streamWidth,
       height: streamHeight,
+      rotation: (s as any).rotation,
     });
   }
 
@@ -543,11 +576,15 @@ export async function startServerRecording(params: {
     else audioInputIndices.push(i);
   }
 
-  const videoDimensions = new Map<number, { width: number; height: number }>();
+  const videoDimensions = new Map<number, { width: number; height: number; rotation?: number }>();
   for (let i = 0; i < liveStreams.length; i++) {
     const stream = liveStreams[i];
     if (stream.kind === "video" && stream.width && stream.height) {
-      videoDimensions.set(i, { width: stream.width, height: stream.height });
+      videoDimensions.set(i, {
+        width: stream.width,
+        height: stream.height,
+        rotation: stream.rotation,
+      });
     }
   }
 

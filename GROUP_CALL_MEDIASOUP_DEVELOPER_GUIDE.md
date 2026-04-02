@@ -17,11 +17,31 @@ Server-side key files:
 
 - `chat-backend/src/socket/index.ts` (all signaling handlers)
 - `chat-backend/src/mediasoup/mediaRoomManager.ts` (SFU room/transport/producer/consumer logic)
+- `chat-backend/src/mediasoup/recordingManager.ts` (server-side recording, SDP/FFmpeg pipeline, rotation handling)
 
 Client key files:
 
 - `chat-frontend/components/room.js` (room UI + signaling + mediasoup init)
-- `chat-frontend/utils/callService.js` (socket helper wrappers)
+- `chat-frontend/utils/callService.js` (socket helper wrappers, including `MS-produce` `appData`)
+
+---
+
+## 1.1) Latest group-call updates (important for app developers)
+
+This project now includes cross-platform and recording-oriented updates for group calls:
+
+1. `MS-produce` supports video metadata via `appData: { width, height, rotation }`.
+2. `MS-get-producers` can return `width/height/rotation` for video producers.
+3. Group-call media codec policy is now strict: **audio/opus + video/VP8 only**.
+4. Server recorder now preserves RTP header extensions (`a=extmap`) and applies explicit rotation transforms (`90/180/270`) when provided.
+
+### App developer update checklist
+
+1. Update your client `MS-produce` payload to include `appData.rotation` (normalized to `0/90/180/270`, default `0`).
+2. Keep sending `appData.width` and `appData.height` for video producers.
+3. Do not strip RTP header extensions from produced RTP params (especially `urn:3gpp:video-orientation`).
+4. Continue consume flow exactly: `MS-consume` → attach track → `MS-resume-consumer`.
+5. Ensure clients send/consume **Opus + VP8** capabilities and do not publish H264 in group-call flows.
 
 ---
 
@@ -126,7 +146,6 @@ Server actions:
   "rtpCapabilities": {
     "codecs": [
       { "kind": "audio", "mimeType": "audio/opus", "clockRate": 48000, "channels": 2, "preferredPayloadType": 111 },
-      { "kind": "video", "mimeType": "video/H264", "clockRate": 90000, "parameters": { "packetization-mode": 1, "profile-level-id": "42e01f", "level-asymmetry-allowed": 1 } },
       { "kind": "video", "mimeType": "video/VP8", "clockRate": 90000, "preferredPayloadType": 96 }
     ],
     "headerExtensions": [],
@@ -139,8 +158,8 @@ Client loads these into mediasoup `Device.load({ routerRtpCapabilities })`.
 
 **Cross-platform requirement (Web ↔ Flutter):**
 
-- Keep both **H264** and **VP8** enabled server-side. Flutter/mobile endpoints commonly negotiate H264 first, while many web flows still use VP8.
-- Do not force a single video codec in clients unless all platforms in the room support it.
+- Group calls are now enforced as **VP8 video + Opus audio**.
+- Clients should filter consume capabilities to Opus/VP8 (plus VP8 RTX) before calling `MS-consume`.
 
 ---
 
@@ -250,10 +269,17 @@ When send transport emits `produce`, client sends:
   "roomId": "69b81151f7369a77bd3c5da6",
   "userId": "69b8108df7369a77bd3c5d3a",
   "transportId": "21c692ab-da92-4a1f-b90d-22a8640dbae4",
-  "kind": "audio",
-  "rtpParameters": { "mid": "0", "codecs": [], "headerExtensions": [], "encodings": [], "rtcp": {} }
+  "kind": "video",
+  "rtpParameters": { "mid": "0", "codecs": [], "headerExtensions": [], "encodings": [], "rtcp": {} },
+  "encodings": [{ "maxBitrate": 450000, "maxFramerate": 15, "scalabilityMode": "L1T1" }],
+  "appData": { "width": 360, "height": 640, "rotation": 90 }
 }
 ```
+
+For **video** producers, send `appData.width`, `appData.height`, and `appData.rotation`.
+
+- `rotation` should be normalized to: `0 | 90 | 180 | 270`
+- If unknown, send `rotation: 0`
 
 **ACK**
 
@@ -269,7 +295,7 @@ After creating producer, backend emits to other peers:
 {
   "producerId": "f3879f77-b944-44ae-bb52-cd58772d3cad",
   "userId": "69b8108df7369a77bd3c5d3a",
-  "kind": "audio"
+  "kind": "video"
 }
 ```
 
@@ -299,10 +325,19 @@ There are two consumption entry points:
 {
   "ok": true,
   "producers": [
-    { "producerId": "6d668d07-ab11-4c33-96f6-de139f2cc020", "userId": "otherUserId", "kind": "video" }
+    {
+      "producerId": "6d668d07-ab11-4c33-96f6-de139f2cc020",
+      "userId": "otherUserId",
+      "kind": "video",
+      "width": 360,
+      "height": 640,
+      "rotation": 90
+    }
   ]
 }
 ```
+
+`width/height/rotation` are optional metadata (mainly for video/recording layout).
 
 ### `MS-consume` (ACK)
 
@@ -533,11 +568,13 @@ From `mediaRoomManager.ts`:
   - `transports` (direction-aware)
   - `producers`
   - `consumers`
+  - `producerMeta` (`width/height/rotation` per producer)
 
 Behavior details:
 
 - `createConsumer` only uses peer's **recv** transport
 - `router.canConsume` guard prevents incompatible consume
+- server consume path uses router `canConsume` strictly with Opus/VP8-filtered capabilities
 - consumers start paused and require `MS-resume-consumer`
 - periodic video keyframe requests improve freeze recovery
 - when last peer leaves room, router is closed and room deleted
@@ -567,23 +604,26 @@ Behavior details:
 
 ## Codec compatibility rules (critical for Web ↔ Flutter)
 
-- Router must advertise both `video/H264` and `video/VP8`.
-- Flutter should prefer H264 (`packetization-mode=1`, profile compatible with baseline/constrained baseline), but must still consume VP8 if negotiated by a web sender.
-- Web client should load router caps as-is and let mediasoup negotiation pick compatible codec.
-- Server-side recorder must not hardcode one input codec for all streams; mixed rooms can contain both H264 and VP8 producers at different times.
+- Router advertises **audio/opus** and **video/VP8** for group calls.
+- Web and mobile clients should explicitly prefer VP8 for video produce and pass Opus/VP8 capabilities for consume.
+- Server rejects non-Opus audio or non-VP8 video `MS-produce` requests with `unsupported-codec`.
+- Server-side recorder must keep codec parsing dynamic from SDP, but active group-call producers are VP8/Opus.
 
 ## Orientation / rotation rules (critical for server recording)
 
 - **Do not filter out** RTP header extension `urn:3gpp:video-orientation` in any client or gateway.
-- When producing video from mobile/web clients, send `appData.width` and `appData.height` with the producer to help server-side layout/orientation decisions.
-- For portrait sources in recordings, apply one transpose step server-side during FFmpeg composition so the final MP4 is upright.
+- When producing video from mobile/web clients, send `appData.width`, `appData.height`, and `appData.rotation`.
+- Recorder SDP now preserves RTP header extensions (`a=extmap`) so orientation metadata is available to FFmpeg.
+- Recording rotation logic:
+  - if explicit `rotation` exists, recorder applies exact transform (`90`, `180`, `270`)
+  - if explicit rotation is missing, recorder falls back to legacy portrait transpose behavior
 - Keep web rendering with `object-fit: contain`; do not add CSS rotation in the player unless debugging a specific device issue.
 
 ## React / Web
 
 - Use `mediasoup-client` `Device`, `createSendTransport`, `createRecvTransport`
 - Persist socket and mediasoup state in refs/store to survive rerenders
-- On video produce, pass `appData: { width, height }` so the recorder can orient portrait streams correctly
+- On video produce, pass `appData: { width, height, rotation }` (rotation normalized to `0/90/180/270`)
 - On socket reconnect:
   - re-join room
   - reinitialize transports/producers/consumers
@@ -595,7 +635,7 @@ Behavior details:
 - Keep separate send/recv transports conceptually, matching backend `direction`
 - Implement consume-resume flow exactly (`consume` then `resume`)
 - Ensure produced RTP parameters are passed as generated by Flutter WebRTC (no custom stripping of header extensions)
-- Send producer appData width/height when available
+- Send producer appData width/height/rotation when available (rotation fallback to `0` if unknown)
 
 ## Laravel / Other backend adapters
 
@@ -638,16 +678,24 @@ Client should:
    - `transport ice state`
    - `transport selected tuple`
    - `transport dtls state`
-5. Check `MS-get-rtp-capabilities` contains both H264 and VP8 for mixed web/flutter rooms
+5. Check `MS-get-rtp-capabilities` contains Opus + VP8 (and VP8 RTX, if present)
 6. Confirm `MS-resume-consumer` is being sent after track attach
 7. Confirm no duplicate/stale consumed producer cache blocking re-consume
 
 ## 10.1) Debug checklist for rotated recordings (app → web/server-side recording)
 
-1. Confirm producer metadata includes width/height (`appData.width`, `appData.height`)
+1. Confirm producer metadata includes width/height/rotation (`appData.width`, `appData.height`, `appData.rotation`)
 2. Confirm no client/gateway code strips `urn:3gpp:video-orientation`
-3. Confirm recorder applies portrait transpose only when source dimensions are portrait
-4. Confirm web player uses `object-fit: contain` without additional CSS transform rotation
+3. Confirm recorder receives/extmaps in SDP (`a=extmap`) and applies explicit rotation when provided
+4. For legacy clients without `rotation`, confirm fallback portrait transpose still works
+5. Confirm web player uses `object-fit: contain` without additional CSS transform rotation
+
+## 10.2) Debug checklist for `cannot-consume` in mixed Web/Flutter rooms
+
+1. Verify router capabilities include Opus + VP8.
+2. Confirm client consume payload is filtered to Opus/VP8 (plus VP8 RTX if present).
+3. Check `MS-produce` failures for `unsupported-codec` (indicates client still sending H264 or non-Opus).
+4. Re-check consume flow: `MS-consume` -> attach track -> `MS-resume-consumer`.
 
 ---
 
