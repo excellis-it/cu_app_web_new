@@ -94,6 +94,14 @@ const recordingInputRwTimeoutUs = Math.max(
   3000000,
   Number(process.env.RECORDING_INPUT_RW_TIMEOUT_US) || 10000000,
 );
+const recordingSigintTimeoutMs = Math.max(
+  2000,
+  Number(process.env.RECORDING_FFMPEG_SIGINT_TIMEOUT_MS) || 7000,
+);
+const recordingSigtermTimeoutMs = Math.max(
+  2000,
+  Number(process.env.RECORDING_FFMPEG_SIGTERM_TIMEOUT_MS) || 5000,
+);
 let nextPort = rtpBasePort;
 const usedPorts: Set<number> = new Set();
 
@@ -211,6 +219,92 @@ function runFfmpegCommand(args: string[]): Promise<void> {
       );
     });
   });
+}
+
+function waitForProcessClose(
+  proc: ReturnType<typeof spawn>,
+  timeoutMs: number,
+): Promise<boolean> {
+  if (proc.exitCode !== null) return Promise.resolve(true);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (closed: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(closed);
+    };
+
+    const onClose = () => done(true);
+    proc.once("close", onClose);
+
+    const timer = setTimeout(() => {
+      proc.removeListener("close", onClose);
+      done(proc.exitCode !== null);
+    }, timeoutMs);
+  });
+}
+
+async function shutdownFfmpegProcess(params: {
+  session: RecordingSession;
+  ffmpegProcess: ReturnType<typeof spawn>;
+  recordingId: string;
+  context: "stop" | "restart";
+}): Promise<void> {
+  const {
+    session,
+    ffmpegProcess,
+    recordingId,
+    context,
+  } = params;
+
+  if (session.ffmpegExited || ffmpegProcess.exitCode !== null) return;
+
+  try {
+    ffmpegProcess.stdin?.write("q\n");
+    ffmpegProcess.stdin?.end();
+  } catch {
+    // ignore
+  }
+
+  let closed = await waitForProcessClose(ffmpegProcess, recordingStopTimeoutMs);
+  if (closed || session.ffmpegExited) return;
+
+  console.warn(`[recording:${recordingId}] ffmpeg did not exit after q, sending SIGINT`, {
+    context,
+  });
+  try {
+    ffmpegProcess.kill("SIGINT");
+  } catch {
+    // ignore
+  }
+
+  closed = await waitForProcessClose(ffmpegProcess, recordingSigintTimeoutMs);
+  if (closed || session.ffmpegExited) return;
+
+  console.warn(`[recording:${recordingId}] ffmpeg still running after SIGINT, sending SIGTERM`, {
+    context,
+  });
+  try {
+    ffmpegProcess.kill("SIGTERM");
+  } catch {
+    // ignore
+  }
+
+  closed = await waitForProcessClose(ffmpegProcess, recordingSigtermTimeoutMs);
+  if (closed || session.ffmpegExited) return;
+
+  console.warn(`[recording:${recordingId}] ffmpeg still running after SIGTERM, sending SIGKILL`, {
+    context,
+  });
+  try {
+    ffmpegProcess.kill("SIGKILL");
+  } catch {
+    // ignore
+  }
+
+  await waitForProcessClose(ffmpegProcess, 2000);
 }
 
 async function repairNonPlayableSegment(segmentPath: string, recordingId: string): Promise<string | null> {
@@ -640,7 +734,10 @@ function buildFfmpegArgs(params: {
       "-threads", "0",             // auto-detect: use all available CPU cores
       "-c:a", "aac",
       "-b:a", "128k",
-      "-movflags", "+faststart",
+      // Segment output is written continuously and can be interrupted during
+      // restart/stop; fragmented MP4 keeps essential metadata at the front so
+      // segments remain probeable even when closure is not perfectly graceful.
+      "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
       "-muxpreload", "0",
       "-muxdelay", "0",
     );
@@ -649,6 +746,7 @@ function buildFfmpegArgs(params: {
       "-map", "[aout]",
       "-c:a", "aac",
       "-b:a", "128k",
+      "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
     );
   }
 
@@ -806,20 +904,12 @@ export async function restartServerRecording(params: {
     }
     await new Promise((r) => setTimeout(r, 250));
 
-    // Graceful shutdown — send 'q' and allow enough time for MP4 finalization.
-    try {
-       ffmpegProcess.stdin?.write("q\n");
-       ffmpegProcess.stdin?.end();
-    } catch { }
-
-    await new Promise((resolve) => {
-      ffmpegProcess.once("close", resolve);
-      setTimeout(() => {
-        if (!session.ffmpegExited) {
-           try { ffmpegProcess.kill("SIGKILL"); } catch { }
-        }
-        resolve(null);
-      }, recordingStopTimeoutMs);
+    // Prefer graceful FFmpeg termination to preserve MP4 metadata.
+    await shutdownFfmpegProcess({
+      session,
+      ffmpegProcess,
+      recordingId,
+      context: "restart",
     });
 
     for (const st of streams) {
@@ -1204,23 +1294,12 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
     });
   }
 
-  if (!session.ffmpegExited) {
-    try { 
-       ffmpegProcess.stdin?.write("q\n");
-       ffmpegProcess.stdin?.end();
-    } catch { }
-
-    await new Promise((resolve) => {
-      ffmpegProcess.once("close", resolve);
-      // More aggressive fallback if graceful 'q' fail
-      setTimeout(() => { 
-        if (!session.ffmpegExited) {
-          ffmpegProcess.kill("SIGKILL");
-        }
-        resolve(null);
-      }, recordingStopTimeoutMs);
-    });
-  }
+  await shutdownFfmpegProcess({
+    session,
+    ffmpegProcess,
+    recordingId,
+    context: "stop",
+  });
 
   for (const st of streams) {
     stopKeyframeTimer(st.consumer.id);
