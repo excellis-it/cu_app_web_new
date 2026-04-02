@@ -28,6 +28,7 @@ type ServerStream = {
   width?: number;
   height?: number;
   rotation?: number;
+  hasVideoOrientationExtmap?: boolean;
 };
 
 type RecordingSession = {
@@ -53,6 +54,7 @@ const DEFAULT_RTP_BASE_PORT = 50000;
 const DEFAULT_RTP_MAX_PORT = 59999;
 const rtpBasePort = Number(process.env.RECORDING_RTP_BASE_PORT) || DEFAULT_RTP_BASE_PORT;
 const rtpMaxPort = Number(process.env.RECORDING_RTP_MAX_PORT) || DEFAULT_RTP_MAX_PORT;
+const applyHalfTurnRotation = String(process.env.RECORDING_APPLY_180_ROTATION || "").toLowerCase() === "true";
 let nextPort = rtpBasePort;
 const usedPorts: Set<number> = new Set();
 
@@ -144,6 +146,12 @@ function buildSdpForConsumer(params: {
     .join("\n");
 }
 
+function hasVideoOrientationExtmap(consumer: types.Consumer): boolean {
+  return (consumer.rtpParameters?.headerExtensions || []).some(
+    (ext) => String(ext.uri || "").toLowerCase() === "urn:3gpp:video-orientation",
+  );
+}
+
 /**
  * Compute the optimal canvas size based on the actual participant video
  * dimensions instead of using a fixed 640×480 for every call.
@@ -174,7 +182,7 @@ function buildVideoGridFilter(params: {
   videoInputIndices: number[];
   targetWidth: number;
   targetHeight: number;
-  videoDimensions?: Map<number, { width: number; height: number; rotation?: number }>;
+  videoDimensions?: Map<number, { width: number; height: number; rotation?: number; hasVideoOrientationExtmap?: boolean }>;
   baseLabel: string;
 }): { filterParts: string[]; videoOutputLabel: string } {
   const { videoInputIndices, targetWidth, targetHeight, videoDimensions, baseLabel } = params;
@@ -195,6 +203,7 @@ function buildVideoGridFilter(params: {
     const label = `sv${i}`;
     const dims = videoDimensions?.get(idx - 1);
     const hasExplicitRotation = !!dims && typeof dims.rotation === "number";
+    const streamHasVideoOrientationExtmap = !!dims?.hasVideoOrientationExtmap;
     const normalizedRotation = (() => {
       if (!dims || typeof dims.rotation !== "number") return 0;
       const r = ((dims.rotation % 360) + 360) % 360;
@@ -208,17 +217,36 @@ function buildVideoGridFilter(params: {
     const isPortrait = !!(effectiveWidth && effectiveHeight && effectiveHeight > effectiveWidth);
 
     // Scale each video to fit the cell, preserving aspect ratio.
-    // If client provided rotation metadata, apply only that rotation.
-    // Otherwise, for portrait streams use a single transpose fallback for legacy clients.
+    // Orientation source priority:
+    // 1) If RTP video-orientation extmap exists, trust RTP orientation signaling
+    //    and skip manual rotation to avoid double-rotating frames.
+    // 2) Otherwise, apply explicit appData.rotation when available.
+    // 3) Otherwise, use portrait transpose fallback for legacy clients.
     const chain: string[] = [`[${idx}:v]setpts=PTS-STARTPTS,fps=15`];
-    if (normalizedRotation === 90) {
-      chain.push("transpose=1");
-    } else if (normalizedRotation === 270) {
-      chain.push("transpose=2:passthrough=portrait");
-    } else if (normalizedRotation === 180) {
-      chain.push("hflip,vflip");
-    } else if (!hasExplicitRotation && isPortrait) {
-      chain.push("transpose=2:passthrough=portrait");
+    if (streamHasVideoOrientationExtmap && hasExplicitRotation) {
+      console.log("[recording:orientation] video-orientation extmap present; ignoring appData.rotation", {
+        streamIndex: i,
+        appRotation: normalizedRotation,
+      });
+    }
+    if (!streamHasVideoOrientationExtmap) {
+      if (normalizedRotation === 90) {
+        chain.push("transpose=1");
+      } else if (normalizedRotation === 270) {
+        chain.push("transpose=2:passthrough=portrait");
+      } else if (normalizedRotation === 180) {
+        // Half-turn orientation from mobile app metadata is often unstable.
+        // Keep it opt-in so recordings stay upright by default.
+        if (applyHalfTurnRotation) {
+          chain.push("hflip,vflip");
+        } else {
+          console.log("[recording:orientation] skipping appData 180 rotation (set RECORDING_APPLY_180_ROTATION=true to enable)", {
+            streamIndex: i,
+          });
+        }
+      } else if (!hasExplicitRotation && isPortrait) {
+        chain.push("transpose=2:passthrough=portrait");
+      }
     }
     chain.push(
       `scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear`,
@@ -244,7 +272,7 @@ function buildFfmpegArgs(params: {
   videoInputIndices: number[];
   audioInputIndices: number[];
   sdpPathsInOrder: string[];
-  videoDimensions?: Map<number, { width: number; height: number; rotation?: number }>;
+  videoDimensions?: Map<number, { width: number; height: number; rotation?: number; hasVideoOrientationExtmap?: boolean }>;
 }) {
   const {
     outputPath,
@@ -550,6 +578,8 @@ export async function startServerRecording(params: {
       width: streamWidth,
       height: streamHeight,
       rotation: (s as any).rotation,
+      hasVideoOrientationExtmap:
+        s.kind === "video" ? hasVideoOrientationExtmap(consumer) : false,
     });
   }
 
@@ -576,7 +606,7 @@ export async function startServerRecording(params: {
     else audioInputIndices.push(i);
   }
 
-  const videoDimensions = new Map<number, { width: number; height: number; rotation?: number }>();
+  const videoDimensions = new Map<number, { width: number; height: number; rotation?: number; hasVideoOrientationExtmap?: boolean }>();
   for (let i = 0; i < liveStreams.length; i++) {
     const stream = liveStreams[i];
     if (stream.kind === "video" && stream.width && stream.height) {
@@ -584,6 +614,7 @@ export async function startServerRecording(params: {
         width: stream.width,
         height: stream.height,
         rotation: stream.rotation,
+        hasVideoOrientationExtmap: stream.hasVideoOrientationExtmap,
       });
     }
   }

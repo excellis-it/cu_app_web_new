@@ -84,6 +84,10 @@ TURN_URL_UDP=turn:your-turn-host:3478?transport=udp
 TURN_URL_TCP=turn:your-turn-host:3478?transport=tcp
 TURN_USERNAME=your_turn_username
 TURN_CREDENTIAL=your_turn_credential
+# Server-side call recording orientation:
+# Keep default false to avoid accidental 180° flips from unstable mobile metadata.
+# Set true only if your deployment consistently requires half-turn correction.
+RECORDING_APPLY_180_ROTATION=false
 ```
 
 ---

@@ -615,8 +615,10 @@ Behavior details:
 - When producing video from mobile/web clients, send `appData.width`, `appData.height`, and `appData.rotation`.
 - Recorder SDP now preserves RTP header extensions (`a=extmap`) so orientation metadata is available to FFmpeg.
 - Recording rotation logic:
-  - if explicit `rotation` exists, recorder applies exact transform (`90`, `180`, `270`)
+  - if RTP `urn:3gpp:video-orientation` extmap is present, recorder trusts RTP orientation and skips manual appData rotation to avoid double-rotation
+  - if extmap is missing and explicit `rotation` exists, recorder applies explicit transform (`90`, `270`; `180` is opt-in server flag)
   - if explicit rotation is missing, recorder falls back to legacy portrait transpose behavior
+- `RECORDING_APPLY_180_ROTATION=true` can be enabled only if your mobile source reliably needs 180-degree correction.
 - Keep web rendering with `object-fit: contain`; do not add CSS rotation in the player unless debugging a specific device issue.
 
 ## React / Web
@@ -686,8 +688,9 @@ Client should:
 
 1. Confirm producer metadata includes width/height/rotation (`appData.width`, `appData.height`, `appData.rotation`)
 2. Confirm no client/gateway code strips `urn:3gpp:video-orientation`
-3. Confirm recorder receives/extmaps in SDP (`a=extmap`) and applies explicit rotation when provided
-4. For legacy clients without `rotation`, confirm fallback portrait transpose still works
+3. Confirm recorder receives/extmaps in SDP (`a=extmap`) and does not double-rotate when extmap is present
+4. If 180-degree flips are needed for a specific deployment, enable `RECORDING_APPLY_180_ROTATION=true`; otherwise keep default
+5. For legacy clients without `rotation`, confirm fallback portrait transpose still works
 5. Confirm web player uses `object-fit: contain` without additional CSS transform rotation
 
 ## 10.2) Debug checklist for `cannot-consume` in mixed Web/Flutter rooms
