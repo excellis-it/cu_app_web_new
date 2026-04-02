@@ -45,7 +45,9 @@ type RecordingSession = {
   keyframeTimer: NodeJS.Timeout | null;
   ffmpegExited: boolean;
   ffmpegExitCode: number | null;
+  latestEncodedTimeSec: number;
   commonStartMicros: number;
+  startedAtMs: number;
   segments: string[];
 };
 
@@ -58,20 +60,20 @@ const rtpBasePort = Number(process.env.RECORDING_RTP_BASE_PORT) || DEFAULT_RTP_B
 const rtpMaxPort = Number(process.env.RECORDING_RTP_MAX_PORT) || DEFAULT_RTP_MAX_PORT;
 const applyHalfTurnRotation = String(process.env.RECORDING_APPLY_180_ROTATION || "").toLowerCase() === "true";
 const recordingOutputFps = Math.max(
-  8,
-  Math.min(30, Number(process.env.RECORDING_OUTPUT_FPS) || 12),
+  6,
+  Math.min(24, Number(process.env.RECORDING_OUTPUT_FPS) || 10),
 );
 const recordingCanvasWidth = Math.max(
   320,
-  Number(process.env.RECORDING_CANVAS_WIDTH) || 960,
+  Number(process.env.RECORDING_CANVAS_WIDTH) || 854,
 ) & ~1;
 const recordingCanvasHeight = Math.max(
   240,
-  Number(process.env.RECORDING_CANVAS_HEIGHT) || 540,
+  Number(process.env.RECORDING_CANVAS_HEIGHT) || 480,
 ) & ~1;
 const recordingStopTimeoutMs = Math.max(
   3000,
-  Number(process.env.RECORDING_FFMPEG_STOP_TIMEOUT_MS) || 10000,
+  Number(process.env.RECORDING_FFMPEG_STOP_TIMEOUT_MS) || 20000,
 );
 let nextPort = rtpBasePort;
 const usedPorts: Set<number> = new Set();
@@ -186,15 +188,15 @@ function computeCanvasSize(
 ): { width: number; height: number } {
   if (videoCount >= 5) {
     return {
-      width: Math.min(recordingCanvasWidth, 640),
-      height: Math.min(recordingCanvasHeight, 360),
+      width: Math.min(recordingCanvasWidth, 480),
+      height: Math.min(recordingCanvasHeight, 270),
     };
   }
 
   if (videoCount >= 3) {
     return {
-      width: Math.min(recordingCanvasWidth, 854),
-      height: Math.min(recordingCanvasHeight, 480),
+      width: Math.min(recordingCanvasWidth, 640),
+      height: Math.min(recordingCanvasHeight, 360),
     };
   }
 
@@ -349,21 +351,21 @@ function buildFfmpegArgs(params: {
   const audioInputIndices = originalAudioIndices.map(i => i + 1);
 
   const args: string[] = [
-    "-fflags", "+genpts+discardcorrupt",
-    "-max_interleave_delta", "0",
+    "-fflags", "+genpts+igndts+discardcorrupt+nobuffer",
+    "-max_interleave_delta", "1000000",
     "-f", "lavfi", "-i", `color=c=black:s=${targetWidth}x${targetHeight}:r=${recordingOutputFps}`,
   ];
 
   for (const sdpPath of sdpPathsInOrder) {
     args.push(
-      "-thread_queue_size", "32768",
-      "-use_wallclock_as_timestamps", "1",
-      "-fflags", "+genpts+discardcorrupt",
-      "-analyzeduration", "1500000",
-      "-probesize", "1500000",
-      "-max_delay", "10000000",
-      "-reorder_queue_size", "2048",
-      "-buffer_size", "64M",
+      "-thread_queue_size", "8192",
+      "-fflags", "+genpts+igndts+discardcorrupt+nobuffer",
+      "-flags", "low_delay",
+      "-analyzeduration", "750000",
+      "-probesize", "750000",
+      "-max_delay", "750000",
+      "-reorder_queue_size", "256",
+      "-buffer_size", "20M",
       "-rw_timeout", "15000000",
       "-protocol_whitelist", "file,udp,rtp,rtcp",
     );
@@ -393,7 +395,7 @@ function buildFfmpegArgs(params: {
   for (let i = 0; i < audioInputIndices.length; i++) {
     const idx = audioInputIndices[i];
     filterParts.push(
-      `[${idx}:a]aresample=async=1:min_hard_comp=0.100:first_pts=0,asetpts=PTS-STARTPTS[anorm${i}]`,
+      `[${idx}:a]aresample=async=1000:min_hard_comp=0.100:first_pts=0,asetpts=N/SR/TB[anorm${i}]`,
     );
   }
   const normalizedAudioLabels = audioInputIndices.map((_, i) => `[anorm${i}]`).join("");
@@ -401,7 +403,7 @@ function buildFfmpegArgs(params: {
   // Using aresample async here avoids hard DTS resets seen with sample-counter
   // rewrites under packet jitter and mixed-client start offsets.
   filterParts.push(
-    `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=2:normalize=0,aresample=async=1:min_hard_comp=0.100:first_pts=0[aout]`
+    `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=2:normalize=0,aresample=async=1000:min_hard_comp=0.100:first_pts=0,asetpts=N/SR/TB[aout]`
   );
 
   args.push("-filter_complex", filterParts.join(";"));
@@ -424,6 +426,8 @@ function buildFfmpegArgs(params: {
       "-c:a", "aac",
       "-b:a", "128k",
       "-movflags", "+faststart",
+      "-muxpreload", "0",
+      "-muxdelay", "0",
     );
   } else {
     args.push(
@@ -433,7 +437,7 @@ function buildFfmpegArgs(params: {
     );
   }
 
-  args.push("-max_muxing_queue_size", "8192", "-f", "mp4", "-y", outputPath);
+  args.push("-max_muxing_queue_size", "4096", "-f", "mp4", "-y", outputPath);
   return args;
 }
 
@@ -718,11 +722,30 @@ export async function startServerRecording(params: {
 
   const ffmpegStderrPrefix = `[recording:${recordingId}] ffmpeg`;
   const ffmpegProcess = spawn(ffmpegBinary, args, { stdio: ["pipe", "pipe", "pipe"] });
+  let sessionRef: RecordingSession | null = null;
 
   ffmpegProcess.stderr.on("data", (chunk) => {
     const lines = chunk.toString().split("\n");
     for (const line of lines) {
-      if (line.trim()) console.log(`${ffmpegStderrPrefix} ${line.trim()}`);
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      const progressMatch = /time=(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/.exec(trimmed);
+      if (progressMatch) {
+        const h = Number(progressMatch[1]) || 0;
+        const m = Number(progressMatch[2]) || 0;
+        const s = Number(progressMatch[3]) || 0;
+        const encodedTimeSec = h * 3600 + m * 60 + s;
+        const active = activeSessions.get(recordingId);
+        if (active && encodedTimeSec > active.latestEncodedTimeSec) {
+          active.latestEncodedTimeSec = encodedTimeSec;
+        }
+        if (sessionRef && encodedTimeSec > sessionRef.latestEncodedTimeSec) {
+          sessionRef.latestEncodedTimeSec = encodedTimeSec;
+        }
+      }
+
+      console.log(`${ffmpegStderrPrefix} ${trimmed}`);
     }
   });
 
@@ -799,10 +822,13 @@ export async function startServerRecording(params: {
     keyframeTimer, 
     ffmpegExited: false, 
     ffmpegExitCode: null, 
+    latestEncodedTimeSec: 0,
     commonStartMicros, 
+    startedAtMs: Date.now(),
     segments: [...existingSegments, outputPath] 
   };
   activeSessions.set(recordingId, session);
+  sessionRef = session;
 
   ffmpegProcess.once("close", (code) => {
     if (activeSessions.has(recordingId)) {
@@ -823,9 +849,42 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
 
   const { ffmpegProcess, outputPath, allocatedPorts, keyframeTimer, segments, streams } = session;
   if (keyframeTimer) clearInterval(keyframeTimer);
-  
-  // Wait for pending buffers
-  await new Promise((r) => setTimeout(r, 1500));
+
+  // Pause consumers before requesting ffmpeg stop to reduce in-flight jitter bursts.
+  for (const st of streams) {
+    try {
+      await st.consumer.pause();
+    } catch {
+      // Ignore pause failures during teardown.
+    }
+  }
+  await new Promise((r) => setTimeout(r, 250));
+
+  // Let ffmpeg drain queued packets after inputs are paused so we keep as much
+  // of the live-call tail as possible before sending quit.
+  const drainDeadline = Date.now() + Math.min(8000, Math.max(1000, recordingStopTimeoutMs - 2000));
+  let lastProgressSec = session.latestEncodedTimeSec;
+  let progressIdleMs = 0;
+  while (!session.ffmpegExited && Date.now() < drainDeadline) {
+    await new Promise((r) => setTimeout(r, 250));
+    if (session.latestEncodedTimeSec > lastProgressSec + 0.01) {
+      lastProgressSec = session.latestEncodedTimeSec;
+      progressIdleMs = 0;
+      continue;
+    }
+    progressIdleMs += 250;
+    if (progressIdleMs >= 1250) break;
+  }
+
+  const wallElapsedSec = Math.max(0, (Date.now() - session.startedAtMs) / 1000);
+  const lagSec = Math.max(0, wallElapsedSec - session.latestEncodedTimeSec);
+  if (lagSec > 1) {
+    console.warn(`[recording:${recordingId}] ffmpeg stop lag`, {
+      wallElapsedSec: Number(wallElapsedSec.toFixed(2)),
+      encodedSec: Number(session.latestEncodedTimeSec.toFixed(2)),
+      lagSec: Number(lagSec.toFixed(2)),
+    });
+  }
 
   if (!session.ffmpegExited) {
     try { 
