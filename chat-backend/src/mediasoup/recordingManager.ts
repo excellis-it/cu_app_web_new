@@ -945,7 +945,7 @@ function buildFfmpegArgs(params: {
       "-x264-params", "rc-lookahead=0:ref=1:me=dia:subme=0:trellis=0:weightp=0:scenecut=0",
       "-threads",
       recordingLibx264Threads > 0 ? String(recordingLibx264Threads) : "0",
-    );
+    ];
     videoOut.push(
       "-c:a", "aac",
       "-b:a", "128k",
