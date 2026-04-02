@@ -74,11 +74,11 @@ export function connectTransport(socket, { roomId, userId, transportId, dtlsPara
   });
 }
 
-export function produce(socket, { roomId, userId, transportId, kind, rtpParameters, encodings }) {
+export function produce(socket, { roomId, userId, transportId, kind, rtpParameters, encodings, appData }) {
   return new Promise((resolve, reject) => {
     socket.emit(
       "MS-produce",
-      { roomId, userId, transportId, kind, rtpParameters, encodings },
+      { roomId, userId, transportId, kind, rtpParameters, encodings, appData },
       (res) => {
         if (res && res.ok && res.id) resolve(res.id);
         else reject(res?.error || "failed");
@@ -112,4 +112,3 @@ export function consume(socket, { roomId, userId, producerId, rtpCapabilities })
     );
   });
 }
-

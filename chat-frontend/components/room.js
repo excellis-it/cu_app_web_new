@@ -1674,6 +1674,7 @@ const Room = ({
           // those tracks consistently.
           let reportedWidth = videoSettings.width;
           let reportedHeight = videoSettings.height;
+          let reportedRotation = 0;
 
           // Fallback: some mobile browsers return undefined from getSettings()
           if (!reportedWidth || !reportedHeight) {
@@ -1700,8 +1701,14 @@ const Room = ({
           if (isMobileBrowser && typeof window !== "undefined") {
             const angle =
               screen?.orientation?.angle ?? window.orientation ?? 0;
+            const normalizedAngle = ((Number(angle) % 360) + 360) % 360;
+            if (normalizedAngle === 90 || normalizedAngle === 270) {
+              reportedRotation = normalizedAngle;
+            } else if (normalizedAngle === 180) {
+              reportedRotation = 180;
+            }
             const isPortraitOrientation =
-              angle === 0 || angle === 180;
+              normalizedAngle === 0 || normalizedAngle === 180;
             if (
               isPortraitOrientation &&
               reportedWidth > reportedHeight
@@ -1718,6 +1725,7 @@ const Room = ({
             appData: {
               width: reportedWidth,
               height: reportedHeight,
+              rotation: reportedRotation,
             },
           });
           console.log("[room.js] video producer created", {
