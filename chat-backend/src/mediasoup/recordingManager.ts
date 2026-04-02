@@ -77,6 +77,23 @@ const recordingStopTimeoutMs = Math.max(
   3000,
   Number(process.env.RECORDING_FFMPEG_STOP_TIMEOUT_MS) || 20000,
 );
+const recordingInputThreadQueueSize = Math.max(
+  1024,
+  Number(process.env.RECORDING_INPUT_THREAD_QUEUE_SIZE) || 8192,
+);
+const recordingInputMaxDelayUs = Math.max(
+  100000,
+  Number(process.env.RECORDING_INPUT_MAX_DELAY_US) || 600000,
+);
+const recordingInputReorderQueueSize = Math.max(
+  32,
+  Number(process.env.RECORDING_INPUT_REORDER_QUEUE_SIZE) || 256,
+);
+const recordingInputBufferSize = process.env.RECORDING_INPUT_BUFFER_SIZE || "8M";
+const recordingInputRwTimeoutUs = Math.max(
+  3000000,
+  Number(process.env.RECORDING_INPUT_RW_TIMEOUT_US) || 10000000,
+);
 let nextPort = rtpBasePort;
 const usedPorts: Set<number> = new Set();
 
@@ -169,6 +186,139 @@ async function findLatestPlayableSegment(segments: string[]): Promise<string | n
     // eslint-disable-next-line no-await-in-loop
     if (await isPlayableRecordingFile(segmentPath)) return segmentPath;
   }
+  return null;
+}
+
+function runFfmpegCommand(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegBinary, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    let stdout = "";
+
+    proc.stdout.on("data", (chunk: any) => {
+      if (stdout.length < 4000) stdout += chunk.toString();
+    });
+    proc.stderr.on("data", (chunk: any) => {
+      if (stderr.length < 8000) stderr += chunk.toString();
+    });
+    proc.on("error", (error: any) => reject(error));
+    proc.on("close", (code: any) => {
+      if (code === 0) return resolve();
+      reject(
+        new Error(
+          `ffmpeg failed with code ${code}. stderr=${stderr.slice(0, 2000)} stdout=${stdout.slice(0, 1000)}`,
+        ),
+      );
+    });
+  });
+}
+
+async function repairNonPlayableSegment(segmentPath: string, recordingId: string): Promise<string | null> {
+  const dir = path.dirname(segmentPath);
+  const stem = path.basename(segmentPath, path.extname(segmentPath));
+  const repairedPath = path.join(dir, `${stem}_repaired.mp4`);
+
+  const attempts: Array<{ mode: "copy-video" | "reencode-video"; args: string[] }> = [
+    {
+      mode: "copy-video",
+      args: [
+        "-y",
+        "-fflags",
+        "+genpts+igndts+discardcorrupt",
+        "-err_detect",
+        "ignore_err",
+        "-i",
+        path.resolve(segmentPath),
+        "-map",
+        "0:v:0?",
+        "-map",
+        "0:a:0?",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-af",
+        "aresample=async=1000,asetpts=N/SR/TB",
+        "-movflags",
+        "+faststart",
+        "-max_muxing_queue_size",
+        "4096",
+        path.resolve(repairedPath),
+      ],
+    },
+    {
+      mode: "reencode-video",
+      args: [
+        "-y",
+        "-fflags",
+        "+genpts+igndts+discardcorrupt",
+        "-err_detect",
+        "ignore_err",
+        "-i",
+        path.resolve(segmentPath),
+        "-map",
+        "0:v:0?",
+        "-map",
+        "0:a:0?",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-tune",
+        "zerolatency",
+        "-crf",
+        "30",
+        "-pix_fmt",
+        "yuv420p",
+        "-r",
+        String(recordingOutputFps),
+        "-g",
+        String(recordingOutputFps * 2),
+        "-bf",
+        "0",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-af",
+        "aresample=async=1000,asetpts=N/SR/TB",
+        "-movflags",
+        "+faststart",
+        "-max_muxing_queue_size",
+        "4096",
+        path.resolve(repairedPath),
+      ],
+    },
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      await fsp.rm(repairedPath, { force: true });
+      // eslint-disable-next-line no-await-in-loop
+      await runFfmpegCommand(attempt.args);
+      // eslint-disable-next-line no-await-in-loop
+      const repairedPlayable = await isPlayableRecordingFile(repairedPath);
+      if (repairedPlayable) {
+        console.warn("[recording:server] repaired non-playable segment", {
+          recordingId,
+          source: segmentPath,
+          repairedPath,
+          mode: attempt.mode,
+        });
+        return repairedPath;
+      }
+    } catch (error: any) {
+      console.warn("[recording:server] segment repair attempt failed", {
+        recordingId,
+        source: segmentPath,
+        mode: attempt.mode,
+        error: error?.message || String(error),
+      });
+    }
+  }
+
   return null;
 }
 
@@ -416,14 +566,14 @@ function buildFfmpegArgs(params: {
 
   for (const sdpPath of sdpPathsInOrder) {
     args.push(
-      "-thread_queue_size", "16384",
+      "-thread_queue_size", String(recordingInputThreadQueueSize),
       "-fflags", "+genpts+igndts+discardcorrupt",
       "-analyzeduration", "300000",
       "-probesize", "300000",
-      "-max_delay", "2000000",
-      "-reorder_queue_size", "1024",
-      "-buffer_size", "20M",
-      "-rw_timeout", "15000000",
+      "-max_delay", String(recordingInputMaxDelayUs),
+      "-reorder_queue_size", String(recordingInputReorderQueueSize),
+      "-buffer_size", recordingInputBufferSize,
+      "-rw_timeout", String(recordingInputRwTimeoutUs),
       "-protocol_whitelist", "file,udp,rtp,rtcp",
     );
 
@@ -1093,7 +1243,14 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
       // eslint-disable-next-line no-await-in-loop
       if (await isPlayableRecordingFile(segmentPath)) {
         playableSegments.push(segmentPath);
+        continue;
       }
+
+      // If ffprobe marks a segment invalid, attempt a quick repair so we do not
+      // lose that entire interval during merge.
+      // eslint-disable-next-line no-await-in-loop
+      const repairedPath = await repairNonPlayableSegment(segmentPath, recordingId);
+      if (repairedPath) playableSegments.push(repairedPath);
     }
     if (playableSegments.length === 0) {
       throw new Error(`No playable segment files found for recordingId=${recordingId}`);
