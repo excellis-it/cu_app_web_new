@@ -400,10 +400,13 @@ function buildFfmpegArgs(params: {
   }
   const normalizedAudioLabels = audioInputIndices.map((_, i) => `[anorm${i}]`).join("");
   // Keep audio timeline monotonic and resilient to late/jittery RTP.
-  // Using aresample async here avoids hard DTS resets seen with sample-counter
-  // rewrites under packet jitter and mixed-client start offsets.
+  // Per-stream aresample already handles async gap-filling and first_pts=0.
+  // A second aresample with first_pts=0 after amix can reset its internal
+  // timestamp origin when late RTP drops cause discontinuities, which cascades
+  // into non-monotonous DTS in the MP4 muxer. Using only asetpts=N/SR/TB
+  // after amix guarantees a strictly monotonic sample-counter timeline.
   filterParts.push(
-    `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=2:normalize=0,aresample=async=1000:min_hard_comp=0.100:first_pts=0,asetpts=N/SR/TB[aout]`
+    `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=2:normalize=0,asetpts=N/SR/TB[aout]`
   );
 
   args.push("-filter_complex", filterParts.join(";"));
