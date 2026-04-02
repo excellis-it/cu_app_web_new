@@ -118,9 +118,9 @@ const recordingInputRwTimeoutUs = Math.max(
   3000000,
   Number(process.env.RECORDING_INPUT_RW_TIMEOUT_US) || 10000000,
 );
-/** When true (default), screen recordings ingest only one video (primary user's largest track) + all audio. Reduces CPU/RTP load when more participants join. Set false for gallery (all cameras). */
+/** When true, screen recordings ingest only one video (primary user's largest track) + all audio. When false (default), all cameras are composited (grid). Set RECORDING_SCREEN_PRIMARY_VIDEO_ONLY=true if you need the lighter single-track mode for large rooms. */
 const screenRecordingPrimaryVideoOnly =
-  String(process.env.RECORDING_SCREEN_PRIMARY_VIDEO_ONLY ?? "true").toLowerCase() === "true";
+  String(process.env.RECORDING_SCREEN_PRIMARY_VIDEO_ONLY ?? "false").toLowerCase() === "true";
 /** Screen recordings default to a lighter canvas than call recordings to keep VP8 decode + x264 ahead of realtime when multiple audio tracks are mixed. Override via RECORDING_CANVAS_* if needed. */
 const screenRecordingCanvasWidth = Math.max(
   320,
@@ -862,20 +862,24 @@ function buildFfmpegArgs(params: {
     videoOutputLabel = grid.videoOutputLabel;
   }
 
-  // Normalize each RTP branch in PTS, then resample. Final asetpts=N/SR/TB after mix yields one monotonic clock for AAC.
+  // Per-input: normalize format + async resample after PTS-STARTPTS. For amix, one more resample + PTS-STARTPTS on the mix output keeps AAC/muxer timestamps monotonic.
   const aformat = "aformat=sample_rates=48000:sample_fmts=fltp:channel_layouts=stereo";
-  for (let i = 0; i < audioInputIndicesFfmpeg.length; i++) {
-    const idx = audioInputIndicesFfmpeg[i];
-    filterParts.push(
-      `[${idx}:a]asetpts=PTS-STARTPTS,aresample=async=1000:min_hard_comp=0.100,${aformat}[a_r${i}]`,
-    );
-  }
+  const branchResample = "aresample=async=1000:min_hard_comp=0.100:first_pts=0";
   if (audioInputIndicesFfmpeg.length === 1) {
-    filterParts.push("[a_r0]asetpts=N/SR/TB[aout]");
+    const idx = audioInputIndicesFfmpeg[0];
+    filterParts.push(
+      `[${idx}:a]asetpts=PTS-STARTPTS,${aformat},${branchResample},asetpts=PTS-STARTPTS[aout]`,
+    );
   } else {
+    for (let i = 0; i < audioInputIndicesFfmpeg.length; i++) {
+      const idx = audioInputIndicesFfmpeg[i];
+      filterParts.push(
+        `[${idx}:a]asetpts=PTS-STARTPTS,${aformat},${branchResample}[a_r${i}]`,
+      );
+    }
     const mixInputs = audioInputIndicesFfmpeg.map((_, i) => `[a_r${i}]`).join("");
     filterParts.push(
-      `${mixInputs}amix=inputs=${audioInputIndicesFfmpeg.length}:duration=longest:dropout_transition=2:normalize=0,aresample=async=1000:min_hard_comp=0.050,${aformat},asetpts=N/SR/TB[aout]`,
+      `${mixInputs}amix=inputs=${audioInputIndicesFfmpeg.length}:duration=longest:dropout_transition=3:normalize=0[a_mix];[a_mix]aresample=async=1000:min_hard_comp=0.150:first_pts=0,${aformat},asetpts=PTS-STARTPTS[aout]`,
     );
   }
 
@@ -903,12 +907,14 @@ function buildFfmpegArgs(params: {
       // Apply +faststart only in merge / repair / upload pipelines on complete files.
       "-muxpreload", "0",
       "-muxdelay", "0",
+      "-avoid_negative_ts", "make_zero",
     );
   } else {
     args.push(
       "-map", "[aout]",
       "-c:a", "aac",
       "-b:a", "128k",
+      "-avoid_negative_ts", "make_zero",
     );
   }
 
