@@ -8,11 +8,19 @@ interface PeerTransport {
   direction: Direction;
 }
 
+type ProducerMeta = {
+  width?: number;
+  height?: number;
+  rotation?: number;
+  source?: string;
+  portraitLock?: boolean;
+};
+
 export interface PeerState {
   transports: Map<string, PeerTransport>;
   producers: Map<string, types.Producer>;
   consumers: Map<string, types.Consumer>;
-  producerMeta: Map<string, { width?: number; height?: number; rotation?: number }>;
+  producerMeta: Map<string, ProducerMeta>;
 }
 
 export interface RoomState {
@@ -397,7 +405,13 @@ export async function createProducer(
   kind: types.MediaKind,
   rtpParameters: types.RtpParameters,
   encodings?: types.RtpEncodingParameters[],
-  appData?: { width?: number; height?: number; rotation?: number },
+  appData?: {
+    width?: number;
+    height?: number;
+    rotation?: number;
+    source?: string;
+    portraitLock?: boolean;
+  },
 ): Promise<types.Producer | null> {
   const room = rooms.get(roomId);
   if (!room) return null;
@@ -424,11 +438,20 @@ export async function createProducer(
   });
   peer.producers.set(producer.id, producer);
 
-  if (appData && (appData.width || appData.height || appData.rotation !== undefined)) {
+  if (
+    appData &&
+    (appData.width ||
+      appData.height ||
+      appData.rotation !== undefined ||
+      appData.source ||
+      appData.portraitLock !== undefined)
+  ) {
     peer.producerMeta.set(producer.id, {
       width: appData.width,
       height: appData.height,
       rotation: appData.rotation,
+      source: appData.source,
+      portraitLock: appData.portraitLock,
     });
   }
 
@@ -543,11 +566,29 @@ export async function restartTransportIce(
 export function getRoomProducers(
   roomId: string,
   excludeUserId?: string
-): { producerId: string; userId: string; kind: types.MediaKind; width?: number; height?: number; rotation?: number }[] {
+): {
+  producerId: string;
+  userId: string;
+  kind: types.MediaKind;
+  width?: number;
+  height?: number;
+  rotation?: number;
+  source?: string;
+  portraitLock?: boolean;
+}[] {
   const room = rooms.get(roomId);
   if (!room) return [];
 
-  const result: { producerId: string; userId: string; kind: types.MediaKind; width?: number; height?: number; rotation?: number }[] = [];
+  const result: {
+    producerId: string;
+    userId: string;
+    kind: types.MediaKind;
+    width?: number;
+    height?: number;
+    rotation?: number;
+    source?: string;
+    portraitLock?: boolean;
+  }[] = [];
 
   for (const [userId, peer] of room.peers.entries()) {
     if (excludeUserId && userId === excludeUserId) continue;
@@ -561,6 +602,8 @@ export function getRoomProducers(
         width: meta?.width,
         height: meta?.height,
         rotation: meta?.rotation,
+        source: meta?.source,
+        portraitLock: meta?.portraitLock,
       });
     });
   }

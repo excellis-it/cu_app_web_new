@@ -2116,7 +2116,13 @@ export default function initializeSocket() {
           kind: MediasoupTypes.MediaKind;
           rtpParameters: MediasoupTypes.RtpParameters;
           encodings?: MediasoupTypes.RtpEncodingParameters[];
-          appData?: { width?: number; height?: number; rotation?: number };
+          appData?: {
+            width?: number;
+            height?: number;
+            rotation?: number;
+            source?: string;
+            portraitLock?: boolean;
+          };
         },
         cb: (payload: any) => void,
       ) => {

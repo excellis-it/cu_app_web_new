@@ -28,6 +28,8 @@ type ServerStream = {
   width?: number;
   height?: number;
   rotation?: number;
+  source?: string;
+  portraitLock?: boolean;
   hasVideoOrientationExtmap?: boolean;
 };
 
@@ -182,7 +184,17 @@ function buildVideoGridFilter(params: {
   videoInputIndices: number[];
   targetWidth: number;
   targetHeight: number;
-  videoDimensions?: Map<number, { width: number; height: number; rotation?: number; hasVideoOrientationExtmap?: boolean }>;
+  videoDimensions?: Map<
+    number,
+    {
+      width: number;
+      height: number;
+      rotation?: number;
+      source?: string;
+      portraitLock?: boolean;
+      hasVideoOrientationExtmap?: boolean;
+    }
+  >;
   baseLabel: string;
 }): { filterParts: string[]; videoOutputLabel: string } {
   const { videoInputIndices, targetWidth, targetHeight, videoDimensions, baseLabel } = params;
@@ -202,7 +214,6 @@ function buildVideoGridFilter(params: {
     const idx = videoInputIndices[i];
     const label = `sv${i}`;
     const dims = videoDimensions?.get(idx - 1);
-    const hasExplicitRotation = !!dims && typeof dims.rotation === "number";
     const streamHasVideoOrientationExtmap = !!dims?.hasVideoOrientationExtmap;
     const normalizedRotation = (() => {
       if (!dims || typeof dims.rotation !== "number") return 0;
@@ -210,43 +221,58 @@ function buildVideoGridFilter(params: {
       if (r === 90 || r === 180 || r === 270) return r;
       return 0;
     })();
+    const hasExplicitRotation = normalizedRotation !== 0;
+    const isFlutterPortraitLocked =
+      String(dims?.source || "").toLowerCase() === "flutter-app" &&
+      dims?.portraitLock === true;
     const effectiveWidth =
       dims && normalizedRotation % 180 !== 0 ? dims.height : dims?.width;
     const effectiveHeight =
       dims && normalizedRotation % 180 !== 0 ? dims.width : dims?.height;
     const isPortrait = !!(effectiveWidth && effectiveHeight && effectiveHeight > effectiveWidth);
+    const isLandscape = !!(effectiveWidth && effectiveHeight && effectiveWidth >= effectiveHeight);
 
     // Scale each video to fit the cell, preserving aspect ratio.
     // Orientation source priority:
-    // 1) If RTP video-orientation extmap exists, trust RTP orientation signaling
-    //    and skip manual rotation to avoid double-rotating frames.
-    // 2) Otherwise, apply explicit appData.rotation when available.
-    // 3) Otherwise, use portrait transpose fallback for legacy clients.
+    // 1) Apply explicit right-angle appData.rotation when present.
+    // 2) For Flutter portrait-locked publishers that still report landscape-native
+    //    dimensions and rotation=0, force portrait transpose.
+    // 3) Keep legacy portrait fallback for streams that do not expose
+    //    video-orientation extmap metadata.
     const chain: string[] = [`[${idx}:v]setpts=PTS-STARTPTS,fps=15`];
     if (streamHasVideoOrientationExtmap && hasExplicitRotation) {
-      console.log("[recording:orientation] video-orientation extmap present; ignoring appData.rotation", {
+      console.log("[recording:orientation] video-orientation extmap present; still honoring explicit appData.rotation", {
         streamIndex: i,
         appRotation: normalizedRotation,
       });
     }
-    if (!streamHasVideoOrientationExtmap) {
-      if (normalizedRotation === 90) {
-        chain.push("transpose=1");
-      } else if (normalizedRotation === 270) {
-        chain.push("transpose=2:passthrough=portrait");
-      } else if (normalizedRotation === 180) {
-        // Half-turn orientation from mobile app metadata is often unstable.
-        // Keep it opt-in so recordings stay upright by default.
-        if (applyHalfTurnRotation) {
-          chain.push("hflip,vflip");
-        } else {
-          console.log("[recording:orientation] skipping appData 180 rotation (set RECORDING_APPLY_180_ROTATION=true to enable)", {
-            streamIndex: i,
-          });
-        }
-      } else if (!hasExplicitRotation && isPortrait) {
-        chain.push("transpose=2:passthrough=portrait");
+
+    if (normalizedRotation === 90) {
+      chain.push("transpose=1");
+    } else if (normalizedRotation === 270) {
+      chain.push("transpose=2:passthrough=portrait");
+    } else if (normalizedRotation === 180) {
+      // Half-turn orientation from mobile app metadata is often unstable.
+      // Keep it opt-in so recordings stay upright by default.
+      if (applyHalfTurnRotation) {
+        chain.push("hflip,vflip");
+      } else {
+        console.log("[recording:orientation] skipping appData 180 rotation (set RECORDING_APPLY_180_ROTATION=true to enable)", {
+          streamIndex: i,
+        });
       }
+    } else if (isFlutterPortraitLocked && isLandscape) {
+      // Flutter app is portrait-locked in-call, but the camera track can still
+      // report landscape-native dimensions with rotation=0 in producer metadata.
+      // Apply a recording-only correction so final composites stay upright.
+      chain.push("transpose=2:passthrough=portrait");
+      console.log("[recording:orientation] applied flutter portrait-lock transpose fallback", {
+        streamIndex: i,
+        width: effectiveWidth,
+        height: effectiveHeight,
+      });
+    } else if (!streamHasVideoOrientationExtmap && !hasExplicitRotation && isPortrait) {
+      chain.push("transpose=2:passthrough=portrait");
     }
     chain.push(
       `scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear`,
@@ -272,7 +298,17 @@ function buildFfmpegArgs(params: {
   videoInputIndices: number[];
   audioInputIndices: number[];
   sdpPathsInOrder: string[];
-  videoDimensions?: Map<number, { width: number; height: number; rotation?: number; hasVideoOrientationExtmap?: boolean }>;
+  videoDimensions?: Map<
+    number,
+    {
+      width: number;
+      height: number;
+      rotation?: number;
+      source?: string;
+      portraitLock?: boolean;
+      hasVideoOrientationExtmap?: boolean;
+    }
+  >;
 }) {
   const {
     outputPath,
@@ -530,6 +566,8 @@ export async function startServerRecording(params: {
       width: p.width,
       height: p.height,
       rotation: p.rotation,
+      source: p.source,
+      portraitLock: p.portraitLock,
     })),
     ...selectedAudioProducers.map((p) => ({ producerId: p.producerId, kind: "audio" as const })),
   ];
@@ -578,6 +616,8 @@ export async function startServerRecording(params: {
       width: streamWidth,
       height: streamHeight,
       rotation: (s as any).rotation,
+      source: (s as any).source,
+      portraitLock: (s as any).portraitLock,
       hasVideoOrientationExtmap:
         s.kind === "video" ? hasVideoOrientationExtmap(consumer) : false,
     });
@@ -606,7 +646,17 @@ export async function startServerRecording(params: {
     else audioInputIndices.push(i);
   }
 
-  const videoDimensions = new Map<number, { width: number; height: number; rotation?: number; hasVideoOrientationExtmap?: boolean }>();
+  const videoDimensions = new Map<
+    number,
+    {
+      width: number;
+      height: number;
+      rotation?: number;
+      source?: string;
+      portraitLock?: boolean;
+      hasVideoOrientationExtmap?: boolean;
+    }
+  >();
   for (let i = 0; i < liveStreams.length; i++) {
     const stream = liveStreams[i];
     if (stream.kind === "video" && stream.width && stream.height) {
@@ -614,6 +664,8 @@ export async function startServerRecording(params: {
         width: stream.width,
         height: stream.height,
         rotation: stream.rotation,
+        source: stream.source,
+        portraitLock: stream.portraitLock,
         hasVideoOrientationExtmap: stream.hasVideoOrientationExtmap,
       });
     }
