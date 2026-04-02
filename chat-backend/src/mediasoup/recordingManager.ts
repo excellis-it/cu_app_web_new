@@ -104,9 +104,10 @@ const recordingInputThreadQueueSize = Math.max(
   1024,
   Number(process.env.RECORDING_INPUT_THREAD_QUEUE_SIZE) || 8192,
 );
+/** Jitter buffer for SDP/RTP inputs. Under CPU pressure FFmpeg reads sockets late; too small causes "max delay reached" and burst packet drops. Default 2.5s. */
 const recordingInputMaxDelayUs = Math.max(
   100000,
-  Number(process.env.RECORDING_INPUT_MAX_DELAY_US) || 600000,
+  Number(process.env.RECORDING_INPUT_MAX_DELAY_US) || 2_500_000,
 );
 const recordingInputReorderQueueSize = Math.max(
   32,
@@ -120,6 +121,15 @@ const recordingInputRwTimeoutUs = Math.max(
 /** When true (default), screen recordings ingest only one video (primary user's largest track) + all audio. Reduces CPU/RTP load when more participants join. Set false for gallery (all cameras). */
 const screenRecordingPrimaryVideoOnly =
   String(process.env.RECORDING_SCREEN_PRIMARY_VIDEO_ONLY ?? "true").toLowerCase() === "true";
+/** Screen recordings default to a lighter canvas than call recordings to keep VP8 decode + x264 ahead of realtime when multiple audio tracks are mixed. Override via RECORDING_CANVAS_* if needed. */
+const screenRecordingCanvasWidth = Math.max(
+  320,
+  Number(process.env.RECORDING_SCREEN_CANVAS_WIDTH) || 640,
+) & ~1;
+const screenRecordingCanvasHeight = Math.max(
+  240,
+  Number(process.env.RECORDING_SCREEN_CANVAS_HEIGHT) || 360,
+) & ~1;
 const recordingSigintTimeoutMs = Math.max(
   2000,
   Number(process.env.RECORDING_FFMPEG_SIGINT_TIMEOUT_MS) || 7000,
@@ -590,32 +600,113 @@ function hasVideoOrientationExtmap(consumer: types.Consumer): boolean {
  * which prevents packet-backlog drops and truncated output duration.
  *
  * Values can be tuned via env:
- * - RECORDING_CANVAS_WIDTH
- * - RECORDING_CANVAS_HEIGHT
+ * - RECORDING_CANVAS_WIDTH / RECORDING_CANVAS_HEIGHT (call and fallback)
+ * - RECORDING_SCREEN_CANVAS_WIDTH / RECORDING_SCREEN_CANVAS_HEIGHT (screen scope defaults 640×360)
  */
 function computeCanvasSize(
   _videoDimensions: Map<number, { width: number; height: number }>,
   videoCount: number,
+  recordingScope: RecordingScope = "call",
 ): { width: number; height: number } {
+  const capW = recordingScope === "screen" ? screenRecordingCanvasWidth : recordingCanvasWidth;
+  const capH = recordingScope === "screen" ? screenRecordingCanvasHeight : recordingCanvasHeight;
+
   if (videoCount >= 5) {
     return {
-      width: Math.min(recordingCanvasWidth, 480),
-      height: Math.min(recordingCanvasHeight, 270),
+      width: Math.min(capW, 480),
+      height: Math.min(capH, 270),
     };
   }
 
   if (videoCount >= 3) {
     return {
-      width: Math.min(recordingCanvasWidth, 640),
-      height: Math.min(recordingCanvasHeight, 360),
+      width: Math.min(capW, 640),
+      height: Math.min(capH, 360),
     };
   }
 
-  return { width: recordingCanvasWidth, height: recordingCanvasHeight };
+  return { width: capW, height: capH };
+}
+
+function buildOneVideoBranchToCell(
+  idx: number,
+  cellW: number,
+  cellH: number,
+  label: string,
+  dims:
+    | {
+        width: number;
+        height: number;
+        rotation?: number;
+        source?: string;
+        portraitLock?: boolean;
+        hasVideoOrientationExtmap?: boolean;
+      }
+    | undefined,
+  streamIndexForLog: number,
+): string {
+  const streamHasVideoOrientationExtmap = !!dims?.hasVideoOrientationExtmap;
+  const normalizedRotation = (() => {
+    if (!dims || typeof dims.rotation !== "number") return 0;
+    const r = ((dims.rotation % 360) + 360) % 360;
+    if (r === 90 || r === 180 || r === 270) return r;
+    return 0;
+  })();
+  const hasExplicitRotation = normalizedRotation !== 0;
+  const isFlutterPortraitLocked =
+    String(dims?.source || "").toLowerCase() === "flutter-app" &&
+    dims?.portraitLock === true;
+  const effectiveWidth =
+    dims && normalizedRotation % 180 !== 0 ? dims.height : dims?.width;
+  const effectiveHeight =
+    dims && normalizedRotation % 180 !== 0 ? dims.width : dims?.height;
+  const isPortrait = !!(effectiveWidth && effectiveHeight && effectiveHeight > effectiveWidth);
+  const isLandscape = !!(effectiveWidth && effectiveHeight && effectiveWidth >= effectiveHeight);
+
+  const chain: string[] = [
+    `[${idx}:v]setpts=PTS-STARTPTS,fps=${recordingOutputFps}`,
+  ];
+  if (streamHasVideoOrientationExtmap && hasExplicitRotation) {
+    console.log(
+      "[recording:orientation] video-orientation extmap present; still honoring explicit appData.rotation",
+      { streamIndex: streamIndexForLog, appRotation: normalizedRotation },
+    );
+  }
+
+  if (normalizedRotation === 90) {
+    chain.push("transpose=1");
+  } else if (normalizedRotation === 270) {
+    chain.push("transpose=2:passthrough=portrait");
+  } else if (normalizedRotation === 180) {
+    if (applyHalfTurnRotation) {
+      chain.push("hflip,vflip");
+    } else {
+      console.log(
+        "[recording:orientation] skipping appData 180 rotation (set RECORDING_APPLY_180_ROTATION=true to enable)",
+        { streamIndex: streamIndexForLog },
+      );
+    }
+  } else if (isFlutterPortraitLocked && isLandscape) {
+    chain.push("transpose=1:passthrough=portrait");
+    console.log("[recording:orientation] applied flutter portrait-lock transpose fallback", {
+      streamIndex: streamIndexForLog,
+      width: effectiveWidth,
+      height: effectiveHeight,
+    });
+  } else if (!streamHasVideoOrientationExtmap && !hasExplicitRotation && isPortrait) {
+    chain.push("transpose=2:passthrough=portrait");
+  }
+  chain.push(
+    `scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear`,
+    `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black`,
+  );
+  return `${chain.join(",")}[${label}]`;
 }
 
 function buildVideoGridFilter(params: {
   videoInputIndices: number[];
+  /** liveStreams indices aligned with videoInputIndices[i] — for videoDimensions lookup (not the same as FFmpeg idx when inputs are interleaved). */
+  videoStreamIndices: number[];
   targetWidth: number;
   targetHeight: number;
   videoDimensions?: Map<
@@ -630,8 +721,17 @@ function buildVideoGridFilter(params: {
     }
   >;
   baseLabel: string;
+  /** When true and exactly one video: no black canvas / overlay — scale+pad only. Saves large CPU vs compositing every frame. */
+  skipCanvasOverlay?: boolean;
 }): { filterParts: string[]; videoOutputLabel: string } {
-  const { videoInputIndices, targetWidth, targetHeight, videoDimensions, baseLabel } = params;
+  const {
+    videoInputIndices,
+    videoStreamIndices,
+    targetWidth,
+    targetHeight,
+    videoDimensions,
+    baseLabel,
+  } = params;
   const n = videoInputIndices.length;
 
   if (n === 0) return { filterParts: [], videoOutputLabel: baseLabel };
@@ -644,77 +744,21 @@ function buildVideoGridFilter(params: {
   const filterParts: string[] = [];
   let currentBase = baseLabel;
 
+  if (n === 1 && params.skipCanvasOverlay) {
+    const idx = videoInputIndices[0];
+    const label = "sv0";
+    const streamIdx = videoStreamIndices[0];
+    const dims = streamIdx !== undefined ? videoDimensions?.get(streamIdx) : undefined;
+    filterParts.push(buildOneVideoBranchToCell(idx, cellW, cellH, label, dims, 0));
+    return { filterParts, videoOutputLabel: label };
+  }
+
   for (let i = 0; i < n; i++) {
     const idx = videoInputIndices[i];
     const label = `sv${i}`;
-    const dims = videoDimensions?.get(idx - 1);
-    const streamHasVideoOrientationExtmap = !!dims?.hasVideoOrientationExtmap;
-    const normalizedRotation = (() => {
-      if (!dims || typeof dims.rotation !== "number") return 0;
-      const r = ((dims.rotation % 360) + 360) % 360;
-      if (r === 90 || r === 180 || r === 270) return r;
-      return 0;
-    })();
-    const hasExplicitRotation = normalizedRotation !== 0;
-    const isFlutterPortraitLocked =
-      String(dims?.source || "").toLowerCase() === "flutter-app" &&
-      dims?.portraitLock === true;
-    const effectiveWidth =
-      dims && normalizedRotation % 180 !== 0 ? dims.height : dims?.width;
-    const effectiveHeight =
-      dims && normalizedRotation % 180 !== 0 ? dims.width : dims?.height;
-    const isPortrait = !!(effectiveWidth && effectiveHeight && effectiveHeight > effectiveWidth);
-    const isLandscape = !!(effectiveWidth && effectiveHeight && effectiveWidth >= effectiveHeight);
-
-    // Scale each video to fit the cell, preserving aspect ratio.
-    // Orientation source priority:
-    // 1) Apply explicit right-angle appData.rotation when present.
-    // 2) For Flutter portrait-locked publishers that still report landscape-native
-    //    dimensions and rotation=0, force portrait transpose.
-    // 3) Keep legacy portrait fallback for streams that do not expose
-    //    video-orientation extmap metadata.
-    const chain: string[] = [
-      `[${idx}:v]setpts=PTS-STARTPTS,fps=${recordingOutputFps}`,
-    ];
-    if (streamHasVideoOrientationExtmap && hasExplicitRotation) {
-      console.log("[recording:orientation] video-orientation extmap present; still honoring explicit appData.rotation", {
-        streamIndex: i,
-        appRotation: normalizedRotation,
-      });
-    }
-
-    if (normalizedRotation === 90) {
-      chain.push("transpose=1");
-    } else if (normalizedRotation === 270) {
-      chain.push("transpose=2:passthrough=portrait");
-    } else if (normalizedRotation === 180) {
-      // Half-turn orientation from mobile app metadata is often unstable.
-      // Keep it opt-in so recordings stay upright by default.
-      if (applyHalfTurnRotation) {
-        chain.push("hflip,vflip");
-      } else {
-        console.log("[recording:orientation] skipping appData 180 rotation (set RECORDING_APPLY_180_ROTATION=true to enable)", {
-          streamIndex: i,
-        });
-      }
-    } else if (isFlutterPortraitLocked && isLandscape) {
-      // Flutter app is portrait-locked in-call, but the camera track can still
-      // report landscape-native dimensions with rotation=0 in producer metadata.
-      // Apply a recording-only correction so final composites stay upright.
-      chain.push("transpose=1:passthrough=portrait");
-      console.log("[recording:orientation] applied flutter portrait-lock transpose fallback", {
-        streamIndex: i,
-        width: effectiveWidth,
-        height: effectiveHeight,
-      });
-    } else if (!streamHasVideoOrientationExtmap && !hasExplicitRotation && isPortrait) {
-      chain.push("transpose=2:passthrough=portrait");
-    }
-    chain.push(
-      `scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear`,
-      `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black`,
-    );
-    filterParts.push(`${chain.join(",")}[${label}]`);
+    const streamIdx = videoStreamIndices[i];
+    const dims = streamIdx !== undefined ? videoDimensions?.get(streamIdx) : undefined;
+    filterParts.push(buildOneVideoBranchToCell(idx, cellW, cellH, label, dims, i));
 
     // Overlay sv_i onto currentBase
     const col = i % cols;
@@ -734,6 +778,7 @@ function buildFfmpegArgs(params: {
   videoInputIndices: number[];
   audioInputIndices: number[];
   sdpPathsInOrder: string[];
+  recordingScope?: RecordingScope;
   videoDimensions?: Map<
     number,
     {
@@ -751,21 +796,35 @@ function buildFfmpegArgs(params: {
     videoInputIndices: originalVideoIndices,
     audioInputIndices: originalAudioIndices,
     sdpPathsInOrder,
+    recordingScope = "call",
   } = params;
+
+  const hasVideo = originalVideoIndices.length > 0;
+  /** One remote video: skip synthetic black input + per-frame overlay — major CPU savings. */
+  const useLavfiCanvas = !(hasVideo && originalVideoIndices.length === 1);
+  const sdpInputBase = useLavfiCanvas ? 1 : 0;
 
   const { width: targetWidth, height: targetHeight } = computeCanvasSize(
     params.videoDimensions ?? new Map(),
     originalVideoIndices.length,
+    recordingScope,
   );
 
-  const videoInputIndices = originalVideoIndices.map(i => i + 1);
-  const audioInputIndices = originalAudioIndices.map(i => i + 1);
+  const videoInputIndicesFfmpeg = originalVideoIndices.map((i) => i + sdpInputBase);
+  const audioInputIndicesFfmpeg = originalAudioIndices.map((i) => i + sdpInputBase);
 
   const args: string[] = [
     "-fflags", "+genpts+igndts+discardcorrupt",
     "-max_interleave_delta", "1000000",
-    "-f", "lavfi", "-i", `color=c=black:s=${targetWidth}x${targetHeight}:r=${recordingOutputFps}`,
   ];
+  if (useLavfiCanvas) {
+    args.push(
+      "-f",
+      "lavfi",
+      "-i",
+      `color=c=black:s=${targetWidth}x${targetHeight}:r=${recordingOutputFps}`,
+    );
+  }
 
   for (const sdpPath of sdpPathsInOrder) {
     args.push(
@@ -787,36 +846,36 @@ function buildFfmpegArgs(params: {
   }
 
   const filterParts: string[] = [];
-  const hasVideo = videoInputIndices.length > 0;
-  let videoOutputLabel = "0:v";
-  
+  let videoOutputLabel = useLavfiCanvas ? "0:v" : "";
+
   if (hasVideo) {
     const grid = buildVideoGridFilter({
-      videoInputIndices,
+      videoInputIndices: videoInputIndicesFfmpeg,
+      videoStreamIndices: originalVideoIndices,
       targetWidth,
       targetHeight,
       videoDimensions: params.videoDimensions,
-      baseLabel: "0:v"
+      baseLabel: "0:v",
+      skipCanvasOverlay: !useLavfiCanvas,
     });
     filterParts.push(...grid.filterParts);
     videoOutputLabel = grid.videoOutputLabel;
   }
 
-  // Per-input: async aresample + uniform format. Do not chain two asetpts=L(...)/N/SR/TB on one branch — that has
-  // been observed to produce AAC "Queue input is backward in time" and muxer non-monotonous DTS under RTP loss.
+  // Normalize each RTP branch in PTS, then resample. Final asetpts=N/SR/TB after mix yields one monotonic clock for AAC.
   const aformat = "aformat=sample_rates=48000:sample_fmts=fltp:channel_layouts=stereo";
-  for (let i = 0; i < audioInputIndices.length; i++) {
-    const idx = audioInputIndices[i];
+  for (let i = 0; i < audioInputIndicesFfmpeg.length; i++) {
+    const idx = audioInputIndicesFfmpeg[i];
     filterParts.push(
-      `[${idx}:a]aresample=async=1000:min_hard_comp=0.100,${aformat}[a_r${i}]`,
+      `[${idx}:a]asetpts=PTS-STARTPTS,aresample=async=1000:min_hard_comp=0.100,${aformat}[a_r${i}]`,
     );
   }
-  if (audioInputIndices.length === 1) {
+  if (audioInputIndicesFfmpeg.length === 1) {
     filterParts.push("[a_r0]asetpts=N/SR/TB[aout]");
   } else {
-    const mixInputs = audioInputIndices.map((_, i) => `[a_r${i}]`).join("");
+    const mixInputs = audioInputIndicesFfmpeg.map((_, i) => `[a_r${i}]`).join("");
     filterParts.push(
-      `${mixInputs}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=2:normalize=0,aresample=async=1000:min_hard_comp=0.050,${aformat},asetpts=N/SR/TB[aout]`,
+      `${mixInputs}amix=inputs=${audioInputIndicesFfmpeg.length}:duration=longest:dropout_transition=2:normalize=0,aresample=async=1000:min_hard_comp=0.050,${aformat},asetpts=N/SR/TB[aout]`,
     );
   }
 
@@ -1352,16 +1411,20 @@ export async function startServerRecording(params: {
     videoInputIndices,
     audioInputIndices,
     sdpPathsInOrder,
+    recordingScope,
     videoDimensions,
   });
 
+  const canvas = computeCanvasSize(videoDimensions, videoInputIndices.length, recordingScope);
   console.log("[recording:profile]", {
     recordingId,
-    targetWidth: computeCanvasSize(videoDimensions, videoInputIndices.length).width,
-    targetHeight: computeCanvasSize(videoDimensions, videoInputIndices.length).height,
+    recordingScope,
+    targetWidth: canvas.width,
+    targetHeight: canvas.height,
     fps: recordingOutputFps,
     videoInputs: videoInputIndices.length,
     audioInputs: audioInputIndices.length,
+    ffmpegDirectVideo: videoInputIndices.length === 1,
   });
 
   const ffmpegStderrPrefix = `[recording:${recordingId}] ffmpeg`;
