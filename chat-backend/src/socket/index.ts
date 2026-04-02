@@ -38,6 +38,7 @@ import {
   stopServerRecording,
   getActiveRecordingForRoom,
   scheduleRecordingRestart,
+  notifyRecordingStopPending,
 } from "../mediasoup/recordingManager";
 import { processRecordingInBackground } from "../helpers/recordingProcessor";
 import { processScreenRecordingInBackground } from "../helpers/screenRecordingProcessor";
@@ -109,6 +110,8 @@ async function autoStopRecordingsForRoom(roomId: string, io: Server) {
 
       console.log("[auto-stop] stopping call recording", { roomId, recordingId: recordingIdStr });
 
+      notifyRecordingStopPending(roomId, recordingIdStr);
+
       // Stop FFmpeg and process in background
       (async () => {
         let outputPath = "";
@@ -162,6 +165,8 @@ async function autoStopRecordingsForRoom(roomId: string, io: Server) {
       });
 
       console.log("[auto-stop] stopping screen recording", { roomId, recordingId });
+
+      notifyRecordingStopPending(roomId, recordingId);
 
       // Stop FFmpeg and process in background
       (async () => {
@@ -1410,6 +1415,8 @@ export default function initializeSocket() {
           },
         });
 
+        notifyRecordingStopPending(roomId, recordingIdStr);
+
         // Update UI immediately; heavy stop/finalize runs in background.
         io.to(roomId).emit("FE-recording-stopped", {
           roomId,
@@ -1636,6 +1643,8 @@ export default function initializeSocket() {
         await ScreenRecording.findByIdAndUpdate(recordingId, {
           $set: { durationSec },
         });
+
+        notifyRecordingStopPending(roomId, recordingId);
 
         console.log("[BE-stop-screen-recording] stopping", {
           roomId,

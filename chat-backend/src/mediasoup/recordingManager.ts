@@ -56,6 +56,12 @@ type RecordingSession = {
 const activeSessions: Map<string, RecordingSession> = new Map();
 const restartLocks: Set<string> = new Set();
 
+/** Stop handler set this so an in-flight recording restart yields before killing FFmpeg. */
+const recordingStopClaimed: Set<string> = new Set();
+
+/** Only one graceful FFmpeg shutdown per recordingId at a time (restart + stop race). */
+const inflightFfmpegShutdown: Map<string, Promise<void>> = new Map();
+
 const DEFAULT_RTP_BASE_PORT = 50000;
 const DEFAULT_RTP_MAX_PORT = 59999;
 const rtpBasePort = Number(process.env.RECORDING_RTP_BASE_PORT) || DEFAULT_RTP_BASE_PORT;
@@ -244,6 +250,56 @@ function waitForProcessClose(
       done(proc.exitCode !== null);
     }, timeoutMs);
   });
+}
+
+function computeShutdownTimeoutMsFromSession(session: RecordingSession): number {
+  const wallElapsedSec = Math.max(0, (Date.now() - session.startedAtMs) / 1000);
+  const lagSec = Math.max(0, wallElapsedSec - session.latestEncodedTimeSec);
+  return Math.min(
+    120_000,
+    Math.max(recordingStopTimeoutMs, Math.ceil(lagSec * 1000) + 20_000),
+  );
+}
+
+function restoreRecordingKeyframeTimer(session: RecordingSession) {
+  if (session.keyframeTimer) {
+    clearInterval(session.keyframeTimer);
+    session.keyframeTimer = null;
+  }
+  session.keyframeTimer = setInterval(() => {
+    for (const st of session.streams) {
+      if (st.kind === "video" && !st.consumer.closed) {
+        (st.consumer as any).requestKeyFrame?.().catch(() => {});
+      }
+    }
+  }, 2000);
+}
+
+async function runExclusiveFfmpegShutdown(params: {
+  recordingId: string;
+  session: RecordingSession;
+  ffmpegProcess: ReturnType<typeof spawn>;
+  context: "stop" | "restart";
+  shutdownTimeoutMs: number;
+}): Promise<void> {
+  const { recordingId } = params;
+  const existing = inflightFfmpegShutdown.get(recordingId);
+  if (existing) return existing;
+
+  const p = shutdownFfmpegProcess({
+    session: params.session,
+    ffmpegProcess: params.ffmpegProcess,
+    recordingId,
+    context: params.context,
+    shutdownTimeoutMs: params.shutdownTimeoutMs,
+  }).finally(() => {
+    if (inflightFfmpegShutdown.get(recordingId) === p) {
+      inflightFfmpegShutdown.delete(recordingId);
+    }
+  });
+
+  inflightFfmpegShutdown.set(recordingId, p);
+  return p;
 }
 
 function safeEndFfmpegStdin(ffmpegProcess: ReturnType<typeof spawn>) {
@@ -791,6 +847,22 @@ const pendingRestarts: Map<string, NodeJS.Timeout> = new Map();
 const RESTART_DEBOUNCE_MS = 2000;
 const MIN_RESTART_SESSION_AGE_MS = 6000;
 
+/**
+ * Call as soon as a stop is decided (before async teardown). Cancels debounced
+ * recording restarts and causes restartServerRecording to yield so stop owns FFmpeg.
+ */
+export function notifyRecordingStopPending(roomId: string, recordingId: string) {
+  const key = `${roomId}:${recordingId}`;
+  const pending = pendingRestarts.get(key);
+  if (pending) clearTimeout(pending);
+  pendingRestarts.delete(key);
+  recordingStopClaimed.add(recordingId);
+}
+
+function clearRecordingStopClaim(recordingId: string) {
+  recordingStopClaimed.delete(recordingId);
+}
+
 function buildTopologySignature(
   producers: Array<{ producerId: string; kind: types.MediaKind }>,
 ): string {
@@ -801,12 +873,16 @@ function buildTopologySignature(
 }
 
 export function scheduleRecordingRestart(roomId: string, recordingId: string) {
+  if (recordingStopClaimed.has(recordingId)) return;
+
   const key = `${roomId}:${recordingId}`;
   const existing = pendingRestarts.get(key);
   if (existing) clearTimeout(existing);
 
   const timer = setTimeout(() => {
     pendingRestarts.delete(key);
+    if (recordingStopClaimed.has(recordingId)) return;
+
     const session = activeSessions.get(recordingId);
     if (!session) return;
 
@@ -915,8 +991,20 @@ export async function restartServerRecording(params: {
     const session = activeSessions.get(recordingId);
     if (!session) return;
 
-    const { ffmpegProcess, streams, allocatedPorts, keyframeTimer, commonStartMicros, segments } = session;
-    if (keyframeTimer) clearInterval(keyframeTimer);
+    if (recordingStopClaimed.has(recordingId)) {
+      console.log("[recording:restart] aborting restart — stop already pending", {
+        roomId,
+        recordingId,
+      });
+      return;
+    }
+
+    if (session.keyframeTimer) {
+      clearInterval(session.keyframeTimer);
+      session.keyframeTimer = null;
+    }
+
+    const { ffmpegProcess, streams, allocatedPorts, commonStartMicros, segments } = session;
 
     // Pause streams first to reduce in-flight RTP bursts before quitting ffmpeg.
     for (const st of streams) {
@@ -928,12 +1016,30 @@ export async function restartServerRecording(params: {
     }
     await new Promise((r) => setTimeout(r, 250));
 
-    // Prefer graceful FFmpeg termination to preserve MP4 metadata.
-    await shutdownFfmpegProcess({
+    if (recordingStopClaimed.has(recordingId)) {
+      for (const st of streams) {
+        try {
+          await st.consumer.resume();
+        } catch {
+          // ignore
+        }
+      }
+      restoreRecordingKeyframeTimer(session);
+      console.log("[recording:restart] aborted after pause — stop took FFmpeg teardown", {
+        roomId,
+        recordingId,
+      });
+      return;
+    }
+
+    const shutdownTimeoutMs = computeShutdownTimeoutMsFromSession(session);
+
+    await runExclusiveFfmpegShutdown({
+      recordingId,
       session,
       ffmpegProcess,
-      recordingId,
       context: "restart",
+      shutdownTimeoutMs,
     });
 
     for (const st of streams) {
@@ -1266,21 +1372,25 @@ export async function startServerRecording(params: {
 }
 
 export async function stopServerRecording(recordingId: string): Promise<{ outputPath: string }> {
-  let session = activeSessions.get(recordingId);
-  if (!session && restartLocks.has(recordingId)) {
-    const waitUntil = Date.now() + Math.min(recordingStopTimeoutMs, 10000);
-    while (!session && Date.now() < waitUntil) {
-      // If restart is currently rebuilding this session, wait briefly.
-      // eslint-disable-next-line no-await-in-loop
-      await new Promise((r) => setTimeout(r, 200));
-      session = activeSessions.get(recordingId);
+  try {
+    let session = activeSessions.get(recordingId);
+    if (!session && restartLocks.has(recordingId)) {
+      const waitUntil = Date.now() + Math.min(recordingStopTimeoutMs, 10000);
+      while (!session && Date.now() < waitUntil) {
+        // If restart is currently rebuilding this session, wait briefly.
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 200));
+        session = activeSessions.get(recordingId);
+      }
     }
-  }
-  if (!session) throw new Error(`No session for ${recordingId}`);
-  activeSessions.delete(recordingId);
+    if (!session) throw new Error(`No session for ${recordingId}`);
+    activeSessions.delete(recordingId);
 
-  const { ffmpegProcess, outputPath, allocatedPorts, keyframeTimer, segments, streams } = session;
-  if (keyframeTimer) clearInterval(keyframeTimer);
+    const { ffmpegProcess, outputPath, allocatedPorts, segments, streams } = session;
+    if (session.keyframeTimer) {
+      clearInterval(session.keyframeTimer);
+      session.keyframeTimer = null;
+    }
 
   // Pause consumers before requesting ffmpeg stop to reduce in-flight jitter bursts.
   for (const st of streams) {
@@ -1318,17 +1428,12 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
     });
   }
 
-  // If the muxer is far behind wall clock, allow extra time for 'q' to flush (avoids SIGINT
-  // while finalizing MP4).
-  const shutdownTimeoutMs = Math.min(
-    120_000,
-    Math.max(recordingStopTimeoutMs, Math.ceil(lagSec * 1000) + 20_000),
-  );
+  const shutdownTimeoutMs = computeShutdownTimeoutMsFromSession(session);
 
-  await shutdownFfmpegProcess({
+  await runExclusiveFfmpegShutdown({
+    recordingId,
     session,
     ffmpegProcess,
-    recordingId,
     context: "stop",
     shutdownTimeoutMs,
   });
@@ -1505,5 +1610,8 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
     }
     throw new Error(`Recording output file unusable after stop for recordingId=${recordingId}`);
   }
-  return { outputPath: finalOutputPath };
+    return { outputPath: finalOutputPath };
+  } finally {
+    clearRecordingStopClaim(recordingId);
+  }
 }
