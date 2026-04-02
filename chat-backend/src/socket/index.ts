@@ -1318,6 +1318,7 @@ export default function initializeSocket() {
           roomId,
           recordingId: newRecording._id.toString(),
           isAudioOnly,
+          recordingScope: "call",
         }).catch(async (e: any) => {
           console.error("[BE-start-recording] failed to start server ffmpeg", {
             roomId,
@@ -1581,6 +1582,8 @@ export default function initializeSocket() {
           roomId,
           recordingId,
           isAudioOnly,
+          recordingScope: "screen",
+          primaryUserId: userId.toString(),
         }).catch(async (e: any) => {
           console.error("[BE-start-screen-recording] server recording failed", {
             roomId,

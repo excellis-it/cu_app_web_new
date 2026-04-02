@@ -34,6 +34,8 @@ type ServerStream = {
   hasVideoOrientationExtmap?: boolean;
 };
 
+export type RecordingScope = "call" | "screen";
+
 type RecordingSession = {
   roomId: string;
   recordingId: string;
@@ -51,6 +53,9 @@ type RecordingSession = {
   startedAtMs: number;
   topologySignature: string;
   segments: string[];
+  recordingScope: RecordingScope;
+  /** For screen scope: user who started recording — used to pick a single video track when primary-video-only is enabled. */
+  primaryUserId?: string;
 };
 
 const activeSessions: Map<string, RecordingSession> = new Map();
@@ -112,6 +117,9 @@ const recordingInputRwTimeoutUs = Math.max(
   3000000,
   Number(process.env.RECORDING_INPUT_RW_TIMEOUT_US) || 10000000,
 );
+/** When true (default), screen recordings ingest only one video (primary user's largest track) + all audio. Reduces CPU/RTP load when more participants join. Set false for gallery (all cameras). */
+const screenRecordingPrimaryVideoOnly =
+  String(process.env.RECORDING_SCREEN_PRIMARY_VIDEO_ONLY ?? "true").toLowerCase() === "true";
 const recordingSigintTimeoutMs = Math.max(
   2000,
   Number(process.env.RECORDING_FFMPEG_SIGINT_TIMEOUT_MS) || 7000,
@@ -794,25 +802,21 @@ function buildFfmpegArgs(params: {
     videoOutputLabel = grid.videoOutputLabel;
   }
 
+  // Per-input: async aresample + uniform format. Do not chain two asetpts=L(...)/N/SR/TB on one branch — that has
+  // been observed to produce AAC "Queue input is backward in time" and muxer non-monotonous DTS under RTP loss.
+  const aformat = "aformat=sample_rates=48000:sample_fmts=fltp:channel_layouts=stereo";
   for (let i = 0; i < audioInputIndices.length; i++) {
     const idx = audioInputIndices[i];
     filterParts.push(
-      `[${idx}:a]aresample=async=1000:min_hard_comp=0.100,asetpts=N/SR/TB[anorm${i}]`,
+      `[${idx}:a]aresample=async=1000:min_hard_comp=0.100,${aformat}[a_r${i}]`,
     );
   }
   if (audioInputIndices.length === 1) {
-    // Avoid amix for a single RTP audio input to reduce timestamp jitter.
-    filterParts.push("[anorm0]asetpts=N/SR/TB[aout]");
+    filterParts.push("[a_r0]asetpts=N/SR/TB[aout]");
   } else {
-    const normalizedAudioLabels = audioInputIndices.map((_, i) => `[anorm${i}]`).join("");
-    // Keep audio timeline monotonic and resilient to late/jittery RTP.
-    // Per-stream aresample already handles async gap-filling.
-    // A second aresample with forced first_pts after amix can reset its internal
-    // timestamp origin when late RTP drops cause discontinuities, which cascades
-    // into non-monotonous DTS in the MP4 muxer. Using only asetpts=N/SR/TB
-    // after amix guarantees a strictly monotonic sample-counter timeline.
+    const mixInputs = audioInputIndices.map((_, i) => `[a_r${i}]`).join("");
     filterParts.push(
-      `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=2:normalize=0,asetpts=N/SR/TB[aout]`
+      `${mixInputs}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=2:normalize=0,aresample=async=1000:min_hard_comp=0.050,${aformat},asetpts=N/SR/TB[aout]`,
     );
   }
 
@@ -908,6 +912,39 @@ function buildTopologySignature(
     .map((p) => `${p.kind}:${p.producerId}`)
     .sort()
     .join("|");
+}
+
+function selectRecordingVideoProducers(
+  videoProducers: ReturnType<typeof getRoomProducers>,
+  opts: {
+    isAudioOnly: boolean;
+    recordingScope: RecordingScope;
+    primaryUserId?: string;
+  },
+): ReturnType<typeof getRoomProducers> {
+  if (opts.isAudioOnly) return [];
+  if (opts.recordingScope !== "screen" || !screenRecordingPrimaryVideoOnly) {
+    return videoProducers;
+  }
+  const uid = opts.primaryUserId;
+  if (!uid) return videoProducers;
+  const fromPrimary = videoProducers.filter((p) => p.userId === uid);
+  if (fromPrimary.length === 0) {
+    console.log("[recording:scope] screen mode: primary has no video; using all video producers", {
+      primaryUserId: uid,
+    });
+    return videoProducers;
+  }
+  const pick = [...fromPrimary].sort(
+    (a, b) => (b.width || 0) * (b.height || 0) - (a.width || 0) * (a.height || 0),
+  )[0];
+  console.log("[recording:scope] screen mode: single video track (primary user, largest frame)", {
+    producerId: pick.producerId,
+    userId: pick.userId,
+    width: pick.width,
+    height: pick.height,
+  });
+  return [pick];
 }
 
 export function scheduleRecordingRestart(roomId: string, recordingId: string) {
@@ -1059,7 +1096,15 @@ export async function restartServerRecording(params: {
       session.keyframeTimer = null;
     }
 
-    const { ffmpegProcess, streams, allocatedPorts, commonStartMicros, segments } = session;
+    const {
+      ffmpegProcess,
+      streams,
+      allocatedPorts,
+      commonStartMicros,
+      segments,
+      recordingScope,
+      primaryUserId,
+    } = session;
 
     // Pause streams first to reduce in-flight RTP bursts before quitting ffmpeg.
     for (const st of streams) {
@@ -1123,7 +1168,13 @@ export async function restartServerRecording(params: {
       return;
     }
 
-    await startServerRecording({ ...params, existingSegments: segments, sharedStartMicros: commonStartMicros });
+    await startServerRecording({
+      ...params,
+      existingSegments: segments,
+      sharedStartMicros: commonStartMicros,
+      recordingScope,
+      primaryUserId,
+    });
   } finally {
     restartLocks.delete(recordingId);
   }
@@ -1135,8 +1186,18 @@ export async function startServerRecording(params: {
   isAudioOnly: boolean;
   existingSegments?: string[];
   sharedStartMicros?: number;
+  recordingScope?: RecordingScope;
+  primaryUserId?: string;
 }): Promise<{ outputPath: string }> {
-  const { roomId, recordingId, isAudioOnly, existingSegments = [], sharedStartMicros } = params;
+  const {
+    roomId,
+    recordingId,
+    isAudioOnly,
+    existingSegments = [],
+    sharedStartMicros,
+    recordingScope = "call",
+    primaryUserId,
+  } = params;
   if (activeSessions.has(recordingId)) {
     throw new Error(`Recording session already active for recordingId=${recordingId}`);
   }
@@ -1156,7 +1217,11 @@ export async function startServerRecording(params: {
   const audioProducers = producers.filter((p) => p.kind === "audio");
   const videoProducers = producers.filter((p) => p.kind === "video");
 
-  const selectedVideoProducers = !isAudioOnly ? videoProducers : [];
+  const selectedVideoProducers = selectRecordingVideoProducers(videoProducers, {
+    isAudioOnly,
+    recordingScope,
+    primaryUserId,
+  });
   const selectedAudioProducers = audioProducers;
   if (selectedAudioProducers.length === 0 && selectedVideoProducers.length === 0) {
     throw new Error("No audio/video producers found for server-side recording.");
@@ -1389,23 +1454,25 @@ export async function startServerRecording(params: {
   }
 
   const allocatedPorts = liveStreams.flatMap((st) => [st.rtpPort, st.rtcpPort]);
-  const session: RecordingSession = { 
-    roomId, 
-    recordingId, 
-    outputPath, 
-    sdpDir, 
-    ffmpegProcess, 
-    ffmpegStderrPrefix, 
-    streams: liveStreams, 
-    allocatedPorts, 
-    keyframeTimer, 
-    ffmpegExited: false, 
-    ffmpegExitCode: null, 
+  const session: RecordingSession = {
+    roomId,
+    recordingId,
+    outputPath,
+    sdpDir,
+    ffmpegProcess,
+    ffmpegStderrPrefix,
+    streams: liveStreams,
+    allocatedPorts,
+    keyframeTimer,
+    ffmpegExited: false,
+    ffmpegExitCode: null,
     latestEncodedTimeSec: 0,
-    commonStartMicros, 
+    commonStartMicros,
     startedAtMs: Date.now(),
     topologySignature,
-    segments: [...existingSegments, outputPath] 
+    segments: [...existingSegments, outputPath],
+    recordingScope,
+    primaryUserId,
   };
   activeSessions.set(recordingId, session);
   sessionRef = session;
