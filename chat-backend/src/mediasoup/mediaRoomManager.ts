@@ -91,7 +91,7 @@ async function getWorker(): Promise<types.Worker> {
   return worker;
 }
 
-// Basic audio/video codecs – adjust as needed for your deployment
+// Basic audio/video codecs – keep H264 available for mobile/Flutter interop.
 const mediaCodecs: types.RtpCodecCapability[] = [
   {
     kind: "audio",
@@ -99,6 +99,20 @@ const mediaCodecs: types.RtpCodecCapability[] = [
     clockRate: 48000,
     channels: 2,
     preferredPayloadType: 111,
+  },
+  {
+    kind: "video",
+    mimeType: "video/H264",
+    clockRate: 90000,
+    preferredPayloadType: 102,
+    parameters: {
+      "packetization-mode": 1,
+      "profile-level-id": "42e01f",
+      "level-asymmetry-allowed": 1,
+      "x-google-start-bitrate": 500,  // kbps - start lower to avoid immediate congestion
+      "x-google-max-bitrate": 2500,   // kbps - allow higher quality if link supports it
+      "x-google-min-bitrate": 150,    // kbps
+    },
   },
   {
     kind: "video",
@@ -441,4 +455,3 @@ export function getRoomProducers(
 
   return result;
 }
-

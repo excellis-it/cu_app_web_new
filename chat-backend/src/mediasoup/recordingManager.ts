@@ -166,9 +166,10 @@ function buildVideoGridFilter(params: {
   videoInputIndices: number[];
   targetWidth: number;
   targetHeight: number;
+  videoDimensions?: Map<number, { width: number; height: number }>;
   baseLabel: string;
 }): { filterParts: string[]; videoOutputLabel: string } {
-  const { videoInputIndices, targetWidth, targetHeight, baseLabel } = params;
+  const { videoInputIndices, targetWidth, targetHeight, videoDimensions, baseLabel } = params;
   const n = videoInputIndices.length;
 
   if (n === 0) return { filterParts: [], videoOutputLabel: baseLabel };
@@ -184,10 +185,15 @@ function buildVideoGridFilter(params: {
   for (let i = 0; i < n; i++) {
     const idx = videoInputIndices[i];
     const label = `sv${i}`;
+    const dims = videoDimensions?.get(idx - 1);
+    const isPortrait = dims ? dims.height > dims.width : false;
+
     // Scale each video to fit the cell, preserving aspect ratio.
-    // No rotation needed — cells are portrait-shaped (taller than wide)
-    // for ≤2 users, and the scale+pad handles any aspect ratio correctly.
+    // For portrait streams, rotate once so recordings do not end up sideways.
     const chain: string[] = [`[${idx}:v]setpts=PTS-STARTPTS,fps=15`];
+    if (isPortrait) {
+      chain.push("transpose=2:passthrough=portrait");
+    }
     chain.push(
       `scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear`,
       `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black`,
@@ -212,6 +218,7 @@ function buildFfmpegArgs(params: {
   videoInputIndices: number[];
   audioInputIndices: number[];
   sdpPathsInOrder: string[];
+  videoDimensions?: Map<number, { width: number; height: number }>;
 }) {
   const {
     outputPath,
@@ -221,7 +228,7 @@ function buildFfmpegArgs(params: {
   } = params;
 
   const { width: targetWidth, height: targetHeight } = computeCanvasSize(
-    new Map(),
+    params.videoDimensions ?? new Map(),
     originalVideoIndices.length,
   );
 
@@ -249,8 +256,9 @@ function buildFfmpegArgs(params: {
       "-protocol_whitelist", "file,udp,rtp,rtcp",
     );
 
-    // Explicitly define input format and codecs BEFORE -i to skip slow probing
-    args.push("-f", "sdp", "-c:v", "vp8", "-c:a", "opus");
+    // Keep codec detection dynamic from each SDP input so mixed VP8/H264 rooms
+    // (web + flutter/mobile) are recorded correctly.
+    args.push("-f", "sdp");
     args.push("-i", sdpPath);
   }
 
@@ -263,6 +271,7 @@ function buildFfmpegArgs(params: {
       videoInputIndices,
       targetWidth,
       targetHeight,
+      videoDimensions: params.videoDimensions,
       baseLabel: "0:v"
     });
     filterParts.push(...grid.filterParts);
@@ -534,6 +543,14 @@ export async function startServerRecording(params: {
     else audioInputIndices.push(i);
   }
 
+  const videoDimensions = new Map<number, { width: number; height: number }>();
+  for (let i = 0; i < liveStreams.length; i++) {
+    const stream = liveStreams[i];
+    if (stream.kind === "video" && stream.width && stream.height) {
+      videoDimensions.set(i, { width: stream.width, height: stream.height });
+    }
+  }
+
   const commonStartMicros = sharedStartMicros || Date.now() * 1000;
 
   // 1. Start FFmpeg FIRST so it opens UDP sockets before any data flows
@@ -542,6 +559,7 @@ export async function startServerRecording(params: {
     videoInputIndices,
     audioInputIndices,
     sdpPathsInOrder,
+    videoDimensions,
   });
 
   const ffmpegStderrPrefix = `[recording:${recordingId}] ffmpeg`;

@@ -1668,10 +1668,10 @@ const Room = ({
           ];
 
           const videoSettings = videoTrack.getSettings();
-          // On mobile devices the camera sensor reports its native (landscape)
-          // dimensions regardless of how the phone is held.  Detect portrait
-          // orientation and swap width/height so the backend can apply the
-          // correct FFmpeg transpose filter when recording.
+          // On mobile devices the camera sensor often reports landscape-native
+          // dimensions regardless of phone orientation. We normalize width/height
+          // to portrait for portrait capture so server-side recording can orient
+          // those tracks consistently.
           let reportedWidth = videoSettings.width;
           let reportedHeight = videoSettings.height;
 
