@@ -290,7 +290,7 @@ function buildVideoGridFilter(params: {
       // Flutter app is portrait-locked in-call, but the camera track can still
       // report landscape-native dimensions with rotation=0 in producer metadata.
       // Apply a recording-only correction so final composites stay upright.
-      chain.push("transpose=2:passthrough=portrait");
+      chain.push("transpose=1:passthrough=portrait");
       console.log("[recording:orientation] applied flutter portrait-lock transpose fallback", {
         streamIndex: i,
         width: effectiveWidth,
@@ -361,9 +361,9 @@ function buildFfmpegArgs(params: {
       "-thread_queue_size", "8192",
       "-fflags", "+genpts+igndts+discardcorrupt+nobuffer",
       "-flags", "low_delay",
-      "-analyzeduration", "750000",
-      "-probesize", "750000",
-      "-max_delay", "750000",
+      "-analyzeduration", "300000",
+      "-probesize", "300000",
+      "-max_delay", "500000",
       "-reorder_queue_size", "256",
       "-buffer_size", "20M",
       "-rw_timeout", "15000000",
