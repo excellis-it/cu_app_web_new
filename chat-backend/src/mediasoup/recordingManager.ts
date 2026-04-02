@@ -1430,11 +1430,45 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
     if (await isPlayableRecordingFile(outputPath)) {
       return { outputPath };
     }
+
+    for (const candidatePath of [finalOutputPath, outputPath]) {
+      if (!isUsableRecordingFile(candidatePath)) continue;
+
+      // If FFmpeg was interrupted while finalizing the trailer, try to salvage
+      // the finished segment with a quick remux/re-encode pass before failing.
+      // eslint-disable-next-line no-await-in-loop
+      const repairedPath = await repairNonPlayableSegment(candidatePath, recordingId);
+      if (!repairedPath) continue;
+
+      if (path.resolve(repairedPath) !== path.resolve(finalOutputPath)) {
+        try {
+          await fsp.copyFile(repairedPath, finalOutputPath);
+        } catch {
+          // Best-effort copy; downstream processors can use the repaired path.
+        }
+      }
+
+      const resolvedRepairedPath = (await isPlayableRecordingFile(finalOutputPath))
+        ? finalOutputPath
+        : repairedPath;
+      return { outputPath: resolvedRepairedPath };
+    }
+
     const fallbackSegment = await findLatestPlayableSegment(session.segments);
     if (fallbackSegment) {
-      return { outputPath: fallbackSegment };
+      if (path.resolve(fallbackSegment) !== path.resolve(finalOutputPath)) {
+        try {
+          await fsp.copyFile(fallbackSegment, finalOutputPath);
+        } catch {
+          // Best-effort copy; downstream processors can use the fallback path.
+        }
+      }
+      const resolvedFallbackPath = (await isPlayableRecordingFile(finalOutputPath))
+        ? finalOutputPath
+        : fallbackSegment;
+      return { outputPath: resolvedFallbackPath };
     }
-    throw new Error(`Recording output file missing after stop for recordingId=${recordingId}`);
+    throw new Error(`Recording output file unusable after stop for recordingId=${recordingId}`);
   }
   return { outputPath: finalOutputPath };
 }
