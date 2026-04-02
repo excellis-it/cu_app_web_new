@@ -2186,6 +2186,15 @@ export default function initializeSocket() {
               String(process.env.RECORDING_RESTART_ON_PRODUCER_JOIN || "true").toLowerCase() === "true";
             if (activeRecordingId && shouldRestartOnProducerJoin) {
               scheduleRecordingRestart(roomId, activeRecordingId);
+            } else if (shouldRestartOnProducerJoin) {
+              // Recording startup and producer events can race. Retry once so an
+              // initial video producer is not missed right after recording starts.
+              setTimeout(() => {
+                const delayedRecordingId = getActiveRecordingForRoom(roomId);
+                if (delayedRecordingId) {
+                  scheduleRecordingRestart(roomId, delayedRecordingId);
+                }
+              }, 1200);
             }
           } catch (err) {
             console.error("MS-produce error:", err);

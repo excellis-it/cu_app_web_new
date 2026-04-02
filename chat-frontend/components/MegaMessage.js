@@ -7,8 +7,14 @@ import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import DoneAllIcon from "@mui/icons-material/DoneAll";
 import DoneIcon from "@mui/icons-material/Done";
 import DownloadIcon from "@mui/icons-material/Download";
-import moment from "moment"
-import { Dialog, DialogTitle, DialogContent, DialogActions, Button } from "@mui/material";
+import moment from "moment";
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+} from "@mui/material";
 
 const MegaMessage = ({
   selected,
@@ -21,7 +27,7 @@ const MegaMessage = ({
   setReportType,
   groupDataDetails,
   onReplyJump,
-  isGuestMeeting
+  isGuestMeeting,
 }) => {
   const [anchorEl, setAnchorEl] = useState();
   const [SEOmodalIsOpen, SEOsetModalIsOpen] = useState(false);
@@ -63,11 +69,15 @@ const MegaMessage = ({
       if (messageContainer) {
         const containerRect = messageContainer.getBoundingClientRect();
         const messageRect = el.getBoundingClientRect();
-        const scrollTop = messageContainer.scrollTop + messageRect.top - containerRect.top - 100;
+        const scrollTop =
+          messageContainer.scrollTop +
+          messageRect.top -
+          containerRect.top -
+          100;
 
         messageContainer.scrollTo({
           top: scrollTop,
-          behavior: "smooth"
+          behavior: "smooth",
         });
 
         el.style.backgroundColor = "rgba(255,255,0,0.3)";
@@ -92,9 +102,10 @@ const MegaMessage = ({
     if (!text) return null;
     // Regex that captures:
     // 1. http:// or https:// URLs
-    // 2. www. URLs  
+    // 2. www. URLs
     // 3. domain.extension patterns
-    const urlRegex = /(https?:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[^\s]*)?)/g;
+    const urlRegex =
+      /(https?:\/\/[^\s]+|www\.[^\s]+|[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[^\s]*)?)/g;
 
     const parts = text.split(urlRegex);
 
@@ -130,12 +141,19 @@ const MegaMessage = ({
   if (message.textFileType === "created") {
     return (
       <div style={{ display: "flex", justifyContent: "center" }}>
-        <p>{groupDataDetails?.isTemp == true ? "Meeting created" : "Group created"}</p>
+        <p>
+          {groupDataDetails?.isTemp == true
+            ? "Meeting created"
+            : "Group created"}
+        </p>
       </div>
     );
   } else if (message.textFileType === "callEnd") {
     return (
-      <div id={`message-${message._id}`} className={styles.yourmessagebloackmaindiv}>
+      <div
+        id={`message-${message._id}`}
+        className={styles.yourmessagebloackmaindiv}
+      >
         <div className={styles.yourmessage}>
           <div className={styles.yourmessagenametime}>
             <div className={styles.yourmessageimgwrapper}>
@@ -233,17 +251,25 @@ const MegaMessage = ({
                 >
                   <div
                     className="w-100"
-                    style={{ display: "flex", flexDirection: "row", cursor: "pointer" }}
+                    style={{
+                      display: "flex",
+                      flexDirection: "row",
+                      cursor: "pointer",
+                    }}
                     onClick={replyClick}
                   >
-                    <div style={{ display: "flex", flexDirection: "column", paddingRight: "10px" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        paddingRight: "10px",
+                      }}
+                    >
                       <span style={{ fontWeight: "600" }}>
                         {message.replyOf.sender}
                       </span>
 
-                      <span style={{ fontWeight: "300" }}>
-                        Reply
-                      </span>
+                      <span style={{ fontWeight: "300" }}>Reply</span>
                     </div>
                     <div style={{ paddingLeft: "10px" }}>
                       {message.replyOf.msgType == "image" ? (
@@ -252,14 +278,15 @@ const MegaMessage = ({
                           className={styles.replyOfMyFilebody}
                           src={message.replyOf.msg}
                         />
-                      ) : message.replyOf.msgType == "video" || message.replyOf.msgType === "screen_recording" ? (
+                      ) : message.replyOf.msgType == "video" ||
+                        message.replyOf.msgType === "screen_recording" ? (
                         <video
                           className={styles.replyOfMyFilebody}
                           height="100px"
-                            src={resolveUploadsUrl(message.replyOf.msg)}
-                        // controls
-                        // playsInline
-                        // preload="metadata"
+                          src={resolveUploadsUrl(message.replyOf.msg)}
+                          // controls
+                          // playsInline
+                          // preload="metadata"
                         >
                           Your browser does not support the video tag.
                         </video>
@@ -282,27 +309,92 @@ const MegaMessage = ({
                 </div>
               )}
               {message.textFileType == "image" ? (
-                <img className={styles.yourFilebody} src={message.message} onClick={() => SEOsetModalIsOpen(true)} />
-              ) : message.textFileType == "video" || message.textFileType === "screen_recording" ? (
+                <img
+                  className={styles.yourFilebody}
+                  src={message.message}
+                  onClick={() => SEOsetModalIsOpen(true)}
+                />
+              ) : message.textFileType == "video" ||
+                message.textFileType === "screen_recording" ? (
                 <div>
                   {message.textFileType === "screen_recording" && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontSize: 12, color: '#7c3aed', fontWeight: 600 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#7c3aed', display: 'inline-block' }} />
-                      Screen Recording
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        marginBottom: 4,
+                        fontSize: 12,
+                        color: "#7c3aed",
+                        fontWeight: 600,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          backgroundColor: "#7c3aed",
+                          display: "inline-block",
+                        }}
+                      />
+                      Call Recording
                     </div>
                   )}
-                  {message.textFileType === "screen_recording" && message.message === "expired" ? (
-                    <div style={{ padding: '16px 20px', background: 'rgba(124,58,237,0.08)', borderRadius: 8, color: '#888', fontSize: 13, textAlign: 'center' }}>
-                      This screen recording has expired and is no longer available.
-                      <div style={{ fontSize: 11, marginTop: 4, color: '#aaa' }}>{message.fileName}</div>
-                    </div>
-                  ) : message.textFileType === "screen_recording" && message.message === "processing" ? (
-                    <div style={{ padding: '20px', background: 'rgba(124,58,237,0.06)', borderRadius: 8, textAlign: 'center', maxWidth: '400px' }}>
-                      <div style={{ fontSize: 24, marginBottom: 8 }}>
-                        <span style={{ display: 'inline-block', animation: 'spin 1.5s linear infinite', width: 24, height: 24, border: '3px solid #e5e7eb', borderTopColor: '#7c3aed', borderRadius: '50%' }} />
+                  {message.textFileType === "screen_recording" &&
+                  message.message === "expired" ? (
+                    <div
+                      style={{
+                        padding: "16px 20px",
+                        background: "rgba(124,58,237,0.08)",
+                        borderRadius: 8,
+                        color: "#888",
+                        fontSize: 13,
+                        textAlign: "center",
+                      }}
+                    >
+                      This screen recording has expired and is no longer
+                      available.
+                      <div
+                        style={{ fontSize: 11, marginTop: 4, color: "#aaa" }}
+                      >
+                        {message.fileName}
                       </div>
-                      <div style={{ fontSize: 13, color: '#666', fontWeight: 500 }}>Processing screen recording...</div>
-                      <div style={{ fontSize: 11, marginTop: 4, color: '#aaa' }}>{message.fileName}</div>
+                    </div>
+                  ) : message.textFileType === "screen_recording" &&
+                    message.message === "processing" ? (
+                    <div
+                      style={{
+                        padding: "20px",
+                        background: "rgba(124,58,237,0.06)",
+                        borderRadius: 8,
+                        textAlign: "center",
+                        maxWidth: "400px",
+                      }}
+                    >
+                      <div style={{ fontSize: 24, marginBottom: 8 }}>
+                        <span
+                          style={{
+                            display: "inline-block",
+                            animation: "spin 1.5s linear infinite",
+                            width: 24,
+                            height: 24,
+                            border: "3px solid #e5e7eb",
+                            borderTopColor: "#7c3aed",
+                            borderRadius: "50%",
+                          }}
+                        />
+                      </div>
+                      <div
+                        style={{ fontSize: 13, color: "#666", fontWeight: 500 }}
+                      >
+                        Processing screen recording...
+                      </div>
+                      <div
+                        style={{ fontSize: 11, marginTop: 4, color: "#aaa" }}
+                      >
+                        {message.fileName}
+                      </div>
                     </div>
                   ) : (
                     <>
@@ -314,7 +406,12 @@ const MegaMessage = ({
                           preload="auto"
                           src={resolveUploadsUrl(message.message)}
                           width="100%"
-                          style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            maxWidth: "400px",
+                            borderRadius: "8px",
+                          }}
                         />
                       ) : (
                         <video
@@ -324,13 +421,22 @@ const MegaMessage = ({
                           preload="auto"
                           src={resolveUploadsUrl(message.message)}
                           width="100%"
-                          style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
+                          style={{
+                            display: "block",
+                            width: "100%",
+                            maxWidth: "400px",
+                            borderRadius: "8px",
+                          }}
                         >
                           Your browser does not support the video tag.
                         </video>
                       )}
                       {message.fileName && (
-                        <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{message.fileName}</div>
+                        <div
+                          style={{ fontSize: 11, color: "#888", marginTop: 2 }}
+                        >
+                          {message.fileName}
+                        </div>
                       )}
                     </>
                   )}
@@ -352,19 +458,26 @@ const MegaMessage = ({
                 </>
               )}
               <div>
-                <Dialog open={SEOmodalIsOpen} onClose={() => SEOsetModalIsOpen(false)}>
+                <Dialog
+                  open={SEOmodalIsOpen}
+                  onClose={() => SEOsetModalIsOpen(false)}
+                >
                   <DialogContent>
                     <img src={message.message} />
                   </DialogContent>
                   <DialogActions>
-                    <Button onClick={() => SEOsetModalIsOpen(false)}>Close</Button>
+                    <Button onClick={() => SEOsetModalIsOpen(false)}>
+                      Close
+                    </Button>
                   </DialogActions>
                 </Dialog>
               </div>
             </article>
 
             <span className={styles.yourmessagetime}>
-              {moment(message.time || message.timestamp).format('MM/DD/YYYY HH:mm')}
+              {moment(message.time || message.timestamp).format(
+                "MM/DD/YYYY HH:mm",
+              )}
             </span>
           </div>
           {message.forwarded && <p style={{ color: "red" }}>Forwarded</p>}
@@ -383,32 +496,36 @@ const MegaMessage = ({
   } else {
     if (message.type === "receiver") {
       return (
-        <div id={`message-${message._id}`} className={styles.mymessagebloackmaindiv}>
+        <div
+          id={`message-${message._id}`}
+          className={styles.mymessagebloackmaindiv}
+        >
           <div className={styles.mymessage}>
-            <div className={styles.mymessagenametime}>
-            </div>
+            <div className={styles.mymessagenametime}></div>
             <div className={styles.mymessagebodymaindiv}>
               <div className="message_send_time_wrapper d-flex align-items-center">
                 <div className="message_send_time">
-                  {moment(message.time || message.timestamp).format('MM/DD/YYYY HH:mm')}
+                  {moment(message.time || message.timestamp).format(
+                    "MM/DD/YYYY HH:mm",
+                  )}
                 </div>
                 {!isGuestMeeting && (
                   <div>
                     <span className={styles.mymessagetimeself}>
                       {message.deliveredTo.length <
                         message?.allRecipients?.length && (
-                          <DoneIcon className="tick_design"></DoneIcon>
-                        )}
+                        <DoneIcon className="tick_design"></DoneIcon>
+                      )}
                       {message.allRecipients.length ==
                         message?.deliveredTo?.length &&
                         message?.readBy?.length <
-                        message?.allRecipients?.length && (
+                          message?.allRecipients?.length && (
                           <DoneAllIcon className="tick_design"></DoneAllIcon>
                         )}
                       {message.allRecipients.length ==
                         message?.deliveredTo?.length &&
                         message?.allRecipients?.length ==
-                        message?.readBy?.length && (
+                          message?.readBy?.length && (
                           <DoneAllIcon
                             className="tick_design"
                             style={{ color: "blue" }}
@@ -485,15 +602,26 @@ const MegaMessage = ({
                       marginBottom: "3px",
                     }}
                   >
-                    <div style={{ display: "flex", cursor: "pointer", flexDirection: "row" }} onClick={replyClick}>
-                      <div style={{ display: "flex", flexDirection: "column", paddingRight: "10px" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        cursor: "pointer",
+                        flexDirection: "row",
+                      }}
+                      onClick={replyClick}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          paddingRight: "10px",
+                        }}
+                      >
                         <span style={{ fontWeight: "600" }}>
                           {message.replyOf.sender}
                         </span>
 
-                        <span style={{ fontWeight: "300" }}>
-                          Reply
-                        </span>
+                        <span style={{ fontWeight: "300" }}>Reply</span>
                       </div>
                       <div style={{ paddingLeft: "10px" }}>
                         {message.replyOf.msgType === "image" ? (
@@ -507,9 +635,9 @@ const MegaMessage = ({
                             className={styles.replyOfMyFilebody}
                             height="100px"
                             src={resolveUploadsUrl(message.replyOf.msg)}
-                          // controls
-                          // playsInline
-                          // preload="metadata"
+                            // controls
+                            // playsInline
+                            // preload="metadata"
                           >
                             Your browser does not support the video tag.
                           </video>
@@ -539,27 +667,96 @@ const MegaMessage = ({
                   </div>
                 )}
                 {message.textFileType === "image" ? (
-                  <img className={styles.myFilebody} src={message.message} onClick={() => SEOsetModalIsOpen(true)} />
-                ) : message.textFileType === "video" || message.textFileType === "screen_recording" ? (
+                  <img
+                    className={styles.myFilebody}
+                    src={message.message}
+                    onClick={() => SEOsetModalIsOpen(true)}
+                  />
+                ) : message.textFileType === "video" ||
+                  message.textFileType === "screen_recording" ? (
                   <div>
                     {message.textFileType === "screen_recording" && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontSize: 12, color: '#7c3aed', fontWeight: 600 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#7c3aed', display: 'inline-block' }} />
-                        Screen Recording
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          marginBottom: 4,
+                          fontSize: 12,
+                          color: "#7c3aed",
+                          fontWeight: 600,
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            backgroundColor: "#7c3aed",
+                            display: "inline-block",
+                          }}
+                        />
+                        Call Recording
                       </div>
                     )}
-                    {message.textFileType === "screen_recording" && message.message === "expired" ? (
-                      <div style={{ padding: '16px 20px', background: 'rgba(124,58,237,0.08)', borderRadius: 8, color: '#888', fontSize: 13, textAlign: 'center' }}>
-                        This screen recording has expired and is no longer available.
-                        <div style={{ fontSize: 11, marginTop: 4, color: '#aaa' }}>{message.fileName}</div>
-                      </div>
-                    ) : message.textFileType === "screen_recording" && message.message === "processing" ? (
-                      <div style={{ padding: '20px', background: 'rgba(124,58,237,0.06)', borderRadius: 8, textAlign: 'center', maxWidth: '400px' }}>
-                        <div style={{ fontSize: 24, marginBottom: 8 }}>
-                          <span style={{ display: 'inline-block', animation: 'spin 1.5s linear infinite', width: 24, height: 24, border: '3px solid #e5e7eb', borderTopColor: '#7c3aed', borderRadius: '50%' }} />
+                    {message.textFileType === "screen_recording" &&
+                    message.message === "expired" ? (
+                      <div
+                        style={{
+                          padding: "16px 20px",
+                          background: "rgba(124,58,237,0.08)",
+                          borderRadius: 8,
+                          color: "#888",
+                          fontSize: 13,
+                          textAlign: "center",
+                        }}
+                      >
+                        This screen recording has expired and is no longer
+                        available.
+                        <div
+                          style={{ fontSize: 11, marginTop: 4, color: "#aaa" }}
+                        >
+                          {message.fileName}
                         </div>
-                        <div style={{ fontSize: 13, color: '#666', fontWeight: 500 }}>Processing screen recording...</div>
-                        <div style={{ fontSize: 11, marginTop: 4, color: '#aaa' }}>{message.fileName}</div>
+                      </div>
+                    ) : message.textFileType === "screen_recording" &&
+                      message.message === "processing" ? (
+                      <div
+                        style={{
+                          padding: "20px",
+                          background: "rgba(124,58,237,0.06)",
+                          borderRadius: 8,
+                          textAlign: "center",
+                          maxWidth: "400px",
+                        }}
+                      >
+                        <div style={{ fontSize: 24, marginBottom: 8 }}>
+                          <span
+                            style={{
+                              display: "inline-block",
+                              animation: "spin 1.5s linear infinite",
+                              width: 24,
+                              height: 24,
+                              border: "3px solid #e5e7eb",
+                              borderTopColor: "#7c3aed",
+                              borderRadius: "50%",
+                            }}
+                          />
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 13,
+                            color: "#666",
+                            fontWeight: 500,
+                          }}
+                        >
+                          Processing screen recording...
+                        </div>
+                        <div
+                          style={{ fontSize: 11, marginTop: 4, color: "#aaa" }}
+                        >
+                          {message.fileName}
+                        </div>
                       </div>
                     ) : (
                       <>
@@ -571,7 +768,12 @@ const MegaMessage = ({
                             preload="auto"
                             src={resolveUploadsUrl(message.message)}
                             width="100%"
-                            style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
+                            style={{
+                              display: "block",
+                              width: "100%",
+                              maxWidth: "400px",
+                              borderRadius: "8px",
+                            }}
                           />
                         ) : (
                           <video
@@ -581,13 +783,26 @@ const MegaMessage = ({
                             preload="auto"
                             src={resolveUploadsUrl(message.message)}
                             width="100%"
-                            style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
+                            style={{
+                              display: "block",
+                              width: "100%",
+                              maxWidth: "400px",
+                              borderRadius: "8px",
+                            }}
                           >
                             Your browser does not support the video tag.
                           </video>
                         )}
                         {message.fileName && (
-                          <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{message.fileName}</div>
+                          <div
+                            style={{
+                              fontSize: 11,
+                              color: "#888",
+                              marginTop: 2,
+                            }}
+                          >
+                            {message.fileName}
+                          </div>
                         )}
                       </>
                     )}
@@ -603,7 +818,9 @@ const MegaMessage = ({
                   </div>
                 ) : (
                   <>
-                    <div className="main_message_self">{renderMessageWithLinks(message.message)}</div>
+                    <div className="main_message_self">
+                      {renderMessageWithLinks(message.message)}
+                    </div>
                   </>
                 )}
               </article>
@@ -611,7 +828,10 @@ const MegaMessage = ({
             {message.forwarded && <p style={{ color: "red" }}>Forwarded</p>}
           </div>
           <div>
-            <Dialog open={SEOmodalIsOpen} onClose={() => SEOsetModalIsOpen(false)}>
+            <Dialog
+              open={SEOmodalIsOpen}
+              onClose={() => SEOsetModalIsOpen(false)}
+            >
               <DialogContent>
                 <img src={message.message} />
               </DialogContent>
@@ -624,7 +844,10 @@ const MegaMessage = ({
       );
     } else {
       return (
-        <div id={`message-${message._id}`} className={styles.yourmessagebloackmaindiv}>
+        <div
+          id={`message-${message._id}`}
+          className={styles.yourmessagebloackmaindiv}
+        >
           <div className={styles.yourmessage}>
             <div className={styles.yourmessagenametime}>
               <div className={styles.yourmessageimgwrapper}>
@@ -716,14 +939,20 @@ const MegaMessage = ({
                       className="w-100"
                       style={{ display: "flex", flexDirection: "row" }}
                     >
-                      <div style={{ display: "flex", cursor: "pointer", flexDirection: "column", paddingRight: "10px" }} onClick={replyClick}>
+                      <div
+                        style={{
+                          display: "flex",
+                          cursor: "pointer",
+                          flexDirection: "column",
+                          paddingRight: "10px",
+                        }}
+                        onClick={replyClick}
+                      >
                         <span style={{ fontWeight: "600" }}>
                           {message.replyOf.sender}
                         </span>
 
-                        <span style={{ fontWeight: "300" }}>
-                          Reply
-                        </span>
+                        <span style={{ fontWeight: "300" }}>Reply</span>
                       </div>
                       <div style={{ paddingLeft: "10px" }}>
                         {message.replyOf.msgType == "image" ? (
@@ -732,14 +961,15 @@ const MegaMessage = ({
                             className={styles.replyOfMyFilebody}
                             src={message.replyOf.msg}
                           />
-                        ) : message.replyOf.msgType == "video" || message.replyOf.msgType === "screen_recording" ? (
+                        ) : message.replyOf.msgType == "video" ||
+                          message.replyOf.msgType === "screen_recording" ? (
                           <video
                             className={styles.replyOfMyFilebody}
                             height="100px"
                             src={resolveUploadsUrl(message.replyOf.msg)}
-                          // controls
-                          // playsInline
-                          // preload="metadata"
+                            // controls
+                            // playsInline
+                            // preload="metadata"
                           >
                             Your browser does not support the video tag.
                           </video>
@@ -762,27 +992,96 @@ const MegaMessage = ({
                   </div>
                 )}
                 {message.textFileType == "image" ? (
-                  <img className={styles.yourFilebody} src={message.message} onClick={() => SEOsetModalIsOpen(true)} />
-                ) : message.textFileType == "video" || message.textFileType === "screen_recording" ? (
+                  <img
+                    className={styles.yourFilebody}
+                    src={message.message}
+                    onClick={() => SEOsetModalIsOpen(true)}
+                  />
+                ) : message.textFileType == "video" ||
+                  message.textFileType === "screen_recording" ? (
                   <div>
                     {message.textFileType === "screen_recording" && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontSize: 12, color: '#7c3aed', fontWeight: 600 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#7c3aed', display: 'inline-block' }} />
-                        Screen Recording
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          marginBottom: 4,
+                          fontSize: 12,
+                          color: "#7c3aed",
+                          fontWeight: 600,
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            backgroundColor: "#7c3aed",
+                            display: "inline-block",
+                          }}
+                        />
+                        Call Recording
                       </div>
                     )}
-                    {message.textFileType === "screen_recording" && message.message === "expired" ? (
-                      <div style={{ padding: '16px 20px', background: 'rgba(124,58,237,0.08)', borderRadius: 8, color: '#888', fontSize: 13, textAlign: 'center' }}>
-                        This screen recording has expired and is no longer available.
-                        <div style={{ fontSize: 11, marginTop: 4, color: '#aaa' }}>{message.fileName}</div>
-                      </div>
-                    ) : message.textFileType === "screen_recording" && message.message === "processing" ? (
-                      <div style={{ padding: '20px', background: 'rgba(124,58,237,0.06)', borderRadius: 8, textAlign: 'center', maxWidth: '400px' }}>
-                        <div style={{ fontSize: 24, marginBottom: 8 }}>
-                          <span style={{ display: 'inline-block', animation: 'spin 1.5s linear infinite', width: 24, height: 24, border: '3px solid #e5e7eb', borderTopColor: '#7c3aed', borderRadius: '50%' }} />
+                    {message.textFileType === "screen_recording" &&
+                    message.message === "expired" ? (
+                      <div
+                        style={{
+                          padding: "16px 20px",
+                          background: "rgba(124,58,237,0.08)",
+                          borderRadius: 8,
+                          color: "#888",
+                          fontSize: 13,
+                          textAlign: "center",
+                        }}
+                      >
+                        This call recording has expired and is no longer
+                        available.
+                        <div
+                          style={{ fontSize: 11, marginTop: 4, color: "#aaa" }}
+                        >
+                          {message.fileName}
                         </div>
-                        <div style={{ fontSize: 13, color: '#666', fontWeight: 500 }}>Processing screen recording...</div>
-                        <div style={{ fontSize: 11, marginTop: 4, color: '#aaa' }}>{message.fileName}</div>
+                      </div>
+                    ) : message.textFileType === "screen_recording" &&
+                      message.message === "processing" ? (
+                      <div
+                        style={{
+                          padding: "20px",
+                          background: "rgba(124,58,237,0.06)",
+                          borderRadius: 8,
+                          textAlign: "center",
+                          maxWidth: "400px",
+                        }}
+                      >
+                        <div style={{ fontSize: 24, marginBottom: 8 }}>
+                          <span
+                            style={{
+                              display: "inline-block",
+                              animation: "spin 1.5s linear infinite",
+                              width: 24,
+                              height: 24,
+                              border: "3px solid #e5e7eb",
+                              borderTopColor: "#7c3aed",
+                              borderRadius: "50%",
+                            }}
+                          />
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 13,
+                            color: "#666",
+                            fontWeight: 500,
+                          }}
+                        >
+                          Processing call recording...
+                        </div>
+                        <div
+                          style={{ fontSize: 11, marginTop: 4, color: "#aaa" }}
+                        >
+                          {message.fileName}
+                        </div>
                       </div>
                     ) : (
                       <>
@@ -794,7 +1093,12 @@ const MegaMessage = ({
                             preload="auto"
                             src={resolveUploadsUrl(message.message)}
                             width="100%"
-                            style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
+                            style={{
+                              display: "block",
+                              width: "100%",
+                              maxWidth: "400px",
+                              borderRadius: "8px",
+                            }}
                           />
                         ) : (
                           <video
@@ -804,13 +1108,26 @@ const MegaMessage = ({
                             preload="auto"
                             src={resolveUploadsUrl(message.message)}
                             width="100%"
-                            style={{ display: 'block', width: '100%', maxWidth: '400px', borderRadius: '8px' }}
+                            style={{
+                              display: "block",
+                              width: "100%",
+                              maxWidth: "400px",
+                              borderRadius: "8px",
+                            }}
                           >
                             Your browser does not support the video tag.
                           </video>
                         )}
                         {message.fileName && (
-                          <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{message.fileName}</div>
+                          <div
+                            style={{
+                              fontSize: 11,
+                              color: "#888",
+                              marginTop: 2,
+                            }}
+                          >
+                            {message.fileName}
+                          </div>
                         )}
                       </>
                     )}
@@ -826,23 +1143,32 @@ const MegaMessage = ({
                   </div>
                 ) : (
                   <>
-                    <div className="main_message">{renderMessageWithLinks(message.message)}</div>
+                    <div className="main_message">
+                      {renderMessageWithLinks(message.message)}
+                    </div>
                   </>
                 )}
                 <div>
-                  <Dialog open={SEOmodalIsOpen} onClose={() => SEOsetModalIsOpen(false)}>
+                  <Dialog
+                    open={SEOmodalIsOpen}
+                    onClose={() => SEOsetModalIsOpen(false)}
+                  >
                     <DialogContent>
                       <img src={message.message} />
                     </DialogContent>
                     <DialogActions>
-                      <Button onClick={() => SEOsetModalIsOpen(false)}>Close</Button>
+                      <Button onClick={() => SEOsetModalIsOpen(false)}>
+                        Close
+                      </Button>
                     </DialogActions>
                   </Dialog>
                 </div>
               </article>
 
               <span className={styles.yourmessagetime}>
-                {moment(message.time || message.timestamp).format('MM/DD/YYYY HH:mm')}
+                {moment(message.time || message.timestamp).format(
+                  "MM/DD/YYYY HH:mm",
+                )}
               </span>
             </div>
             {message.forwarded && <p style={{ color: "red" }}>Forwarded</p>}

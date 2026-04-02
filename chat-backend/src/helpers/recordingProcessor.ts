@@ -171,6 +171,40 @@ async function ensureDir(dir: string) {
   }
 }
 
+function isUsableRecordingFile(filePath: string): boolean {
+  try {
+    const stat = fs.statSync(filePath);
+    return stat.isFile() && stat.size > 1024;
+  } catch {
+    return false;
+  }
+}
+
+function findServerRecordingFallback(baseDir: string): string | null {
+  const mergedPath = path.join(baseDir, "raw.mp4");
+  if (isUsableRecordingFile(mergedPath)) return mergedPath;
+
+  try {
+    const rawSegments = fs
+      .readdirSync(baseDir)
+      .filter((name) => /^raw_\d+\.mp4$/i.test(name))
+      .sort((a, b) => {
+        const aIdx = Number((a.match(/\d+/) || ["0"])[0]);
+        const bIdx = Number((b.match(/\d+/) || ["0"])[0]);
+        return aIdx - bIdx;
+      });
+
+    for (let i = rawSegments.length - 1; i >= 0; i -= 1) {
+      const candidate = path.join(baseDir, rawSegments[i]);
+      if (isUsableRecordingFile(candidate)) return candidate;
+    }
+  } catch {
+    // Ignore filesystem lookup errors and return null fallback.
+  }
+
+  return null;
+}
+
 export async function processRecordingInBackground(recordingId: string) {
   const recording = await CallRecording.findById(recordingId);
   if (!recording) return;
@@ -187,14 +221,20 @@ export async function processRecordingInBackground(recordingId: string) {
     const baseDir = getRecordingBaseDir(id);
     await ensureDir(baseDir);
 
-    const rawFilePath = recording.rawFilePath || null;
+    const rawFilePathFromDb = recording.rawFilePath || null;
+    let rawFilePath = rawFilePathFromDb;
     if (!rawFilePath) {
-      throw new Error(
-        "Server-side raw file path missing. Client chunk-upload fallback is disabled.",
-      );
+      rawFilePath = findServerRecordingFallback(baseDir);
+      if (!rawFilePath) {
+        throw new Error(
+          "Server-side raw file path missing and no fallback segment was found.",
+        );
+      }
+      console.warn("[recording:process] using fallback raw file path", {
+        recordingId: id,
+        rawFilePath,
+      });
     }
-
-    const isServerMp4 = rawFilePath.endsWith(".mp4");
 
     const mp4Path = path.join(baseDir, "recording.mp4");
 
@@ -209,10 +249,27 @@ export async function processRecordingInBackground(recordingId: string) {
     }
 
     if (!fs.existsSync(rawFilePath)) {
-      throw new Error(
-        `Server-side raw file not found after waiting: ${rawFilePath}`,
-      );
+      const fallbackPath = findServerRecordingFallback(baseDir);
+      if (fallbackPath && fs.existsSync(fallbackPath)) {
+        rawFilePath = fallbackPath;
+        console.warn("[recording:process] recovered missing raw file from fallback", {
+          recordingId: id,
+          fallbackPath,
+        });
+      } else {
+        throw new Error(
+          `Server-side raw file not found after waiting: ${rawFilePath}`,
+        );
+      }
     }
+
+    if (rawFilePathFromDb !== rawFilePath) {
+      await CallRecording.findByIdAndUpdate(id, {
+        $set: { rawFilePath },
+      });
+    }
+
+    const isServerMp4 = rawFilePath.endsWith(".mp4");
 
     console.log(`[recording:process] using server-side raw ${isServerMp4 ? "mp4" : "webm"}`, {
       recordingId: id,

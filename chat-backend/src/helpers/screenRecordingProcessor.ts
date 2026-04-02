@@ -252,6 +252,40 @@ async function ensureDir(dir: string) {
   }
 }
 
+function isUsableRecordingFile(filePath: string): boolean {
+  try {
+    const stat = fs.statSync(filePath);
+    return stat.isFile() && stat.size > 1024;
+  } catch {
+    return false;
+  }
+}
+
+function findServerRecordingFallback(baseDir: string): string | null {
+  const mergedPath = path.join(baseDir, "raw.mp4");
+  if (isUsableRecordingFile(mergedPath)) return mergedPath;
+
+  try {
+    const rawSegments = fs
+      .readdirSync(baseDir)
+      .filter((name: string) => /^raw_\d+\.mp4$/i.test(name))
+      .sort((a: string, b: string) => {
+        const aIdx = Number((a.match(/\d+/) || ["0"])[0]);
+        const bIdx = Number((b.match(/\d+/) || ["0"])[0]);
+        return aIdx - bIdx;
+      });
+
+    for (let i = rawSegments.length - 1; i >= 0; i -= 1) {
+      const candidate = path.join(baseDir, rawSegments[i]);
+      if (isUsableRecordingFile(candidate)) return candidate;
+    }
+  } catch {
+    // Ignore filesystem lookup errors and return null fallback.
+  }
+
+  return null;
+}
+
 /**
  * Helper: upload a file to S3 or local, returning the playback URL.
  */
@@ -334,11 +368,19 @@ export async function processScreenRecordingInBackground(recordingId: string) {
     const baseDir = getRecordingBaseDir(id);
     await ensureDir(baseDir);
 
-    const rawFilePath = recording.rawFilePath || null;
+    const rawFilePathFromDb = recording.rawFilePath || null;
+    let rawFilePath = rawFilePathFromDb;
     if (!rawFilePath) {
-      throw new Error(
-        "Server-side recording file path missing. Client chunk-upload fallback is disabled.",
-      );
+      rawFilePath = findServerRecordingFallback(baseDir);
+      if (!rawFilePath) {
+        throw new Error(
+          "Server-side recording file path missing and no fallback segment was found.",
+        );
+      }
+      console.warn("[screen-recording:process] using fallback raw file path", {
+        recordingId: id,
+        rawFilePath,
+      });
     }
 
     // --- Resolve the source file ---
@@ -354,9 +396,24 @@ export async function processScreenRecordingInBackground(recordingId: string) {
         await new Promise((r) => setTimeout(r, 500));
       }
       if (!fs.existsSync(rawFilePath)) {
-        throw new Error(`Server-side recording file not found after waiting: ${rawFilePath}`);
+        const fallbackPath = findServerRecordingFallback(baseDir);
+        if (fallbackPath && fs.existsSync(fallbackPath)) {
+          rawFilePath = fallbackPath;
+          console.warn("[screen-recording:process] recovered missing raw file from fallback", {
+            recordingId: id,
+            fallbackPath,
+          });
+        } else {
+          throw new Error(`Server-side recording file not found after waiting: ${rawFilePath}`);
+        }
       }
       sourceFilePath = rawFilePath;
+    }
+
+    if (rawFilePathFromDb !== rawFilePath) {
+      await ScreenRecording.findByIdAndUpdate(id, {
+        $set: { rawFilePath },
+      });
     }
 
     const rawSizeBytes = fs.statSync(sourceFilePath).size;

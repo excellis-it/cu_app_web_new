@@ -114,6 +114,23 @@ function releasePorts(ports: number[]) {
   }, 5000); 
 }
 
+function isUsableRecordingFile(filePath: string): boolean {
+  try {
+    const stat = fs.statSync(filePath);
+    return stat.isFile() && stat.size > 1024;
+  } catch {
+    return false;
+  }
+}
+
+function findLatestUsableSegment(segments: string[]): string | null {
+  for (let i = segments.length - 1; i >= 0; i -= 1) {
+    const segmentPath = segments[i];
+    if (isUsableRecordingFile(segmentPath)) return segmentPath;
+  }
+  return null;
+}
+
 function getLocalIp() {
   // Always use localhost for internal recording traffic (avoids firewall/external IP issues)
   return "127.0.0.1";
@@ -524,6 +541,24 @@ export async function restartServerRecording(params: {
   restartLocks.add(recordingId);
 
   try {
+    // If a stop flow has already switched DB status away from "recording",
+    // do not interrupt the active session here. Let stopServerRecording own teardown.
+    const [callRecBefore, screenRecBefore] = await Promise.all([
+      CallRecording.findById(recordingId, { status: 1 }).lean() as any,
+      ScreenRecording.findById(recordingId, { status: 1 }).lean() as any,
+    ]);
+    const shouldRestartNow =
+      callRecBefore?.status === "recording" || screenRecBefore?.status === "recording";
+    if (!shouldRestartNow) {
+      console.log("[recording:restart] skip restart because recording is not active", {
+        roomId,
+        recordingId,
+        callStatus: callRecBefore?.status,
+        screenStatus: screenRecBefore?.status,
+      });
+      return;
+    }
+
     const session = activeSessions.get(recordingId);
     if (!session) return;
 
@@ -563,6 +598,24 @@ export async function restartServerRecording(params: {
     }
     releasePorts(allocatedPorts);
     activeSessions.delete(recordingId);
+
+    // If the recording was stopped while restart was in-flight, do not spin up
+    // a new segment.
+    const [callRec, screenRec] = await Promise.all([
+      CallRecording.findById(recordingId, { status: 1 }).lean() as any,
+      ScreenRecording.findById(recordingId, { status: 1 }).lean() as any,
+    ]);
+    const stillRecordingActive =
+      callRec?.status === "recording" || screenRec?.status === "recording";
+    if (!stillRecordingActive) {
+      console.log("[recording:restart] skip restart because recording is no longer active", {
+        roomId,
+        recordingId,
+        callStatus: callRec?.status,
+        screenStatus: screenRec?.status,
+      });
+      return;
+    }
 
     await startServerRecording({ ...params, existingSegments: segments, sharedStartMicros: commonStartMicros });
   } finally {
@@ -860,7 +913,16 @@ export async function startServerRecording(params: {
 }
 
 export async function stopServerRecording(recordingId: string): Promise<{ outputPath: string }> {
-  const session = activeSessions.get(recordingId);
+  let session = activeSessions.get(recordingId);
+  if (!session && restartLocks.has(recordingId)) {
+    const waitUntil = Date.now() + Math.min(recordingStopTimeoutMs, 10000);
+    while (!session && Date.now() < waitUntil) {
+      // If restart is currently rebuilding this session, wait briefly.
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 200));
+      session = activeSessions.get(recordingId);
+    }
+  }
   if (!session) throw new Error(`No session for ${recordingId}`);
   activeSessions.delete(recordingId);
 
@@ -930,11 +992,33 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
 
   if (session.segments.length > 1) {
     const finalOutputPath = path.join(path.dirname(outputPath), "raw.mp4");
+    const usableSegments = session.segments.filter((segmentPath) =>
+      isUsableRecordingFile(segmentPath),
+    );
+    if (usableSegments.length === 0) {
+      throw new Error(`No usable segment files found for recordingId=${recordingId}`);
+    }
+
+    if (usableSegments.length === 1) {
+      const fallbackSegment = usableSegments[0];
+      if (path.resolve(fallbackSegment) !== path.resolve(finalOutputPath)) {
+        try {
+          await fsp.copyFile(fallbackSegment, finalOutputPath);
+        } catch {
+          // Best-effort copy; fallback to original segment path.
+        }
+      }
+      const resolvedFallbackPath = isUsableRecordingFile(finalOutputPath)
+        ? finalOutputPath
+        : fallbackSegment;
+      return { outputPath: resolvedFallbackPath };
+    }
+
     const concatListPath = path.join(path.dirname(outputPath), "concat-list-server.txt");
-    const concatContent = session.segments.map(s => `file '${path.resolve(s).replaceAll("\\", "/")}'`).join("\n");
+    const concatContent = usableSegments.map(s => `file '${path.resolve(s).replaceAll("\\", "/")}'`).join("\n");
     await fsp.writeFile(concatListPath, concatContent, "utf8");
     try {
-      console.log(`[recording:server] merging ${session.segments.length} segments into ${finalOutputPath}`);
+      console.log(`[recording:server] merging ${usableSegments.length} segments into ${finalOutputPath}`);
       // Re-encode audio during merge: asetpts=N/SR/TB generates sequential timestamps
       // across the segment boundary, eliminating DTS jumps. Video is stream-copied (fast).
       const ffmpeg = spawn(ffmpegBinary, [
@@ -965,14 +1049,48 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
           }
         });
       });
+      if (!isUsableRecordingFile(finalOutputPath)) {
+        throw new Error(`Merged output missing or invalid: ${finalOutputPath}`);
+      }
       return { outputPath: finalOutputPath };
     } catch (err: any) {
-      console.error("[recording:server] merge failed, returning latest segment only", err);
-      return { outputPath };
+      console.error("[recording:server] merge failed, attempting fallback segment", {
+        error: err?.message || String(err),
+        recordingId,
+      });
+      const fallbackSegment = findLatestUsableSegment(usableSegments);
+      if (!fallbackSegment) {
+        throw new Error(`Merge failed and no fallback segment available for recordingId=${recordingId}`);
+      }
+      if (path.resolve(fallbackSegment) !== path.resolve(finalOutputPath)) {
+        try {
+          await fsp.copyFile(fallbackSegment, finalOutputPath);
+        } catch {
+          // Best-effort copy; fallback to original segment path.
+        }
+      }
+      const resolvedFallbackPath = isUsableRecordingFile(finalOutputPath)
+        ? finalOutputPath
+        : fallbackSegment;
+      return { outputPath: resolvedFallbackPath };
     }
   }
 
   const finalOutputPath = path.join(path.dirname(outputPath), "raw.mp4");
-  if (fs.existsSync(outputPath)) await fsp.rename(outputPath, finalOutputPath).catch(() => { });
+  if (fs.existsSync(outputPath)) {
+    await fsp.rename(outputPath, finalOutputPath).catch(async () => {
+      try {
+        await fsp.copyFile(outputPath, finalOutputPath);
+      } catch {
+        // Best-effort fallback copy.
+      }
+    });
+  }
+  if (!isUsableRecordingFile(finalOutputPath)) {
+    if (isUsableRecordingFile(outputPath)) {
+      return { outputPath };
+    }
+    throw new Error(`Recording output file missing after stop for recordingId=${recordingId}`);
+  }
   return { outputPath: finalOutputPath };
 }
