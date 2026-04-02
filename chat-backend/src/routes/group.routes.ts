@@ -4,15 +4,9 @@ import authMiddleware from "../middleware/authMiddleware";
 import { AddNewGroupMessage, AddUserToGroup, CreateNewGroup, DeleteGroupMessage, GetGroups, GetSingleGroupDetails, GetSingleGroupMessages, updateGroup, RemoveUserFromGroup, ReportGroup, ReportMessage, testMessage, deliverySeen, infoMessage, checkActiveCall, GetGroupsActivity, GetSingleGroupCallDetails, GetOrCreateDirectChat, AddGroupAction, CreateGuestMeeting, GetGuestMeetingByPin, GetAllGuestMeeting, UpdateGuestMeeting, AddGuestMeetingMessage, GetAllGuestMeetingMessage } from "../controller/group/msgController";
 import {
   checkRecordingOngoing,
-  completeRecordingUpload,
   getRecordingStatus,
-  initRecordingUpload,
-  uploadRecordingChunk,
 } from "../controller/group/recordingController";
 import {
-  initScreenRecording,
-  uploadScreenRecordingChunk,
-  completeScreenRecording,
   getScreenRecordingStatus,
   getScreenRecordingsList,
 } from "../controller/group/screenRecordingController";
@@ -264,30 +258,27 @@ groupRouter.get("/deliveried", authMiddleware, async (req: any, res: any) => {
 // ========================
 groupRouter.post("/recordings/init", authMiddleware, async (req: any, res: any) => {
     try {
-        // eslint-disable-next-line no-console
-        console.log("[routes] POST /groups/recordings/init", {
-            roomId: req?.body?.roomId,
-            recordingId: req?.body?.recordingId,
-            userId: req?.user?._id?.toString?.(),
-        });
-        serverResponse(true, "Recording upload initialized successfully", await initRecordingUpload(req.body, req.user), res);
+        serverResponse(
+            false,
+            "Recording upload API is disabled.",
+            "Use server-side socket recording events only (BE-start-recording / BE-stop-recording).",
+            res,
+            410,
+        );
     } catch (error: any) {
         serverResponse(false, "Error initializing recording upload", error.message, res);
     }
 });
 
-groupRouter.post("/recordings/chunk", authMiddleware, uploadFile.single("chunk"), async (req: any, res: any) => {
+groupRouter.post("/recordings/chunk", authMiddleware, async (req: any, res: any) => {
     try {
-        // eslint-disable-next-line no-console
-        console.log("[routes] POST /groups/recordings/chunk", {
-            roomId: req?.body?.roomId,
-            recordingId: req?.body?.recordingId,
-            uploadSessionId: req?.body?.uploadSessionId,
-            chunkIndex: req?.body?.chunkIndex,
-            userId: req?.user?._id?.toString?.(),
-            chunkSize: req?.file?.buffer?.length || 0,
-        });
-        serverResponse(true, "Recording chunk uploaded successfully", await uploadRecordingChunk(req.body, req.user, req.file), res);
+        serverResponse(
+            false,
+            "Recording upload API is disabled.",
+            "Use server-side socket recording events only (BE-start-recording / BE-stop-recording).",
+            res,
+            410,
+        );
     } catch (error: any) {
         serverResponse(false, "Error uploading recording chunk", error.message, res);
     }
@@ -295,15 +286,13 @@ groupRouter.post("/recordings/chunk", authMiddleware, uploadFile.single("chunk")
 
 groupRouter.post("/recordings/complete", authMiddleware, async (req: any, res: any) => {
     try {
-        // eslint-disable-next-line no-console
-        console.log("[routes] POST /groups/recordings/complete", {
-            roomId: req?.body?.roomId,
-            recordingId: req?.body?.recordingId,
-            totalChunks: req?.body?.totalChunks,
-            durationSec: req?.body?.durationSec,
-            userId: req?.user?._id?.toString?.(),
-        });
-        serverResponse(true, "Recording upload completed successfully", await completeRecordingUpload(req.body, req.user), res);
+        serverResponse(
+            false,
+            "Recording upload API is disabled.",
+            "Use server-side socket recording events only (BE-start-recording / BE-stop-recording).",
+            res,
+            410,
+        );
     } catch (error: any) {
         serverResponse(false, "Error completing recording upload", error.message, res);
     }
@@ -336,25 +325,27 @@ groupRouter.get("/recordings/status", authMiddleware, async (req: any, res: any)
 // ==============================
 groupRouter.post("/screen-recordings/init", authMiddleware, async (req: any, res: any) => {
     try {
-        console.log("[routes] POST /groups/screen-recordings/init", {
-            groupId: req?.body?.groupId,
-            userId: req?.user?._id?.toString?.(),
-        });
-        serverResponse(true, "Screen recording initialized successfully", await initScreenRecording(req.body, req.user), res);
+        serverResponse(
+            false,
+            "Screen recording upload API is disabled.",
+            "Use server-side socket recording events only (BE-start-screen-recording / BE-stop-screen-recording).",
+            res,
+            410,
+        );
     } catch (error: any) {
         serverResponse(false, "Error initializing screen recording", error.message, res);
     }
 });
 
-groupRouter.post("/screen-recordings/chunk", authMiddleware, uploadFile.single("chunk"), async (req: any, res: any) => {
+groupRouter.post("/screen-recordings/chunk", authMiddleware, async (req: any, res: any) => {
     try {
-        console.log("[routes] POST /groups/screen-recordings/chunk", {
-            groupId: req?.body?.groupId,
-            recordingId: req?.body?.recordingId,
-            chunkIndex: req?.body?.chunkIndex,
-            chunkSize: req?.file?.buffer?.length || 0,
-        });
-        serverResponse(true, "Screen recording chunk uploaded successfully", await uploadScreenRecordingChunk(req.body, req.user, req.file), res);
+        serverResponse(
+            false,
+            "Screen recording upload API is disabled.",
+            "Use server-side socket recording events only (BE-start-screen-recording / BE-stop-screen-recording).",
+            res,
+            410,
+        );
     } catch (error: any) {
         serverResponse(false, "Error uploading screen recording chunk", error.message, res);
     }
@@ -362,13 +353,13 @@ groupRouter.post("/screen-recordings/chunk", authMiddleware, uploadFile.single("
 
 groupRouter.post("/screen-recordings/complete", authMiddleware, async (req: any, res: any) => {
     try {
-        console.log("[routes] POST /groups/screen-recordings/complete", {
-            groupId: req?.body?.groupId,
-            recordingId: req?.body?.recordingId,
-            totalChunks: req?.body?.totalChunks,
-            durationSec: req?.body?.durationSec,
-        });
-        serverResponse(true, "Screen recording completed successfully", await completeScreenRecording(req.body, req.user), res);
+        serverResponse(
+            false,
+            "Screen recording upload API is disabled.",
+            "Use server-side socket recording events only (BE-start-screen-recording / BE-stop-screen-recording).",
+            res,
+            410,
+        );
     } catch (error: any) {
         serverResponse(false, "Error completing screen recording", error.message, res);
     }

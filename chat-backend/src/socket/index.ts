@@ -36,8 +36,6 @@ import {
 import {
   startServerRecording,
   stopServerRecording,
-  getActiveRecordingForRoom,
-  scheduleRecordingRestart,
 } from "../mediasoup/recordingManager";
 import { processRecordingInBackground } from "../helpers/recordingProcessor";
 import { processScreenRecordingInBackground } from "../helpers/screenRecordingProcessor";
@@ -2179,16 +2177,8 @@ export default function initializeSocket() {
 
             cb && cb({ ok: true, id: producer.id });
 
-            // If a recording is active and a new VIDEO producer appears, debounce-restart
-            // the recording to include the late-joining participant. Audio-only producers
-            // don't change the grid layout, so skip restart for them. The 2s debounce
-            // ensures that audio+video from the same user join only trigger one restart.
-            if (kind === "video") {
-              const activeRecordingId = getActiveRecordingForRoom(roomId);
-              if (activeRecordingId) {
-                scheduleRecordingRestart(roomId, activeRecordingId);
-              }
-            }
+            // Recording restarts on participant join are intentionally disabled.
+            // They can corrupt segments under packet loss / high load.
           } catch (err) {
             console.error("MS-produce error:", err);
             cb && cb({ ok: false, error: "failed" });

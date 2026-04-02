@@ -16,6 +16,10 @@ import { recordingConfig } from "./recordingConfig";
 import logError from "./logError";
 
 const ffmpegBinary = process.env.FFMPEG_PATH || "ffmpeg";
+const minScreenRecordingOutputBytes = Math.max(
+  10240,
+  Number(process.env.SCREEN_RECORDING_MIN_OUTPUT_BYTES) || 65536,
+);
 
 function runFfmpeg(args: string[]) {
   return new Promise<void>((resolve, reject) => {
@@ -47,58 +51,6 @@ function getRecordingBaseDir(recordingId: string) {
   // Server-side recording writes raw.webm directly to {tempUploadDir}/{recordingId}/
   // so this must match the path used in recordingManager.ts
   return path.join(recordingConfig.tempUploadDir, recordingId);
-}
-
-function getChunksDir(recordingId: string) {
-  return path.join(getRecordingBaseDir(recordingId), "chunks");
-}
-
-/**
- * Binary-concatenate chunk files into a single output file.
- * Browser MediaRecorder produces a continuous webm byte-stream split across
- * chunks, so plain binary concat produces a valid file without ffmpeg.
- */
-async function mergeChunks(recordingId: string, outputFilePath: string) {
-  const chunksDir = getChunksDir(recordingId);
-  const allFiles = await fsp.readdir(chunksDir);
-
-  const chunkFiles = allFiles
-    .filter((fileName) => fileName.endsWith(".chunk"))
-    .sort((a, b) => Number(a.replace(".chunk", "")) - Number(b.replace(".chunk", "")));
-
-  if (chunkFiles.length === 0) {
-    throw new Error("No chunk files found to merge.");
-  }
-
-  console.log("[screen-recording:process] mergeChunks (binary concat)", {
-    recordingId,
-    chunksDir,
-    chunkCount: chunkFiles.length,
-  });
-
-  const writeStream = fs.createWriteStream(outputFilePath);
-
-  for (const fileName of chunkFiles) {
-    const chunkPath = path.join(chunksDir, fileName);
-    await new Promise<void>((resolve, reject) => {
-      const readStream = fs.createReadStream(chunkPath);
-      readStream.pipe(writeStream, { end: false });
-      readStream.on("end", resolve);
-      readStream.on("error", reject);
-    });
-  }
-
-  writeStream.end();
-  await new Promise<void>((resolve, reject) => {
-    writeStream.on("finish", resolve);
-    writeStream.on("error", reject);
-  });
-
-  const mergedStat = await fsp.stat(outputFilePath);
-  console.log("[screen-recording:process] merge complete", {
-    recordingId,
-    mergedSizeBytes: mergedStat.size,
-  });
 }
 
 async function transcodeWebmToMp4(inputFilePath: string, outputFilePath: string) {
@@ -383,13 +335,18 @@ export async function processScreenRecordingInBackground(recordingId: string) {
     await ensureDir(baseDir);
 
     const rawFilePath = recording.rawFilePath || null;
+    if (!rawFilePath) {
+      throw new Error(
+        "Server-side recording file path missing. Client chunk-upload fallback is disabled.",
+      );
+    }
 
     // --- Resolve the source file ---
     let sourceFilePath: string;
 
-    if (rawFilePath && fs.existsSync(rawFilePath)) {
+    if (fs.existsSync(rawFilePath)) {
       sourceFilePath = rawFilePath;
-    } else if (rawFilePath && !fs.existsSync(rawFilePath)) {
+    } else {
       // Wait briefly for FFmpeg to flush
       const startedAt = Date.now();
       while (Date.now() - startedAt < 20000) {
@@ -400,23 +357,19 @@ export async function processScreenRecordingInBackground(recordingId: string) {
         throw new Error(`Server-side recording file not found after waiting: ${rawFilePath}`);
       }
       sourceFilePath = rawFilePath;
-    } else {
-      // Client-side chunk upload fallback: merge chunks
-      const mergedWebmPath = path.join(baseDir, "merged.webm");
-      console.log("[screen-recording:process] merging chunks (client upload)", { recordingId: id });
-      await mergeChunks(id, mergedWebmPath);
-      sourceFilePath = mergedWebmPath;
     }
 
     const rawSizeBytes = fs.statSync(sourceFilePath).size;
+    if (rawSizeBytes < minScreenRecordingOutputBytes) {
+      throw new Error(
+        `Screen recording output too small (${rawSizeBytes} bytes). Minimum required is ${minScreenRecordingOutputBytes} bytes.`,
+      );
+    }
 
-    // Probe duration from the source file
-    let durationSec = recording.durationSec || 0;
-    try {
-      const probedDuration = await getMediaDuration(sourceFilePath);
-      if (probedDuration > 0) durationSec = probedDuration;
-    } catch {
-      // Keep the socket-calculated duration as fallback
+    // Probe duration from the source file and require a valid media timeline.
+    const durationSec = await getMediaDuration(sourceFilePath);
+    if (durationSec <= 0) {
+      throw new Error("Screen recording output duration is invalid (ffprobe <= 0). Aborting publish.");
     }
 
     const isMp4 = sourceFilePath.endsWith(".mp4");

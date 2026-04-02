@@ -16,6 +16,10 @@ import { recordingConfig } from "./recordingConfig";
 import logError from "./logError";
 
 const ffmpegBinary = process.env.FFMPEG_PATH || "ffmpeg";
+const minRecordingOutputBytes = Math.max(
+  10240,
+  Number(process.env.RECORDING_MIN_OUTPUT_BYTES) || 65536,
+);
 
 function runFfmpeg(args: string[]) {
   return new Promise<void>((resolve, reject) => {
@@ -48,75 +52,6 @@ function getRecordingBaseDir(recordingId: string) {
   return path.join(recordingConfig.tempUploadDir, recordingId);
 }
 
-function getChunksDir(recordingId: string) {
-  return path.join(getRecordingBaseDir(recordingId), "chunks");
-}
-
-async function mergeChunks(recordingId: string, outputFilePath: string) {
-  const chunksDir = getChunksDir(recordingId);
-  const allFiles = await fsp.readdir(chunksDir);
-
-  const chunkFiles = allFiles
-    .filter((fileName) => fileName.endsWith(".chunk"))
-    .sort((a, b) => Number(a.replace(".chunk", "")) - Number(b.replace(".chunk", "")));
-
-  if (chunkFiles.length === 0) {
-    throw new Error("No chunk files found to merge.");
-  }
-
-  // eslint-disable-next-line no-console
-  console.log("[recording:process] mergeChunks", {
-    recordingId,
-    chunksDir,
-    chunkCount: chunkFiles.length,
-    chunkFiles: chunkFiles.slice(0, 10),
-  });
-
-  const indices = chunkFiles.map((f) => Number(f.replace(".chunk", "")));
-  console.log("[recording:process] mergeChunks indices", {
-    recordingId,
-    minIndex: Math.min(...indices),
-    maxIndex: Math.max(...indices),
-    indicesPreview: indices.slice(0, 20),
-  });
-
-  const concatListPath = path.join(getRecordingBaseDir(recordingId), "concat-list.txt");
-  const concatContent = chunkFiles
-    .map((fileName) => {
-      const fullPath = path
-        .resolve(chunksDir, fileName)
-        .replaceAll("\\", "/");
-      return `file '${fullPath}'`;
-    })
-    .join("\n");
-
-  await fsp.writeFile(concatListPath, concatContent, "utf8");
-
-  const resolvedConcatListPath = path.resolve(concatListPath);
-  const resolvedOutputPath = path.resolve(outputFilePath);
-
-  await runFfmpeg([
-    "-y",
-    "-f",
-    "concat",
-    "-safe",
-    "0",
-    "-i",
-    resolvedConcatListPath,
-    "-c",
-    "copy",
-    resolvedOutputPath,
-  ]);
-
-  const mergedStat = await fsp.stat(resolvedOutputPath);
-  // eslint-disable-next-line no-console
-  console.log("[recording:process] merge complete", {
-    recordingId,
-    mergedSizeBytes: mergedStat.size,
-    outputFilePath: resolvedOutputPath,
-  });
-}
-
 async function transcodeWebmToMp4(inputFilePath: string, outputFilePath: string) {
   await runFfmpeg([
     "-y",
@@ -138,6 +73,27 @@ async function transcodeWebmToMp4(inputFilePath: string, outputFilePath: string)
     "+faststart",
     path.resolve(outputFilePath),
   ]);
+}
+
+function getMediaDuration(filePath: string): Promise<number> {
+  const ffprobeBinary = ffmpegBinary.replace(/ffmpeg(\.exe)?$/, "ffprobe$1");
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffprobeBinary, [
+      "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "default=noprint_wrappers=1:nokey=1",
+      path.resolve(filePath),
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+
+    let stdout = "";
+    proc.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+    proc.on("error", (err) => reject(err));
+    proc.on("close", (code) => {
+      if (code !== 0) return reject(new Error(`ffprobe exited with code ${code}`));
+      const duration = Math.round(parseFloat(stdout.trim()));
+      resolve(Number.isFinite(duration) ? duration : 0);
+    });
+  });
 }
 
 function getPublicUploadsDir() {
@@ -231,59 +187,47 @@ export async function processRecordingInBackground(recordingId: string) {
     const baseDir = getRecordingBaseDir(id);
     await ensureDir(baseDir);
 
-    // Server-side recording (Phase 1) writes a single raw.mp4 or raw.webm at stop time.
-    // Client-side chunk flow writes merged.webm after receiving chunks.
     const rawFilePath = recording.rawFilePath || null;
-    const isServerMp4 = rawFilePath && rawFilePath.endsWith(".mp4");
-    
-    const mergedWebmPath = path.join(baseDir, "merged.webm");
-    const mp4Path = path.join(baseDir, "recording.mp4");
-
-    if (rawFilePath) {
-      if (!fs.existsSync(rawFilePath)) {
-        // Give a short grace period for ffmpeg to flush to disk.
-        const startedAt = Date.now();
-        while (Date.now() - startedAt < 20000) {
-          if (fs.existsSync(rawFilePath)) break;
-          // eslint-disable-next-line no-await-in-loop
-          await new Promise((r) => setTimeout(r, 500));
-        }
-      }
-
-      if (!fs.existsSync(rawFilePath)) {
-        throw new Error(
-          `Server-side raw file not found after waiting: ${rawFilePath}`,
-        );
-      }
-
-      console.log(`[recording:process] using server-side raw ${isServerMp4 ? "mp4" : "webm"}`, {
-        recordingId: id,
-        rawFilePath,
-      });
-    } else {
-      // Client-side chunk upload mode: merge chunks into merged.webm.
-      console.log("[recording:process] merging chunks (client upload flow)", {
-        recordingId: id,
-        mergedWebmPath,
-      });
-      await mergeChunks(id, mergedWebmPath);
+    if (!rawFilePath) {
+      throw new Error(
+        "Server-side raw file path missing. Client chunk-upload fallback is disabled.",
+      );
     }
 
-    // eslint-disable-next-line no-console
-    console.log("[recording:process] merged.webm exists", {
+    const isServerMp4 = rawFilePath.endsWith(".mp4");
+
+    const mp4Path = path.join(baseDir, "recording.mp4");
+
+    if (!fs.existsSync(rawFilePath)) {
+      // Give a short grace period for ffmpeg to flush to disk.
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < 20000) {
+        if (fs.existsSync(rawFilePath)) break;
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+
+    if (!fs.existsSync(rawFilePath)) {
+      throw new Error(
+        `Server-side raw file not found after waiting: ${rawFilePath}`,
+      );
+    }
+
+    console.log(`[recording:process] using server-side raw ${isServerMp4 ? "mp4" : "webm"}`, {
       recordingId: id,
+      rawFilePath,
     });
 
-    let playbackObjectKey = isServerMp4 ? `recordings/${id}/recording.mp4` : `recordings/${id}/merged.webm`;
-    let playbackFilePath = rawFilePath ? rawFilePath : mergedWebmPath;
+    let playbackObjectKey = isServerMp4 ? `recordings/${id}/recording.mp4` : `recordings/${id}/recording.webm`;
+    let playbackFilePath = rawFilePath;
     let playbackUrl = `/uploads/${playbackObjectKey}`; 
 
     // Try MP4 transcode ONLY if the source is not already MP4
     if (!isServerMp4) {
       try {
         console.log("[recording:process] transcode to mp4", { recordingId: id, mp4Path });
-        const transcodeSource = rawFilePath ? rawFilePath : mergedWebmPath;
-        await transcodeWebmToMp4(transcodeSource, mp4Path);
+        await transcodeWebmToMp4(rawFilePath, mp4Path);
         playbackObjectKey = `recordings/${id}/recording.mp4`;
         playbackFilePath = mp4Path;
         playbackUrl = `/uploads/${playbackObjectKey}`;
@@ -295,6 +239,18 @@ export async function processRecordingInBackground(recordingId: string) {
       }
     } else {
       console.log("[recording:process] source is already MP4, skipping transcode", { recordingId: id });
+    }
+
+    const playbackStat = await fsp.stat(playbackFilePath);
+    if (playbackStat.size < minRecordingOutputBytes) {
+      throw new Error(
+        `Recording output too small (${playbackStat.size} bytes). Minimum required is ${minRecordingOutputBytes} bytes.`,
+      );
+    }
+
+    const probedDurationSec = await getMediaDuration(playbackFilePath);
+    if (probedDurationSec <= 0) {
+      throw new Error("Recording output duration is invalid (ffprobe <= 0). Aborting publish.");
     }
 
     // Upload final file to CDN (Phase: record -> CDN -> chat message)
@@ -334,6 +290,8 @@ export async function processRecordingInBackground(recordingId: string) {
     recording.rawFilePath = playbackFilePath;
     recording.rawObjectKey = playbackObjectKey;
     recording.playbackUrl = playbackUrl;
+    recording.sizeBytes = playbackStat.size;
+    recording.durationSec = probedDurationSec;
     recording.status = "ready";
     recording.errorMessage = "";
     await recording.save();

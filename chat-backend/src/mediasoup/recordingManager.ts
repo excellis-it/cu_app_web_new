@@ -526,7 +526,17 @@ export async function restartServerRecording(params: {
     const { ffmpegProcess, streams, allocatedPorts, keyframeTimer, commonStartMicros, segments } = session;
     if (keyframeTimer) clearInterval(keyframeTimer);
 
-    // Graceful shutdown — send 'q' and wait up to 500ms for clean exit
+    // Pause streams first to reduce in-flight RTP bursts before quitting ffmpeg.
+    for (const st of streams) {
+      try {
+        await st.consumer.pause();
+      } catch {
+        // Ignore pause failures during restart teardown.
+      }
+    }
+    await new Promise((r) => setTimeout(r, 250));
+
+    // Graceful shutdown — send 'q' and allow enough time for MP4 finalization.
     try {
        ffmpegProcess.stdin?.write("q\n");
        ffmpegProcess.stdin?.end();
@@ -535,11 +545,11 @@ export async function restartServerRecording(params: {
     await new Promise((resolve) => {
       ffmpegProcess.once("close", resolve);
       setTimeout(() => {
-        if (activeSessions.has(recordingId)) {
+        if (!session.ffmpegExited) {
            try { ffmpegProcess.kill("SIGKILL"); } catch { }
         }
         resolve(null);
-      }, 500);
+      }, recordingStopTimeoutMs);
     });
 
     for (const st of streams) {
