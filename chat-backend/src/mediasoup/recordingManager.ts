@@ -351,20 +351,19 @@ function buildFfmpegArgs(params: {
   const audioInputIndices = originalAudioIndices.map(i => i + 1);
 
   const args: string[] = [
-    "-fflags", "+genpts+igndts+discardcorrupt+nobuffer",
+    "-fflags", "+genpts+igndts+discardcorrupt",
     "-max_interleave_delta", "1000000",
     "-f", "lavfi", "-i", `color=c=black:s=${targetWidth}x${targetHeight}:r=${recordingOutputFps}`,
   ];
 
   for (const sdpPath of sdpPathsInOrder) {
     args.push(
-      "-thread_queue_size", "8192",
-      "-fflags", "+genpts+igndts+discardcorrupt+nobuffer",
-      "-flags", "low_delay",
+      "-thread_queue_size", "16384",
+      "-fflags", "+genpts+igndts+discardcorrupt",
       "-analyzeduration", "300000",
       "-probesize", "300000",
-      "-max_delay", "500000",
-      "-reorder_queue_size", "256",
+      "-max_delay", "2000000",
+      "-reorder_queue_size", "1024",
       "-buffer_size", "20M",
       "-rw_timeout", "15000000",
       "-protocol_whitelist", "file,udp,rtp,rtcp",
@@ -398,16 +397,21 @@ function buildFfmpegArgs(params: {
       `[${idx}:a]aresample=async=1000:min_hard_comp=0.100:first_pts=0,asetpts=N/SR/TB[anorm${i}]`,
     );
   }
-  const normalizedAudioLabels = audioInputIndices.map((_, i) => `[anorm${i}]`).join("");
-  // Keep audio timeline monotonic and resilient to late/jittery RTP.
-  // Per-stream aresample already handles async gap-filling and first_pts=0.
-  // A second aresample with first_pts=0 after amix can reset its internal
-  // timestamp origin when late RTP drops cause discontinuities, which cascades
-  // into non-monotonous DTS in the MP4 muxer. Using only asetpts=N/SR/TB
-  // after amix guarantees a strictly monotonic sample-counter timeline.
-  filterParts.push(
-    `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=2:normalize=0,asetpts=N/SR/TB[aout]`
-  );
+  if (audioInputIndices.length === 1) {
+    // Avoid amix for a single RTP audio input to reduce timestamp jitter.
+    filterParts.push("[anorm0]asetpts=N/SR/TB[aout]");
+  } else {
+    const normalizedAudioLabels = audioInputIndices.map((_, i) => `[anorm${i}]`).join("");
+    // Keep audio timeline monotonic and resilient to late/jittery RTP.
+    // Per-stream aresample already handles async gap-filling and first_pts=0.
+    // A second aresample with first_pts=0 after amix can reset its internal
+    // timestamp origin when late RTP drops cause discontinuities, which cascades
+    // into non-monotonous DTS in the MP4 muxer. Using only asetpts=N/SR/TB
+    // after amix guarantees a strictly monotonic sample-counter timeline.
+    filterParts.push(
+      `${normalizedAudioLabels}amix=inputs=${audioInputIndices.length}:duration=longest:dropout_transition=2:normalize=0,asetpts=N/SR/TB[aout]`
+    );
+  }
 
   args.push("-filter_complex", filterParts.join(";"));
 

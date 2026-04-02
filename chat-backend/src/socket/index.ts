@@ -36,6 +36,8 @@ import {
 import {
   startServerRecording,
   stopServerRecording,
+  getActiveRecordingForRoom,
+  scheduleRecordingRestart,
 } from "../mediasoup/recordingManager";
 import { processRecordingInBackground } from "../helpers/recordingProcessor";
 import { processScreenRecordingInBackground } from "../helpers/screenRecordingProcessor";
@@ -2177,8 +2179,14 @@ export default function initializeSocket() {
 
             cb && cb({ ok: true, id: producer.id });
 
-            // Recording restarts on participant join are intentionally disabled.
-            // They can corrupt segments under packet loss / high load.
+            // Refresh recording topology when new producers appear so late joiners
+            // are included in ongoing recordings (debounced in recording manager).
+            const activeRecordingId = getActiveRecordingForRoom(roomId);
+            const shouldRestartOnProducerJoin =
+              String(process.env.RECORDING_RESTART_ON_PRODUCER_JOIN || "true").toLowerCase() === "true";
+            if (activeRecordingId && shouldRestartOnProducerJoin) {
+              scheduleRecordingRestart(roomId, activeRecordingId);
+            }
           } catch (err) {
             console.error("MS-produce error:", err);
             cb && cb({ ok: false, error: "failed" });
