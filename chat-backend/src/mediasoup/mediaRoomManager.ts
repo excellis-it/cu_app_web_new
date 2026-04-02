@@ -307,7 +307,32 @@ export async function createProducer(
   });
   peer.producers.set(producer.id, producer);
 
-  if (appData && (appData.width || appData.height)) {
+  if (kind === "video") {
+    let width = appData?.width;
+    let height = appData?.height;
+
+    // Fallback: try to extract dimensions from RTP encoding parameters
+    // when the client didn't send appData (e.g. older client or mobile).
+    if (!width || !height) {
+      const enc = producerRtpParameters.encodings?.[0];
+      const encWidth = (enc as any)?.scaleResolutionDownBy
+        ? undefined // can't derive actual size from downscale ratio alone
+        : (enc as any)?.width;
+      const encHeight = (enc as any)?.scaleResolutionDownBy
+        ? undefined
+        : (enc as any)?.height;
+      if (encWidth && encHeight) {
+        width = encWidth;
+        height = encHeight;
+      }
+    }
+
+    // Last resort: use a safe default so the grid layout always has dimensions
+    if (!width) width = 640;
+    if (!height) height = 480;
+
+    peer.producerMeta.set(producer.id, { width, height });
+  } else if (appData && (appData.width || appData.height)) {
     peer.producerMeta.set(producer.id, { width: appData.width, height: appData.height });
   }
 

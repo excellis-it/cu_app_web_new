@@ -43,6 +43,7 @@ type RecordingSession = {
   ffmpegExitCode: number | null;
   commonStartMicros: number;
   segments: string[];
+  segmentStartedAt: number; // Date.now() when the current segment's FFmpeg was launched
 };
 
 const activeSessions: Map<string, RecordingSession> = new Map();
@@ -241,7 +242,7 @@ function buildFfmpegArgs(params: {
       "-thread_queue_size", "8192",
       "-analyzeduration", "20000",  // 20ms - minimal probing since codecs are pre-declared
       "-probesize", "32000",        // 32KB - just enough for a few RTP packets
-      "-fflags", "+discardcorrupt", // drop corrupt frames instead of showing pixelated garbage
+      "-fflags", "+genpts+discardcorrupt+igndts", // regenerate PTS, ignore incoming DTS (fixes restart seq jump)
       "-max_delay", "2000000",      // 2s — tolerate jitter / late packets before dropping
       "-reorder_queue_size", "256", // larger reorder buffer to reduce "missed N packets" warnings
       "-buffer_size", "20M",        // double buffer to absorb RTP bursts
@@ -395,7 +396,17 @@ export async function restartServerRecording(params: {
     const { ffmpegProcess, streams, allocatedPorts, keyframeTimer, commonStartMicros, segments } = session;
     if (keyframeTimer) clearInterval(keyframeTimer);
 
-    // Graceful shutdown — send 'q' and wait up to 500ms for clean exit
+    // 1. Pause all consumers FIRST so no new RTP data flows while we shut down.
+    //    This prevents the new FFmpeg instance from seeing a burst of stale RTP
+    //    packets with high sequence numbers from the old session.
+    for (const st of streams) {
+      try { await st.consumer.pause(); } catch { }
+    }
+
+    // 2. Let in-flight RTP packets drain from OS UDP buffers
+    await new Promise((r) => setTimeout(r, 300));
+
+    // 3. Graceful shutdown — send 'q' and wait up to 2s for clean exit
     try {
        ffmpegProcess.stdin?.write("q\n");
        ffmpegProcess.stdin?.end();
@@ -408,9 +419,10 @@ export async function restartServerRecording(params: {
            try { ffmpegProcess.kill("SIGKILL"); } catch { }
         }
         resolve(null);
-      }, 500);
+      }, 2000);
     });
 
+    // 4. Close consumers and transports after FFmpeg is fully down
     for (const st of streams) {
       stopKeyframeTimer(st.consumer.id);
       try { st.consumer.close(); } catch { }
@@ -418,6 +430,9 @@ export async function restartServerRecording(params: {
     }
     releasePorts(allocatedPorts);
     activeSessions.delete(recordingId);
+
+    // 5. Small gap so OS sockets are fully unbound before new ones are created
+    await new Promise((r) => setTimeout(r, 200));
 
     await startServerRecording({ ...params, existingSegments: segments, sharedStartMicros: commonStartMicros });
   } finally {
@@ -561,7 +576,7 @@ export async function startServerRecording(params: {
   });
 
   // 2. Wait for FFmpeg to initialize and open UDP sockets
-  await new Promise((r) => setTimeout(r, 100));
+  await new Promise((r) => setTimeout(r, 300));
   if (ffmpegProcess.exitCode !== null) {
      console.error(`[recording:${recordingId}] ffmpeg exited immediately with code ${ffmpegProcess.exitCode}`);
      throw new Error(`FFmpeg failed to start for segment ${segmentIndex}`);
@@ -569,16 +584,24 @@ export async function startServerRecording(params: {
 
   // 3. Resume consumers ONE BY ONE with gaps — FFmpeg probes inputs sequentially,
   //    so staggering prevents later inputs' UDP buffers from overflowing while
-  //    FFmpeg is still probing earlier inputs
+  //    FFmpeg is still probing earlier inputs.
+  //    For video: request a keyframe BEFORE resuming so the very first data FFmpeg
+  //    sees is a keyframe, avoiding the "Keyframe missing" warning.
   for (const st of liveStreams) {
     try {
+      if (st.kind === "video") {
+        // Pre-request keyframe so the producer queues one up for delivery on resume
+        (st.consumer as any).requestKeyFrame?.().catch(() => {});
+        await new Promise((r) => setTimeout(r, 50));
+      }
       await st.consumer.resume();
       if (st.kind === "video") {
+        // Request again immediately after resume for redundancy
         (st.consumer as any).requestKeyFrame?.().catch(() => {});
       }
     } catch { }
     // Give FFmpeg time to detect and start reading this input before the next one
-    await new Promise((r) => setTimeout(r, 150));
+    await new Promise((r) => setTimeout(r, 300));
   }
 
   // 4. Verify FFmpeg is still running after all consumers are up
@@ -627,8 +650,9 @@ export async function startServerRecording(params: {
     keyframeTimer, 
     ffmpegExited: false, 
     ffmpegExitCode: null, 
-    commonStartMicros, 
-    segments: [...existingSegments, outputPath] 
+    commonStartMicros,
+    segments: [...existingSegments, outputPath],
+    segmentStartedAt: Date.now()
   };
   activeSessions.set(recordingId, session);
 
@@ -649,9 +673,20 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
   if (!session) throw new Error(`No session for ${recordingId}`);
   activeSessions.delete(recordingId);
 
-  const { ffmpegProcess, outputPath, allocatedPorts, keyframeTimer, segments, streams } = session;
+  const { ffmpegProcess, outputPath, allocatedPorts, keyframeTimer, segments, streams, segmentStartedAt } = session;
   if (keyframeTimer) clearInterval(keyframeTimer);
-  
+
+  // If the current segment was started very recently (e.g. just after a restart),
+  // wait for FFmpeg to stabilize before stopping. This prevents a near-empty or
+  // corrupted final segment that would ruin the merged output.
+  const MIN_SEGMENT_MS = 5000;
+  const elapsed = Date.now() - segmentStartedAt;
+  if (elapsed < MIN_SEGMENT_MS) {
+    const waitMs = MIN_SEGMENT_MS - elapsed;
+    console.log(`[recording:${recordingId}] waiting ${waitMs}ms for segment to stabilize before stop`);
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+
   // Wait for pending buffers
   await new Promise((r) => setTimeout(r, 1000));
 
@@ -687,15 +722,21 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
     await fsp.writeFile(concatListPath, concatContent, "utf8");
     try {
       console.log(`[recording:server] merging ${session.segments.length} segments into ${finalOutputPath}`);
-      // Re-encode audio during merge: asetpts=N/SR/TB generates sequential timestamps
-      // across the segment boundary, eliminating DTS jumps. Video is stream-copied (fast).
+      // Re-encode BOTH video and audio during merge to fully reset timestamps
+      // across segment boundaries. Video stream-copy caused Non-monotonous DTS
+      // errors when segment timestamps were discontinuous. Re-encoding is slower
+      // but guarantees clean, sequential timestamps in the final output.
       const ffmpeg = spawn(ffmpegBinary, [
         "-y",
         "-fflags", "+genpts+igndts",
         "-f", "concat",
         "-safe", "0",
         "-i", concatListPath,
-        "-c:v", "copy",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        "-vf", "setpts=N/FR/TB",     // sequential video timestamps based on frame rate
         "-c:a", "aac",
         "-b:a", "128k",
         "-af", "asetpts=N/SR/TB,aresample=async=1000",
