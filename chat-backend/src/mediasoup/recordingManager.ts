@@ -18,6 +18,29 @@ import ScreenRecording from "../db/schemas/screen-recording.schema";
 const ffmpegBinary = process.env.FFMPEG_PATH || "ffmpeg";
 const ffprobeBinary = ffmpegBinary.replace(/ffmpeg(\.exe)?$/, "ffprobe$1");
 
+/**
+ * Live RTP capture: run FFmpeg at lower CPU priority than mediasoup so workers keep
+ * dequeuing peer RTP when the host is saturated (avoids "RTP: missed" / frozen video
+ * when more participants join). Set RECORDING_FFMPEG_NICE=0 to disable. Unix only.
+ */
+function spawnRecordingFfmpeg(
+  args: string[],
+  stdio: ["pipe", "pipe", "pipe"] | ["ignore", "pipe", "pipe"],
+): ReturnType<typeof spawn> {
+  const raw = process.env.RECORDING_FFMPEG_NICE;
+  let niceInc: number;
+  if (raw !== undefined && raw !== "") {
+    const n = Number(raw);
+    niceInc = Number.isFinite(n) ? Math.max(0, Math.min(19, n)) : 10;
+  } else {
+    niceInc = process.platform === "win32" ? 0 : 10;
+  }
+  if (niceInc > 0 && process.platform !== "win32") {
+    return spawn("nice", ["-n", String(niceInc), ffmpegBinary, ...args], { stdio });
+  }
+  return spawn(ffmpegBinary, args, { stdio });
+}
+
 type ServerStream = {
   producerId: string;
   kind: types.MediaKind;
@@ -104,10 +127,15 @@ const recordingInputThreadQueueSize = Math.max(
   1024,
   Number(process.env.RECORDING_INPUT_THREAD_QUEUE_SIZE) || 8192,
 );
-/** Jitter buffer for SDP/RTP inputs. Under CPU pressure FFmpeg reads sockets late; too small causes "max delay reached" and burst packet drops. Default 2.5s. */
+/** Jitter buffer for SDP/RTP inputs. Under CPU pressure FFmpeg reads sockets late; too small causes "max delay reached" and burst packet drops. Default 4s. */
 const recordingInputMaxDelayUs = Math.max(
   100000,
-  Number(process.env.RECORDING_INPUT_MAX_DELAY_US) || 2_500_000,
+  Number(process.env.RECORDING_INPUT_MAX_DELAY_US) || 4_000_000,
+);
+/** Cap libx264 threads (-threads before -c:v). 0 = FFmpeg default. On small VPS, try 2–4 so encoding does not starve mediasoup. */
+const recordingLibx264Threads = Math.max(
+  0,
+  Number(process.env.RECORDING_LIBX264_THREADS) || 0,
 );
 const recordingInputReorderQueueSize = Math.max(
   32,
@@ -125,6 +153,7 @@ const screenRecordingPrimaryVideoOnly =
  * Restart-on-join is expensive for screen recordings because FFmpeg must teardown
  * and rebuild while RTP keeps flowing. Keep it disabled by default for stability.
  * Enable only when you explicitly need late-joiners included mid-recording.
+ * If video freezes when others join, tune RECORDING_FFMPEG_NICE / INPUT_MAX_DELAY / LIBX264_THREADS first.
  */
 const screenRecordingRestartOnProducerJoin =
   String(process.env.RECORDING_SCREEN_RESTART_ON_PRODUCER_JOIN ?? "false").toLowerCase() === "true";
@@ -901,7 +930,7 @@ function buildFfmpegArgs(params: {
   args.push("-filter_complex", filterParts.join(";"));
 
   if (hasVideo) {
-    args.push(
+    const videoOut: string[] = [
       "-map", `[${videoOutputLabel}]`,
       "-map", "[aout]",
       "-c:v", "libx264",
@@ -914,7 +943,10 @@ function buildFfmpegArgs(params: {
       "-g", String(recordingOutputFps * 2),
       "-bf", "0",                  // no B-frames
       "-x264-params", "rc-lookahead=0:ref=1:me=dia:subme=0:trellis=0:weightp=0:scenecut=0",
-      "-threads", "0",             // auto-detect: use all available CPU cores
+      "-threads",
+      recordingLibx264Threads > 0 ? String(recordingLibx264Threads) : "0",
+    );
+    videoOut.push(
       "-c:a", "aac",
       "-b:a", "128k",
       // Do NOT use +faststart on live RTP capture: FFmpeg finishes with a second-pass moov
@@ -924,6 +956,7 @@ function buildFfmpegArgs(params: {
       "-muxdelay", "0",
       "-avoid_negative_ts", "make_zero",
     );
+    args.push(...videoOut);
   } else {
     args.push(
       "-map", "[aout]",
@@ -1464,7 +1497,7 @@ export async function startServerRecording(params: {
   });
 
   const ffmpegStderrPrefix = `[recording:${recordingId}] ffmpeg`;
-  const ffmpegProcess = spawn(ffmpegBinary, args, { stdio: ["pipe", "pipe", "pipe"] });
+  const ffmpegProcess = spawnRecordingFfmpeg(args, ["pipe", "pipe", "pipe"]);
   let sessionRef: RecordingSession | null = null;
 
   ffmpegProcess.stderr.on("data", (chunk) => {
