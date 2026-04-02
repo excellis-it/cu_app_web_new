@@ -734,10 +734,7 @@ function buildFfmpegArgs(params: {
       "-threads", "0",             // auto-detect: use all available CPU cores
       "-c:a", "aac",
       "-b:a", "128k",
-      // Segment output is written continuously and can be interrupted during
-      // restart/stop; fragmented MP4 keeps essential metadata at the front so
-      // segments remain probeable even when closure is not perfectly graceful.
-      "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
+      "-movflags", "+faststart",
       "-muxpreload", "0",
       "-muxdelay", "0",
     );
@@ -746,7 +743,7 @@ function buildFfmpegArgs(params: {
       "-map", "[aout]",
       "-c:a", "aac",
       "-b:a", "128k",
-      "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
+      "-movflags", "+faststart",
     );
   }
 
