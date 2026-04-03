@@ -1137,6 +1137,7 @@ export function scheduleRecordingRestart(roomId: string, recordingId: string) {
 
     const session = activeSessions.get(recordingId);
     if (!session) return;
+    if (isMultitrackSession(session)) return;
 
     if (session.recordingScope === "screen" && !screenRecordingRestartOnProducerJoin) {
       console.log("[recording:restart] skip for screen scope (restart-on-producer-join disabled)", {
@@ -1275,6 +1276,7 @@ export async function restartServerRecording(params: {
 
     const session = activeSessions.get(recordingId);
     if (!session) return;
+    if (isMultitrackSession(session)) return;
 
     if (recordingStopClaimed.has(recordingId)) {
       console.log("[recording:restart] aborting restart — stop already pending", {
@@ -2449,7 +2451,7 @@ export async function startServerRecording(params: {
       sessionRef.ffmpegExitCode = code;
     }
     const active = activeSessions.get(recordingId);
-    if (active && active !== sessionRef) {
+    if (active && active !== sessionRef && !isMultitrackSession(active)) {
       active.ffmpegExited = true;
       active.ffmpegExitCode = code;
     }
