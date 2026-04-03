@@ -4,6 +4,7 @@ A TypeScript/Node.js backend for a real-time chat application, featuring RESTful
 
 ## Table of Contents
 - [Features](#features)
+- [Documentation](#documentation)
 - [Project Structure](#project-structure)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
@@ -22,6 +23,10 @@ A TypeScript/Node.js backend for a real-time chat application, featuring RESTful
 - Email notifications
 - EJS templating for views
 - CORS and security middleware
+
+## Documentation
+
+- **[Server-side screen & call recording](docs/screen-recording.md)** — mediasoup multitrack FFmpeg recording, offline grid merge, timeline alignment for late joiners, and related environment variables.
 
 ## Project Structure
 ```
