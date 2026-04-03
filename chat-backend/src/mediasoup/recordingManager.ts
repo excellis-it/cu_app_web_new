@@ -15,6 +15,12 @@ import { recordingConfig } from "../helpers/recordingConfig";
 import CallRecording from "../db/schemas/callrecording.schema";
 import ScreenRecording from "../db/schemas/screen-recording.schema";
 
+import {
+  mergeMultitrackManifestToMp4,
+  type MultitrackManifest,
+  type MultitrackManifestTrack,
+} from "./recordingMultitrackMerge";
+
 const ffmpegBinary = process.env.FFMPEG_PATH || "ffmpeg";
 const ffprobeBinary = ffmpegBinary.replace(/ffmpeg(\.exe)?$/, "ffprobe$1");
 
@@ -81,7 +87,54 @@ type RecordingSession = {
   primaryUserId?: string;
 };
 
-const activeSessions: Map<string, RecordingSession> = new Map();
+type MultitrackTrackRecorder = {
+  producerId: string;
+  kind: types.MediaKind;
+  transport: types.PlainTransport;
+  consumer: types.Consumer;
+  rtpPort: number;
+  rtcpPort: number;
+  sdpPath: string;
+  outputPath: string;
+  ffmpegProcess: ReturnType<typeof spawn>;
+  trackStartedWallMs: number;
+  trackEndedWallMs: number | null;
+  latestEncodedTimeSec: number;
+  ffmpegExited: boolean;
+  ffmpegStderrPrefix: string;
+  width?: number;
+  height?: number;
+  rotation?: number;
+  source?: string;
+  portraitLock?: boolean;
+  hasVideoOrientationExtmap?: boolean;
+  keyframeTimer: NodeJS.Timeout | null;
+};
+
+type MultitrackRecordingSession = {
+  recordingMode: "multitrack";
+  roomId: string;
+  recordingId: string;
+  sessionBaseDir: string;
+  sdpDir: string;
+  /** Final merged output path (written on stop). */
+  outputPath: string;
+  sessionStartedWallMs: number;
+  tracks: Map<string, MultitrackTrackRecorder>;
+  startedAtMs: number;
+  latestEncodedTimeSec: number;
+  recordingScope: RecordingScope;
+  primaryUserId?: string;
+  pendingAttachTimer: NodeJS.Timeout | null;
+};
+
+type AnyActiveRecordingSession = RecordingSession | MultitrackRecordingSession;
+
+function isMultitrackSession(s: AnyActiveRecordingSession): s is MultitrackRecordingSession {
+  return (s as MultitrackRecordingSession).recordingMode === "multitrack";
+}
+
+const activeSessions: Map<string, AnyActiveRecordingSession> = new Map();
 const restartLocks: Set<string> = new Set();
 
 /** Stop handler set this so an in-flight recording restart yields before killing FFmpeg. */
@@ -174,6 +227,9 @@ const recordingSigtermTimeoutMs = Math.max(
   2000,
   Number(process.env.RECORDING_FFMPEG_SIGTERM_TIMEOUT_MS) || 5000,
 );
+/** When true (default), each producer is recorded to its own file and merged on stop — no FFmpeg restart when users join. Set RECORDING_USE_MULTITRACK=false for legacy single-process grid + restart. */
+const recordingUseMultitrack =
+  String(process.env.RECORDING_USE_MULTITRACK ?? "true").toLowerCase() !== "false";
 let nextPort = rtpBasePort;
 const usedPorts: Set<number> = new Set();
 
@@ -384,7 +440,7 @@ function safeEndFfmpegStdin(ffmpegProcess: ReturnType<typeof spawn>) {
 }
 
 async function shutdownFfmpegProcess(params: {
-  session: RecordingSession;
+  session: { ffmpegExited: boolean; latestEncodedTimeSec: number };
   ffmpegProcess: ReturnType<typeof spawn>;
   recordingId: string;
   context: "stop" | "restart";
@@ -1064,6 +1120,12 @@ export function scheduleRecordingRestart(roomId: string, recordingId: string) {
   if (roomsWithPendingRecordingStop.has(roomId)) return;
   if (recordingStopClaimed.has(recordingId)) return;
 
+  const earlySess = activeSessions.get(recordingId);
+  if (earlySess && isMultitrackSession(earlySess)) {
+    scheduleMultitrackProducerAttach(roomId, recordingId);
+    return;
+  }
+
   const key = `${roomId}:${recordingId}`;
   const existing = pendingRestarts.get(key);
   if (existing) clearTimeout(existing);
@@ -1171,6 +1233,9 @@ export async function restartServerRecording(params: {
   isAudioOnly: boolean;
 }): Promise<void> {
   const { roomId, recordingId } = params;
+  const mt = activeSessions.get(recordingId);
+  if (mt && isMultitrackSession(mt)) return;
+
   if (restartLocks.has(recordingId)) return;
   if (roomsWithPendingRecordingStop.has(roomId)) {
     console.log("[recording:restart] skip — room recording stop in progress", {
@@ -1308,6 +1373,761 @@ export async function restartServerRecording(params: {
   }
 }
 
+// ---- Multitrack: per-producer FFmpeg, merge on stop ----
+function sanitizeProducerFileId(producerId: string): string {
+  return producerId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 120);
+}
+
+function buildSingleTrackFfmpegArgs(
+  sdpPathResolved: string,
+  outPathResolved: string,
+  kind: types.MediaKind,
+): string[] {
+  const common = [
+    "-fflags",
+    "+genpts+igndts+discardcorrupt",
+    "-thread_queue_size",
+    String(recordingInputThreadQueueSize),
+    "-use_wallclock_as_timestamps",
+    "1",
+    "-analyzeduration",
+    "300000",
+    "-probesize",
+    "300000",
+    "-max_delay",
+    String(recordingInputMaxDelayUs),
+    "-reorder_queue_size",
+    String(recordingInputReorderQueueSize),
+    "-buffer_size",
+    recordingInputBufferSize,
+    "-rw_timeout",
+    String(recordingInputRwTimeoutUs),
+    "-protocol_whitelist",
+    "file,udp,rtp,rtcp",
+    "-f",
+    "sdp",
+    "-i",
+    sdpPathResolved,
+  ];
+  if (kind === "video") {
+    return [
+      ...common,
+      "-c:v",
+      "libx264",
+      "-preset",
+      "ultrafast",
+      "-tune",
+      "zerolatency",
+      "-crf",
+      "30",
+      "-pix_fmt",
+      "yuv420p",
+      "-r",
+      String(recordingOutputFps),
+      "-vsync",
+      "cfr",
+      "-g",
+      String(recordingOutputFps * 2),
+      "-bf",
+      "0",
+      "-x264-params",
+      "rc-lookahead=0:ref=1:me=dia:subme=0:trellis=0:weightp=0:scenecut=0",
+      "-threads",
+      recordingLibx264Threads > 0 ? String(recordingLibx264Threads) : "0",
+      "-an",
+      "-muxpreload",
+      "0",
+      "-muxdelay",
+      "0",
+      "-avoid_negative_ts",
+      "make_zero",
+      "-max_muxing_queue_size",
+      "4096",
+      "-f",
+      "mp4",
+      "-y",
+      outPathResolved,
+    ];
+  }
+  return [
+    ...common,
+    "-c:a",
+    "aac",
+    "-b:a",
+    "128k",
+    "-vn",
+    "-avoid_negative_ts",
+    "make_zero",
+    "-max_muxing_queue_size",
+    "4096",
+    "-f",
+    "mp4",
+    "-y",
+    outPathResolved,
+  ];
+}
+
+async function finalizeMultitrackRecordingEmergencyCleanup(
+  recordingId: string,
+  session: MultitrackRecordingSession,
+): Promise<void> {
+  for (const track of session.tracks.values()) {
+    if (track.keyframeTimer) {
+      clearInterval(track.keyframeTimer);
+      track.keyframeTimer = null;
+    }
+    stopKeyframeTimer(track.consumer.id);
+    try {
+      await track.consumer.pause();
+    } catch {
+      /* ignore */
+    }
+    try {
+      await shutdownFfmpegProcess({
+        session: track,
+        ffmpegProcess: track.ffmpegProcess,
+        recordingId: `${recordingId}:${track.producerId}`,
+        context: "stop",
+        shutdownTimeoutMs: recordingStopTimeoutMs,
+      });
+    } catch {
+      /* ignore */
+    }
+    try {
+      track.consumer.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      track.transport.close();
+    } catch {
+      /* ignore */
+    }
+    releasePorts([track.rtpPort, track.rtcpPort]);
+  }
+  session.tracks.clear();
+  activeSessions.delete(recordingId);
+}
+
+async function onMultitrackProducerClosed(
+  recordingId: string,
+  producerId: string,
+): Promise<void> {
+  const session = activeSessions.get(recordingId);
+  if (!session || !isMultitrackSession(session)) return;
+  const track = session.tracks.get(producerId);
+  if (!track || track.trackEndedWallMs !== null) return;
+  track.trackEndedWallMs = Date.now();
+  console.log("[recording:multitrack] producer closed, stopping track", {
+    recordingId,
+    producerId,
+  });
+  if (track.keyframeTimer) {
+    clearInterval(track.keyframeTimer);
+    track.keyframeTimer = null;
+  }
+  stopKeyframeTimer(track.consumer.id);
+  try {
+    await track.consumer.pause();
+  } catch {
+    /* ignore */
+  }
+  await new Promise((r) => setTimeout(r, 150));
+  try {
+    await shutdownFfmpegProcess({
+      session: track,
+      ffmpegProcess: track.ffmpegProcess,
+      recordingId: `${recordingId}:${producerId}`,
+      context: "stop",
+      shutdownTimeoutMs: Math.min(
+        recordingShutdownMaxMs,
+        Math.max(recordingStopTimeoutMs, recordingShutdownMinMs),
+      ),
+    });
+  } catch (err: any) {
+    console.warn("[recording:multitrack] track shutdown on producerclose", {
+      recordingId,
+      producerId,
+      error: err?.message || String(err),
+    });
+  }
+  try {
+    if (!track.consumer.closed) track.consumer.close();
+  } catch {
+    /* ignore */
+  }
+  try {
+    track.transport.close();
+  } catch {
+    /* ignore */
+  }
+  releasePorts([track.rtpPort, track.rtcpPort]);
+}
+
+async function addMultitrackRecordingTrack(
+  session: MultitrackRecordingSession,
+  room: Awaited<ReturnType<typeof getOrCreateRoom>>,
+  s: {
+    producerId: string;
+    kind: types.MediaKind;
+    width?: number;
+    height?: number;
+    rotation?: number;
+    source?: string;
+    portraitLock?: boolean;
+  },
+): Promise<void> {
+  const { recordingId, sdpDir } = session;
+  if (session.tracks.has(s.producerId)) return;
+
+  const { rtpPort, rtcpPort } = allocatePortPair();
+  const sdpIp = getLocalIp();
+  const transport = await room.router.createPlainTransport({
+    listenIp: sdpIp,
+    rtcpMux: false,
+    comedia: false,
+  });
+  await transport.connect({ ip: sdpIp, port: rtpPort, rtcpPort });
+
+  const consumer = await transport.consume({
+    producerId: s.producerId,
+    rtpCapabilities: room.router.rtpCapabilities,
+    paused: true,
+  });
+
+  if (s.kind === "video") {
+    try {
+      await (consumer as any).setPreferredLayers?.({ spatialLayer: 0, temporalLayer: 0 });
+    } catch {
+      /* ignore */
+    }
+    startKeyframeTimer(consumer);
+  }
+
+  const sdpPath = path.join(
+    sdpDir,
+    `track-${sanitizeProducerFileId(s.producerId)}-${s.kind}.sdp`,
+  );
+  const sdp = buildSdpForConsumer({ kind: s.kind, sdpIp, rtpPort, consumer });
+  await fsp.writeFile(sdpPath, sdp, "utf8");
+
+  let streamWidth = s.width;
+  let streamHeight = s.height;
+  if (s.kind === "video" && (!streamWidth || !streamHeight)) {
+    const enc = consumer.rtpParameters?.encodings?.[0];
+    const scaleDown = (enc as any)?.scaleResolutionDownBy || 1;
+    const consumerWidth = (enc as any)?.width;
+    const consumerHeight = (enc as any)?.height;
+    if (consumerWidth && consumerHeight) {
+      streamWidth = Math.round(consumerWidth / scaleDown);
+      streamHeight = Math.round(consumerHeight / scaleDown);
+    } else {
+      streamWidth = streamWidth || 640;
+      streamHeight = streamHeight || 480;
+    }
+  }
+
+  const outPath = path.join(
+    session.sessionBaseDir,
+    `track_${sanitizeProducerFileId(s.producerId)}_${s.kind}.mp4`,
+  );
+  if (fs.existsSync(outPath)) {
+    try {
+      fs.unlinkSync(outPath);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const ffmpegArgs = buildSingleTrackFfmpegArgs(
+    path.resolve(sdpPath),
+    path.resolve(outPath),
+    s.kind,
+  );
+  const ffmpegStderrPrefix = `[recording:${recordingId}:track:${s.producerId}]`;
+  const ffmpegProcess = spawnRecordingFfmpeg(ffmpegArgs, ["pipe", "pipe", "pipe"]);
+
+  const track: MultitrackTrackRecorder = {
+    producerId: s.producerId,
+    kind: s.kind,
+    transport,
+    consumer,
+    rtpPort,
+    rtcpPort,
+    sdpPath,
+    outputPath: outPath,
+    ffmpegProcess,
+    trackStartedWallMs: Date.now(),
+    trackEndedWallMs: null,
+    latestEncodedTimeSec: 0,
+    ffmpegExited: false,
+    ffmpegStderrPrefix,
+    width: streamWidth,
+    height: streamHeight,
+    rotation: s.rotation,
+    source: s.source,
+    portraitLock: s.portraitLock,
+    hasVideoOrientationExtmap:
+      s.kind === "video" ? hasVideoOrientationExtmap(consumer) : false,
+    keyframeTimer: null,
+  };
+
+  session.tracks.set(s.producerId, track);
+
+  const ffmpegStderr = ffmpegProcess.stderr;
+  if (ffmpegStderr) {
+    ffmpegStderr.on("data", (chunk: Buffer) => {
+      const lines = chunk.toString().split("\n");
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const progressMatch = /time=(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/.exec(trimmed);
+        if (progressMatch) {
+          const h = Number(progressMatch[1]) || 0;
+          const m = Number(progressMatch[2]) || 0;
+          const sec = Number(progressMatch[3]) || 0;
+          const encodedTimeSec = h * 3600 + m * 60 + sec;
+          if (encodedTimeSec > track.latestEncodedTimeSec) {
+            track.latestEncodedTimeSec = encodedTimeSec;
+          }
+          if (encodedTimeSec > session.latestEncodedTimeSec) {
+            session.latestEncodedTimeSec = encodedTimeSec;
+          }
+        }
+        console.log(`${ffmpegStderrPrefix} ${trimmed}`);
+      }
+    });
+  }
+
+  ffmpegProcess.on("error", (err) => {
+    console.error(`${ffmpegStderrPrefix} spawn error`, err);
+  });
+
+  ffmpegProcess.once("close", () => {
+    track.ffmpegExited = true;
+  });
+
+  await new Promise((r) => setTimeout(r, 100));
+  if (consumer.closed) {
+    session.tracks.delete(s.producerId);
+    try {
+      transport.close();
+    } catch {
+      /* ignore */
+    }
+    releasePorts([rtpPort, rtcpPort]);
+    try {
+      ffmpegProcess.kill("SIGKILL");
+    } catch {
+      /* ignore */
+    }
+    throw new Error(`Recording consumer closed immediately for producer ${s.producerId}`);
+  }
+
+  if (ffmpegProcess.exitCode !== null) {
+    session.tracks.delete(s.producerId);
+    try {
+      consumer.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      transport.close();
+    } catch {
+      /* ignore */
+    }
+    releasePorts([rtpPort, rtcpPort]);
+    throw new Error(`FFmpeg failed to start for track ${s.producerId}`);
+  }
+
+  try {
+    await consumer.resume();
+    if (s.kind === "video") {
+      (consumer as any).requestKeyFrame?.().catch(() => {});
+    }
+  } catch {
+    /* ignore */
+  }
+
+  track.trackStartedWallMs = Date.now();
+
+  if (s.kind === "video") {
+    (consumer as any).requestKeyFrame?.().catch(() => {});
+    let pokes = 0;
+    const pokeIv = setInterval(() => {
+      if (consumer.closed || pokes++ > 15) {
+        clearInterval(pokeIv);
+        return;
+      }
+      (consumer as any).requestKeyFrame?.().catch(() => {});
+    }, 200);
+    track.keyframeTimer = setInterval(() => {
+      if (!consumer.closed) {
+        (consumer as any).requestKeyFrame?.().catch(() => {});
+      }
+    }, 2000);
+  }
+
+  consumer.on("producerclose", () => {
+    void onMultitrackProducerClosed(recordingId, s.producerId);
+  });
+
+  console.log("[recording:multitrack] track started", {
+    recordingId,
+    producerId: s.producerId,
+    kind: s.kind,
+  });
+}
+
+async function startMultitrackServerRecording(params: {
+  roomId: string;
+  recordingId: string;
+  isAudioOnly: boolean;
+  recordingScope?: RecordingScope;
+  primaryUserId?: string;
+}): Promise<{ outputPath: string }> {
+  const {
+    roomId,
+    recordingId,
+    isAudioOnly,
+    recordingScope = "call",
+    primaryUserId,
+  } = params;
+
+  if (activeSessions.has(recordingId)) {
+    throw new Error(`Recording session already active for recordingId=${recordingId}`);
+  }
+
+  ensureDir(recordingConfig.tempUploadDir);
+  const sessionBaseDir = path.join(recordingConfig.tempUploadDir, recordingId);
+  const sdpDir = path.join(sessionBaseDir, "sdp");
+  ensureDir(sessionBaseDir);
+  ensureDir(sdpDir);
+
+  const finalOutputPath = path.join(sessionBaseDir, "raw.mp4");
+
+  const room = await getOrCreateRoom(roomId);
+  const producers = getRoomProducers(roomId);
+  const audioProducers = producers.filter((p) => p.kind === "audio");
+  const videoProducers = producers.filter((p) => p.kind === "video");
+  const selectedVideoProducers = selectRecordingVideoProducers(videoProducers, {
+    isAudioOnly,
+    recordingScope,
+    primaryUserId,
+  });
+  if (selectedVideoProducers.length === 0 && audioProducers.length === 0) {
+    throw new Error("No audio/video producers found for server-side recording.");
+  }
+
+  const selectedStreams = [
+    ...selectedVideoProducers.map((p) => ({
+      producerId: p.producerId,
+      kind: "video" as const,
+      width: p.width,
+      height: p.height,
+      rotation: p.rotation,
+      source: p.source,
+      portraitLock: p.portraitLock,
+    })),
+    ...audioProducers.map((p) => ({
+      producerId: p.producerId,
+      kind: "audio" as const,
+    })),
+  ];
+
+  const sessionStartedWallMs = Date.now();
+  const session: MultitrackRecordingSession = {
+    recordingMode: "multitrack",
+    roomId,
+    recordingId,
+    sessionBaseDir,
+    sdpDir,
+    outputPath: finalOutputPath,
+    sessionStartedWallMs,
+    tracks: new Map(),
+    startedAtMs: sessionStartedWallMs,
+    latestEncodedTimeSec: 0,
+    recordingScope,
+    primaryUserId,
+    pendingAttachTimer: null,
+  };
+
+  activeSessions.set(recordingId, session);
+
+  for (const s of selectedStreams) {
+    try {
+      await addMultitrackRecordingTrack(session, room, s);
+      await new Promise((r) => setTimeout(r, 100));
+    } catch (err: any) {
+      console.error("[recording:multitrack] failed to start track", {
+        recordingId,
+        producerId: s.producerId,
+        error: err?.message || String(err),
+      });
+      await finalizeMultitrackRecordingEmergencyCleanup(recordingId, session);
+      throw err;
+    }
+  }
+
+  if (session.tracks.size === 0) {
+    activeSessions.delete(recordingId);
+    throw new Error("No recording tracks could be started.");
+  }
+
+  console.log("[recording:multitrack] session ready", {
+    recordingId,
+    trackCount: session.tracks.size,
+  });
+
+  return { outputPath: finalOutputPath };
+}
+
+function scheduleMultitrackProducerAttach(roomId: string, recordingId: string): void {
+  if (roomsWithPendingRecordingStop.has(roomId)) return;
+  if (recordingStopClaimed.has(recordingId)) return;
+  const session = activeSessions.get(recordingId);
+  if (!session || !isMultitrackSession(session)) return;
+
+  const key = `${roomId}:${recordingId}`;
+  const existing = pendingRestarts.get(key);
+  if (existing) clearTimeout(existing);
+
+  const timer = setTimeout(() => {
+    pendingRestarts.delete(key);
+    if (session.pendingAttachTimer === timer) {
+      session.pendingAttachTimer = null;
+    }
+    if (roomsWithPendingRecordingStop.has(roomId)) return;
+    if (recordingStopClaimed.has(recordingId)) return;
+    void attachMissingMultitrackTracks(roomId, recordingId).catch((err) => {
+      console.error("[recording:multitrack] attach failed", {
+        roomId,
+        recordingId,
+        error: (err as any)?.message || String(err),
+      });
+    });
+  }, RESTART_DEBOUNCE_MS);
+
+  pendingRestarts.set(key, timer);
+  session.pendingAttachTimer = timer;
+}
+
+async function attachMissingMultitrackTracks(
+  roomId: string,
+  recordingId: string,
+): Promise<void> {
+  const session = activeSessions.get(recordingId);
+  if (!session || !isMultitrackSession(session)) return;
+  if (roomsWithPendingRecordingStop.has(roomId)) return;
+  if (recordingStopClaimed.has(recordingId)) return;
+
+  const room = await getOrCreateRoom(roomId);
+  const producers = getRoomProducers(roomId);
+  const isAudioOnly = !producers.some((p) => p.kind === "video");
+  const audioProducers = producers.filter((p) => p.kind === "audio");
+  const videoProducers = producers.filter((p) => p.kind === "video");
+  const selectedVideo = selectRecordingVideoProducers(videoProducers, {
+    isAudioOnly,
+    recordingScope: session.recordingScope,
+    primaryUserId: session.primaryUserId,
+  });
+
+  const selectedStreams: Array<{
+    producerId: string;
+    kind: types.MediaKind;
+    width?: number;
+    height?: number;
+    rotation?: number;
+    source?: string;
+    portraitLock?: boolean;
+  }> = [
+    ...selectedVideo.map((p) => ({
+      producerId: p.producerId,
+      kind: "video" as const,
+      width: p.width,
+      height: p.height,
+      rotation: p.rotation,
+      source: p.source,
+      portraitLock: p.portraitLock,
+    })),
+    ...audioProducers.map((p) => ({
+      producerId: p.producerId,
+      kind: "audio" as const,
+    })),
+  ];
+
+  for (const s of selectedStreams) {
+    if (session.tracks.has(s.producerId)) continue;
+    try {
+      await addMultitrackRecordingTrack(session, room, s);
+      await new Promise((r) => setTimeout(r, 80));
+    } catch (err: any) {
+      console.error("[recording:multitrack] attach track failed", {
+        recordingId,
+        producerId: s.producerId,
+        error: err?.message || String(err),
+      });
+    }
+  }
+}
+
+async function finalizeMultitrackRecording(
+  recordingId: string,
+  session: MultitrackRecordingSession,
+): Promise<{ outputPath: string }> {
+  const key = `${session.roomId}:${recordingId}`;
+  const pend = pendingRestarts.get(key);
+  if (pend) {
+    clearTimeout(pend);
+    pendingRestarts.delete(key);
+  }
+  session.pendingAttachTimer = null;
+
+  const stoppedWallMs = Date.now();
+  const totalDurationSec = Math.max(
+    0.5,
+    (stoppedWallMs - session.sessionStartedWallMs) / 1000,
+  );
+
+  for (const track of session.tracks.values()) {
+    if (track.keyframeTimer) {
+      clearInterval(track.keyframeTimer);
+      track.keyframeTimer = null;
+    }
+    stopKeyframeTimer(track.consumer.id);
+  }
+
+  for (const track of session.tracks.values()) {
+    if (track.trackEndedWallMs !== null && track.ffmpegExited) continue;
+    try {
+      if (!track.consumer.closed) await track.consumer.pause();
+    } catch {
+      /* ignore */
+    }
+  }
+  await new Promise((r) => setTimeout(r, 250));
+
+  const drainDeadline = Date.now() + Math.min(8000, Math.max(1000, recordingStopTimeoutMs - 2000));
+  while (Date.now() < drainDeadline) {
+    const anyRunning = [...session.tracks.values()].some((t) => !t.ffmpegExited);
+    if (!anyRunning) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+
+  const shutdownTimeoutMs = (() => {
+    let maxLag = 0;
+    const wallElapsedSec = Math.max(0, (Date.now() - session.startedAtMs) / 1000);
+    for (const t of session.tracks.values()) {
+      const lagSec = Math.max(0, wallElapsedSec - t.latestEncodedTimeSec);
+      maxLag = Math.max(maxLag, lagSec);
+    }
+    const extraHeadroom = Math.ceil(maxLag * 1000) + 45_000;
+    return Math.min(
+      recordingShutdownMaxMs,
+      Math.max(recordingStopTimeoutMs, recordingShutdownMinMs, extraHeadroom),
+    );
+  })();
+
+  for (const track of session.tracks.values()) {
+    if (track.ffmpegExited) continue;
+    try {
+      await shutdownFfmpegProcess({
+        session: track,
+        ffmpegProcess: track.ffmpegProcess,
+        recordingId: `${recordingId}:${track.producerId}`,
+        context: "stop",
+        shutdownTimeoutMs,
+      });
+    } catch (err: any) {
+      console.warn("[recording:multitrack] track shutdown error", {
+        recordingId,
+        producerId: track.producerId,
+        error: err?.message || String(err),
+      });
+    }
+    try {
+      if (!track.consumer.closed) track.consumer.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      track.transport.close();
+    } catch {
+      /* ignore */
+    }
+    releasePorts([track.rtpPort, track.rtcpPort]);
+  }
+
+  const manifestTracks: MultitrackManifestTrack[] = [];
+  for (const track of session.tracks.values()) {
+    if (!isUsableRecordingFile(track.outputPath)) continue;
+    const entry: MultitrackManifestTrack = {
+      producerId: track.producerId,
+      kind: track.kind === "video" ? "video" : "audio",
+      path: path.resolve(track.outputPath),
+      delaySec: Math.max(
+        0,
+        (track.trackStartedWallMs - session.sessionStartedWallMs) / 1000,
+      ),
+      width: track.width,
+      height: track.height,
+      rotation: track.rotation,
+      source: track.source,
+      portraitLock: track.portraitLock,
+      hasVideoOrientationExtmap: track.hasVideoOrientationExtmap,
+    };
+    if (track.trackEndedWallMs !== null) {
+      entry.endSec = Math.min(
+        totalDurationSec,
+        Math.max(
+          entry.delaySec,
+          (track.trackEndedWallMs - session.sessionStartedWallMs) / 1000,
+        ),
+      );
+    }
+    manifestTracks.push(entry);
+  }
+
+  if (manifestTracks.length === 0) {
+    throw new Error(`No usable multitrack files for recordingId=${recordingId}`);
+  }
+
+  const manifest: MultitrackManifest = {
+    version: 1,
+    sessionStartedWallMs: session.sessionStartedWallMs,
+    stoppedWallMs,
+    totalDurationSec,
+    recordingScope: session.recordingScope,
+    tracks: manifestTracks,
+  };
+
+  const manifestPath = path.join(session.sessionBaseDir, "multitrack-manifest.json");
+  await fsp.writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
+
+  await mergeMultitrackManifestToMp4({
+    manifest,
+    outputPath: session.outputPath,
+    recordingId,
+    fps: recordingOutputFps,
+    canvasWidth: recordingCanvasWidth,
+    canvasHeight: recordingCanvasHeight,
+    screenCanvasWidth: screenRecordingCanvasWidth,
+    screenCanvasHeight: screenRecordingCanvasHeight,
+    libx264Threads: recordingLibx264Threads,
+    applyHalfTurnRotation,
+  });
+
+  if (!(await isPlayableRecordingFile(session.outputPath))) {
+    throw new Error(`Merged multitrack output invalid: ${session.outputPath}`);
+  }
+
+  console.log("[recording:multitrack] merge complete", {
+    recordingId,
+    outputPath: session.outputPath,
+  });
+  return { outputPath: session.outputPath };
+}
+
 export async function startServerRecording(params: {
   roomId: string;
   recordingId: string;
@@ -1317,6 +2137,16 @@ export async function startServerRecording(params: {
   recordingScope?: RecordingScope;
   primaryUserId?: string;
 }): Promise<{ outputPath: string }> {
+  if (recordingUseMultitrack) {
+    return startMultitrackServerRecording({
+      roomId: params.roomId,
+      recordingId: params.recordingId,
+      isAudioOnly: params.isAudioOnly,
+      recordingScope: params.recordingScope,
+      primaryUserId: params.primaryUserId,
+    });
+  }
+
   const {
     roomId,
     recordingId,
@@ -1644,6 +2474,12 @@ export async function stopServerRecording(recordingId: string): Promise<{ output
     }
     if (!session) throw new Error(`No session for ${recordingId}`);
     sessionRoomId = session.roomId;
+
+    if (isMultitrackSession(session)) {
+      activeSessions.delete(recordingId);
+      return await finalizeMultitrackRecording(recordingId, session);
+    }
+
     activeSessions.delete(recordingId);
 
     const { ffmpegProcess, outputPath, allocatedPorts, segments, streams } = session;
