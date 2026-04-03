@@ -9,6 +9,38 @@ import path from "path";
 export type MergeRecordingScope = "call" | "screen";
 
 const ffmpegBinary = process.env.FFMPEG_PATH || "ffmpeg";
+const ffprobeBinary = ffmpegBinary.replace(/ffmpeg(\.exe)?$/, "ffprobe$1");
+
+async function probeStreamDurationSec(filePath: string): Promise<number> {
+  return new Promise((resolve) => {
+    const proc = spawn(
+      ffprobeBinary,
+      [
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        path.resolve(filePath),
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    proc.stdout.on("data", (c) => {
+      stdout += c.toString();
+    });
+    proc.on("error", () => resolve(0));
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        resolve(0);
+        return;
+      }
+      const d = Number.parseFloat(String(stdout).trim());
+      resolve(Number.isFinite(d) && d > 0 ? d : 0);
+    });
+  });
+}
 
 export type MultitrackManifestTrack = {
   producerId: string;
@@ -50,34 +82,65 @@ function computeCanvasSize(
   return { width: capW, height: capH };
 }
 
-function buildMergeVideoBranch(
-  idx: number,
-  cellW: number,
-  cellH: number,
-  label: string,
-  dims: MultitrackManifestTrack | undefined,
-  streamIndexForLog: number,
-  fps: number,
-  applyHalfTurnRotation: boolean,
-): string {
-  if (!dims || dims.kind !== "video") {
-    return `[${idx}:v]setpts=PTS-STARTPTS,fps=${fps},scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black[${label}]`;
+/**
+ * Build one grid cell: trim file content to the active window, scale/pad, then
+ * tpad black before delay and clone-pad after so PTS matches the master canvas (0…T).
+ * Without this, overlay enable=between(t,delay,end) never sees late-joiner frames because
+ * their stream PTS still starts at 0 while output time t is already past delay.
+ */
+function buildAlignedMergeVideoBranch(params: {
+  idx: number;
+  cellW: number;
+  cellH: number;
+  label: string;
+  tr: MultitrackManifestTrack;
+  streamIndexForLog: number;
+  fps: number;
+  applyHalfTurnRotation: boolean;
+  probedDurationSec: number;
+  masterDurationSec: number;
+}): string {
+  const {
+    idx,
+    cellW,
+    cellH,
+    label,
+    tr,
+    streamIndexForLog,
+    fps,
+    applyHalfTurnRotation,
+    probedDurationSec,
+    masterDurationSec,
+  } = params;
+
+  const T = Math.max(0.5, masterDurationSec);
+  const delay = Math.max(0, tr.delaySec);
+  const endBound = Math.min(T, tr.endSec ?? T);
+  const maxContent = Math.max(0, endBound - delay);
+  const rawDur = Math.max(0, probedDurationSec);
+  const contentWindow = Math.min(rawDur, maxContent, T - delay);
+  const windowLen = Math.max(0.04, contentWindow);
+  const tailPad = Math.max(0, T - delay - windowLen);
+
+  if (tr.kind !== "video") {
+    return `[${idx}:v]setpts=PTS-STARTPTS,trim=start=0:duration=${windowLen.toFixed(4)},fps=${fps},scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black,tpad=start_duration=${delay.toFixed(4)}:start_mode=add:color=black,tpad=stop_mode=clone:stop_duration=${tailPad.toFixed(4)}[${label}]`;
   }
-  const streamHasVideoOrientationExtmap = !!dims.hasVideoOrientationExtmap;
+
+  const streamHasVideoOrientationExtmap = !!tr.hasVideoOrientationExtmap;
   const normalizedRotation = (() => {
-    if (typeof dims.rotation !== "number") return 0;
-    const r = ((dims.rotation % 360) + 360) % 360;
+    if (typeof tr.rotation !== "number") return 0;
+    const r = ((tr.rotation % 360) + 360) % 360;
     if (r === 90 || r === 180 || r === 270) return r;
     return 0;
   })();
   const hasExplicitRotation = normalizedRotation !== 0;
   const isFlutterPortraitLocked =
-    String(dims.source || "").toLowerCase() === "flutter-app" &&
-    dims.portraitLock === true;
+    String(tr.source || "").toLowerCase() === "flutter-app" &&
+    tr.portraitLock === true;
   const effectiveWidth =
-    normalizedRotation % 180 !== 0 ? dims.height : dims.width;
+    normalizedRotation % 180 !== 0 ? tr.height : tr.width;
   const effectiveHeight =
-    normalizedRotation % 180 !== 0 ? dims.width : dims.height;
+    normalizedRotation % 180 !== 0 ? tr.width : tr.height;
   const isPortrait = !!(
     effectiveWidth &&
     effectiveHeight &&
@@ -89,7 +152,9 @@ function buildMergeVideoBranch(
     effectiveWidth >= effectiveHeight
   );
 
-  const chain: string[] = [`[${idx}:v]setpts=PTS-STARTPTS,fps=${fps}`];
+  const chain: string[] = [
+    `[${idx}:v]setpts=PTS-STARTPTS,trim=start=0:duration=${windowLen.toFixed(4)},fps=${fps}`,
+  ];
   if (streamHasVideoOrientationExtmap && hasExplicitRotation) {
     console.log("[recording:merge:orientation] honoring appData.rotation", {
       streamIndex: streamIndexForLog,
@@ -112,7 +177,18 @@ function buildMergeVideoBranch(
   chain.push(
     `scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear`,
     `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black`,
+    `tpad=start_duration=${delay.toFixed(4)}:start_mode=add:color=black`,
+    `tpad=stop_mode=clone:stop_duration=${tailPad.toFixed(4)}`,
   );
+  console.log("[recording:merge:align] video track timeline", {
+    streamIndex: streamIndexForLog,
+    producerId: tr.producerId,
+    delaySec: delay,
+    windowLenSec: Number(windowLen.toFixed(3)),
+    tailPadSec: Number(tailPad.toFixed(3)),
+    masterT: T,
+    probedSec: rawDur,
+  });
   return `${chain.join(",")}[${label}]`;
 }
 
@@ -121,6 +197,7 @@ function buildGridOverlayChain(params: {
   targetWidth: number;
   targetHeight: number;
   tracks: MultitrackManifestTrack[];
+  videoProbedDurationsSec: number[];
   baseInputIdx: number;
   fps: number;
   totalDurationSec: number;
@@ -131,6 +208,7 @@ function buildGridOverlayChain(params: {
     targetWidth,
     targetHeight,
     tracks,
+    videoProbedDurationsSec,
     baseInputIdx,
     fps,
     totalDurationSec,
@@ -148,32 +226,29 @@ function buildGridOverlayChain(params: {
   for (let i = 0; i < n; i++) {
     const idx = videoInputIndices[i];
     const tr = tracks[i];
-    const delay = Math.max(0, tr.delaySec);
-    const end = Math.min(
-      totalDurationSec,
-      tr.endSec ?? totalDurationSec,
-    );
     const label = `sv${i}`;
+    const probed = videoProbedDurationsSec[i] ?? 0;
     filterParts.push(
-      buildMergeVideoBranch(
+      buildAlignedMergeVideoBranch({
         idx,
         cellW,
         cellH,
         label,
         tr,
-        i,
+        streamIndexForLog: i,
         fps,
         applyHalfTurnRotation,
-      ),
+        probedDurationSec: probed,
+        masterDurationSec: totalDurationSec,
+      }),
     );
     const col = i % cols;
     const row = Math.floor(i / cols);
     const x = col * cellW;
     const y = row * cellH;
     const nextBase = `ovl${i}`;
-    const enable = `between(t\\,${delay}\\,${end})`;
     filterParts.push(
-      `[${currentBase}][${label}]overlay=x=${x}:y=${y}:eof_action=pass:repeatlast=1:enable='${enable}'[${nextBase}]`,
+      `[${currentBase}][${label}]overlay=x=${x}:y=${y}:eof_action=pass:repeatlast=1[${nextBase}]`,
     );
     currentBase = nextBase;
   }
@@ -222,6 +297,10 @@ export async function mergeMultitrackManifestToMp4(params: {
     }
   }
 
+  const videoProbedDurationsSec = await Promise.all(
+    videoTracks.map((t) => probeStreamDurationSec(t.path)),
+  );
+
   const capW =
     manifest.recordingScope === "screen" ? screenCanvasWidth : canvasWidth;
   const capH =
@@ -266,6 +345,7 @@ export async function mergeMultitrackManifestToMp4(params: {
       targetWidth,
       targetHeight,
       tracks: videoTracks,
+      videoProbedDurationsSec,
       baseInputIdx: baseIdx,
       fps,
       totalDurationSec: T,
