@@ -13,10 +13,10 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   return Math.floor(parsed);
 }
 
-/** Grid cell scaling: "cover" = fill cell (center crop). "contain" = letterbox in cell (no face chop). */
+/** Grid cell scaling: "cover" = fill cell (center crop). "contain" = letterbox in cell (full frame visible). */
 export function getRecordingGridCellFit(): "cover" | "contain" {
-  const v = String(process.env.RECORDING_GRID_CELL_FIT || "cover").toLowerCase();
-  return v === "contain" ? "contain" : "cover";
+  const v = String(process.env.RECORDING_GRID_CELL_FIT || "contain").toLowerCase();
+  return v === "cover" ? "cover" : "contain";
 }
 
 /**

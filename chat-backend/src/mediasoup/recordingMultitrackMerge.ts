@@ -174,6 +174,224 @@ function ffScaleCellToBox(
   ];
 }
 
+const STAGGERED_CALL_MIN_GAP_SEC = 1.0;
+
+function computeAlignedVideoTiming(
+  tr: MultitrackManifestTrack,
+  probedDurationSec: number,
+  masterDurationSec: number,
+): { delay: number; windowLen: number; tailPad: number; rawDur: number; T: number } {
+  const T = Math.max(0.5, masterDurationSec);
+  const delay = Math.max(0, tr.delaySec);
+  const endBound = Math.min(T, tr.endSec ?? T);
+  const maxContent = Math.max(0, endBound - delay);
+  const rawDur = Math.max(0, probedDurationSec);
+  const contentWindow = Math.min(rawDur, maxContent, T - delay);
+  const windowLen = Math.max(0.04, contentWindow);
+  const tailPad = Math.max(0, T - delay - windowLen);
+  return { delay, windowLen, tailPad, rawDur, T };
+}
+
+/** Comma-separated filters after trim/fps (transpose, etc.); empty if none. */
+function buildVideoOrientationFilters(
+  tr: MultitrackManifestTrack,
+  streamIndexForLog: number,
+  applyHalfTurnRotation: boolean,
+): string {
+  if (tr.kind !== "video") return "";
+
+  const streamHasVideoOrientationExtmap = !!tr.hasVideoOrientationExtmap;
+  const normalizedRotation = (() => {
+    if (typeof tr.rotation !== "number") return 0;
+    const r = ((tr.rotation % 360) + 360) % 360;
+    if (r === 90 || r === 180 || r === 270) return r;
+    return 0;
+  })();
+  const hasExplicitRotation = normalizedRotation !== 0;
+  const isFlutterPortraitLocked =
+    String(tr.source || "").toLowerCase() === "flutter-app" &&
+    tr.portraitLock === true;
+  const effectiveWidth =
+    normalizedRotation % 180 !== 0 ? tr.height : tr.width;
+  const effectiveHeight =
+    normalizedRotation % 180 !== 0 ? tr.width : tr.height;
+  const isPortrait = !!(
+    effectiveWidth &&
+    effectiveHeight &&
+    effectiveHeight > effectiveWidth
+  );
+  const isLandscape = !!(
+    effectiveWidth &&
+    effectiveHeight &&
+    effectiveWidth >= effectiveHeight
+  );
+
+  const parts: string[] = [];
+  if (streamHasVideoOrientationExtmap && hasExplicitRotation) {
+    console.log("[recording:merge:orientation] honoring appData.rotation", {
+      streamIndex: streamIndexForLog,
+      appRotation: normalizedRotation,
+    });
+  }
+  if (normalizedRotation === 90) {
+    parts.push("transpose=1");
+  } else if (normalizedRotation === 270) {
+    parts.push("transpose=2:passthrough=portrait");
+  } else if (normalizedRotation === 180) {
+    if (applyHalfTurnRotation) {
+      parts.push("hflip,vflip");
+    }
+  } else if (isFlutterPortraitLocked && isLandscape) {
+    parts.push(
+      `transpose=${getRecordingFlutterPortraitTranspose()}:passthrough=portrait`,
+    );
+  } else if (
+    !streamHasVideoOrientationExtmap &&
+    !hasExplicitRotation &&
+    isPortrait
+  ) {
+    parts.push("transpose=2:passthrough=portrait");
+  }
+  return parts.join(",");
+}
+
+/** Call recordings with two videos: first on screen by delay, then second — avoid empty grid cell for the solo segment. */
+function sortCallTwoVideosByDelayAsc(
+  tracks: MultitrackManifestTrack[],
+  durationsSec: number[],
+): { tracks: MultitrackManifestTrack[]; durationsSec: number[] } {
+  if (tracks.length !== 2) {
+    return { tracks, durationsSec };
+  }
+  const order = [0, 1].sort((a, b) => {
+    const da = Math.max(0, tracks[a].delaySec);
+    const db = Math.max(0, tracks[b].delaySec);
+    return da - db || a - b;
+  });
+  return {
+    tracks: order.map((i) => tracks[i]),
+    durationsSec: order.map((i) => durationsSec[i]),
+  };
+}
+
+function shouldStaggerCallTwoVideoLayout(
+  tracks: MultitrackManifestTrack[],
+  totalDurationSec: number,
+): boolean {
+  if (tracks.length !== 2) return false;
+  const d0 = Math.max(0, tracks[0].delaySec);
+  const d1 = Math.max(0, tracks[1].delaySec);
+  const dLo = Math.min(d0, d1);
+  const dHi = Math.max(d0, d1);
+  const T = Math.max(0.5, totalDurationSec);
+  return (
+    dHi - dLo >= STAGGERED_CALL_MIN_GAP_SEC && dHi < T - 0.05
+  );
+}
+
+/**
+ * two call videos, staggered join: [0, secondDelay) fullscreen first participant; then 2-up.
+ * Requires tracks sorted by delay ascending (earlier feed = index 0).
+ */
+function buildStaggeredCallTwoVideoChain(params: {
+  videoInputIndices: number[];
+  targetWidth: number;
+  targetHeight: number;
+  tracks: MultitrackManifestTrack[];
+  videoProbedDurationsSec: number[];
+  baseInputIdx: number;
+  fps: number;
+  totalDurationSec: number;
+  applyHalfTurnRotation: boolean;
+}): { filterParts: string[]; videoOutLabel: string } {
+  const {
+    videoInputIndices,
+    targetWidth,
+    targetHeight,
+    tracks,
+    videoProbedDurationsSec,
+    baseInputIdx,
+    fps,
+    totalDurationSec,
+    applyHalfTurnRotation,
+  } = params;
+
+  const idx0 = videoInputIndices[0];
+  const idx1 = videoInputIndices[1];
+  const t0 = tracks[0];
+  const t1 = tracks[1];
+  const p0 = videoProbedDurationsSec[0] ?? 0;
+  const p1 = videoProbedDurationsSec[1] ?? 0;
+  const T = Math.max(0.5, totalDurationSec);
+
+  const TW = targetWidth & ~1;
+  const TH = targetHeight & ~1;
+  const cols = 2;
+  const cellW = Math.floor(targetWidth / cols) & ~1;
+  const cellH = Math.floor(targetHeight) & ~1;
+
+  const dHi = Math.max(
+    0,
+    Math.max(t0.delaySec, t1.delaySec),
+  );
+  const soloEndF = dHi.toFixed(3);
+  const TF = T.toFixed(3);
+
+  const timing0 = computeAlignedVideoTiming(t0, p0, T);
+  const window0 = timing0.windowLen.toFixed(4);
+  const orient0 = buildVideoOrientationFilters(t0, 0, applyHalfTurnRotation);
+  const pre0 = [
+    `[${idx0}:v]setpts=PTS-STARTPTS,trim=start=0:duration=${window0},fps=${fps}`,
+    orient0 || null,
+    `split=2[stg0a][stg0b]`,
+  ]
+    .filter(Boolean)
+    .join(",");
+
+  const [scF, crF] = ffScaleCellToBox(TW, TH, mergeGridCellFit);
+  const [scH, crH] = ffScaleCellToBox(cellW, cellH, mergeGridCellFit);
+  const tpad1 = `tpad=start_duration=${timing0.delay.toFixed(4)}:start_mode=add:color=black`;
+  const tpad2 = `tpad=stop_mode=clone:stop_duration=${timing0.tailPad.toFixed(4)}`;
+
+  const filterParts: string[] = [];
+  filterParts.push(pre0);
+  filterParts.push(`[stg0a]${scF},${crF},${tpad1},${tpad2}[f0]`);
+  filterParts.push(`[stg0b]${scH},${crH},${tpad1},${tpad2}[h0]`);
+
+  filterParts.push(
+    buildAlignedMergeVideoBranch({
+      idx: idx1,
+      cellW,
+      cellH,
+      label: "h1",
+      tr: t1,
+      streamIndexForLog: 1,
+      fps,
+      applyHalfTurnRotation,
+      probedDurationSec: p1,
+      masterDurationSec: T,
+    }),
+  );
+
+  const baseLab = `${baseInputIdx}:v`;
+  filterParts.push(
+    `[${baseLab}][f0]overlay=0:0:enable='between(t,0,${soloEndF})':eof_action=pass:repeatlast=1[vsolo]`,
+  );
+  filterParts.push(
+    `[vsolo][h0]overlay=0:0:enable='between(t,${soloEndF},${TF})':eof_action=pass:repeatlast=1[vleft]`,
+  );
+  filterParts.push(
+    `[vleft][h1]overlay=${cellW}:0:enable='between(t,${soloEndF},${TF})':eof_action=pass:repeatlast=1[vstagger]`,
+  );
+
+  console.log("[recording:merge:layout] staggered call (solo then 2-up)", {
+    soloFullScreenUntilSec: Number(soloEndF),
+    masterSec: T,
+  });
+
+  return { filterParts, videoOutLabel: "vstagger" };
+}
+
 /**
  * Build one grid cell: trim file content to the active window, scale/crop, then
  * tpad black before delay and clone-pad after so PTS matches the master canvas (0…T).
@@ -205,73 +423,32 @@ function buildAlignedMergeVideoBranch(params: {
     masterDurationSec,
   } = params;
 
-  const T = Math.max(0.5, masterDurationSec);
-  const delay = Math.max(0, tr.delaySec);
-  const endBound = Math.min(T, tr.endSec ?? T);
-  const maxContent = Math.max(0, endBound - delay);
-  const rawDur = Math.max(0, probedDurationSec);
-  const contentWindow = Math.min(rawDur, maxContent, T - delay);
-  const windowLen = Math.max(0.04, contentWindow);
-  const tailPad = Math.max(0, T - delay - windowLen);
+  const { delay, windowLen, tailPad, rawDur, T } = computeAlignedVideoTiming(
+    tr,
+    probedDurationSec,
+    masterDurationSec,
+  );
+  const wl = windowLen.toFixed(4);
 
   if (tr.kind !== "video") {
     const [sc, cr] = ffScaleCellToBox(cellW, cellH, mergeGridCellFit);
-    return `[${idx}:v]setpts=PTS-STARTPTS,trim=start=0:duration=${windowLen.toFixed(4)},fps=${fps},${sc},${cr},tpad=start_duration=${delay.toFixed(4)}:start_mode=add:color=black,tpad=stop_mode=clone:stop_duration=${tailPad.toFixed(4)}[${label}]`;
+    return `[${idx}:v]setpts=PTS-STARTPTS,trim=start=0:duration=${wl},fps=${fps},${sc},${cr},tpad=start_duration=${delay.toFixed(4)}:start_mode=add:color=black,tpad=stop_mode=clone:stop_duration=${tailPad.toFixed(4)}[${label}]`;
   }
 
-  const streamHasVideoOrientationExtmap = !!tr.hasVideoOrientationExtmap;
-  const normalizedRotation = (() => {
-    if (typeof tr.rotation !== "number") return 0;
-    const r = ((tr.rotation % 360) + 360) % 360;
-    if (r === 90 || r === 180 || r === 270) return r;
-    return 0;
-  })();
-  const hasExplicitRotation = normalizedRotation !== 0;
-  const isFlutterPortraitLocked =
-    String(tr.source || "").toLowerCase() === "flutter-app" &&
-    tr.portraitLock === true;
-  const effectiveWidth =
-    normalizedRotation % 180 !== 0 ? tr.height : tr.width;
-  const effectiveHeight =
-    normalizedRotation % 180 !== 0 ? tr.width : tr.height;
-  const isPortrait = !!(
-    effectiveWidth &&
-    effectiveHeight &&
-    effectiveHeight > effectiveWidth
+  const orient = buildVideoOrientationFilters(
+    tr,
+    streamIndexForLog,
+    applyHalfTurnRotation,
   );
-  const isLandscape = !!(
-    effectiveWidth &&
-    effectiveHeight &&
-    effectiveWidth >= effectiveHeight
-  );
-
-  const chain: string[] = [
-    `[${idx}:v]setpts=PTS-STARTPTS,trim=start=0:duration=${windowLen.toFixed(4)},fps=${fps}`,
-  ];
-  if (streamHasVideoOrientationExtmap && hasExplicitRotation) {
-    console.log("[recording:merge:orientation] honoring appData.rotation", {
-      streamIndex: streamIndexForLog,
-      appRotation: normalizedRotation,
-    });
-  }
-  if (normalizedRotation === 90) {
-    chain.push("transpose=1");
-  } else if (normalizedRotation === 270) {
-    chain.push("transpose=2:passthrough=portrait");
-  } else if (normalizedRotation === 180) {
-    if (applyHalfTurnRotation) {
-      chain.push("hflip,vflip");
-    }
-  } else if (isFlutterPortraitLocked && isLandscape) {
-    chain.push(`transpose=${getRecordingFlutterPortraitTranspose()}:passthrough=portrait`);
-  } else if (!streamHasVideoOrientationExtmap && !hasExplicitRotation && isPortrait) {
-    chain.push("transpose=2:passthrough=portrait");
-  }
-  chain.push(
+  const chain = [
+    `[${idx}:v]setpts=PTS-STARTPTS,trim=start=0:duration=${wl},fps=${fps}`,
+    orient,
     ...ffScaleCellToBox(cellW, cellH, mergeGridCellFit),
     `tpad=start_duration=${delay.toFixed(4)}:start_mode=add:color=black`,
     `tpad=stop_mode=clone:stop_duration=${tailPad.toFixed(4)}`,
-  );
+  ]
+    .filter(Boolean)
+    .join(",");
   console.log("[recording:merge:align] video track timeline", {
     streamIndex: streamIndexForLog,
     producerId: tr.producerId,
@@ -281,7 +458,7 @@ function buildAlignedMergeVideoBranch(params: {
     masterT: T,
     probedSec: rawDur,
   });
-  return `${chain.join(",")}[${label}]`;
+  return `${chain}[${label}]`;
 }
 
 function buildGridOverlayChain(params: {
@@ -418,6 +595,14 @@ export async function mergeMultitrackManifestToMp4(params: {
     );
     videoTracks = collapsed.tracks;
     videoProbedDurationsSec = collapsed.durationsSec;
+    if (videoTracks.length === 2) {
+      const sorted = sortCallTwoVideosByDelayAsc(
+        videoTracks,
+        videoProbedDurationsSec,
+      );
+      videoTracks = sorted.tracks;
+      videoProbedDurationsSec = sorted.durationsSec;
+    }
   }
 
   const capW =
@@ -459,18 +644,33 @@ export async function mergeMultitrackManifestToMp4(params: {
       `color=c=black:s=${targetWidth}x${targetHeight}:d=${T}:r=${fps}`,
     );
 
-    const { filterParts, videoOutLabel } = buildGridOverlayChain({
-      videoInputIndices: videoIndices,
-      targetWidth,
-      targetHeight,
-      tracks: videoTracks,
-      videoProbedDurationsSec,
-      baseInputIdx: baseIdx,
-      fps,
-      totalDurationSec: T,
-      applyHalfTurnRotation,
-      recordingScope: manifest.recordingScope,
-    });
+    const useStaggeredCall =
+      manifest.recordingScope === "call" &&
+      shouldStaggerCallTwoVideoLayout(videoTracks, T);
+    const { filterParts, videoOutLabel } = useStaggeredCall
+      ? buildStaggeredCallTwoVideoChain({
+          videoInputIndices: videoIndices,
+          targetWidth,
+          targetHeight,
+          tracks: videoTracks,
+          videoProbedDurationsSec,
+          baseInputIdx: baseIdx,
+          fps,
+          totalDurationSec: T,
+          applyHalfTurnRotation,
+        })
+      : buildGridOverlayChain({
+          videoInputIndices: videoIndices,
+          targetWidth,
+          targetHeight,
+          tracks: videoTracks,
+          videoProbedDurationsSec,
+          baseInputIdx: baseIdx,
+          fps,
+          totalDurationSec: T,
+          applyHalfTurnRotation,
+          recordingScope: manifest.recordingScope,
+        });
 
     const fc: string[] = [...filterParts];
 
