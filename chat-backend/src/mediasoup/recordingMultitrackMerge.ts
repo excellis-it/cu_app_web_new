@@ -47,6 +47,71 @@ async function probeStreamDurationSec(filePath: string): Promise<number> {
   });
 }
 
+/** Probe actual video frame width×height and rotation metadata from a recorded .mp4 track file. */
+async function probeVideoFrameInfo(
+  filePath: string,
+): Promise<{ width: number; height: number; rotation: number } | null> {
+  return new Promise((resolve) => {
+    const proc = spawn(
+      ffprobeBinary,
+      [
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height:stream_tags=rotate:side_data=rotation",
+        "-of",
+        "json",
+        path.resolve(filePath),
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    proc.stdout.on("data", (c) => {
+      stdout += c.toString();
+    });
+    proc.on("error", () => resolve(null));
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        resolve(null);
+        return;
+      }
+      try {
+        const info = JSON.parse(stdout);
+        const stream = info?.streams?.[0];
+        if (!stream) {
+          resolve(null);
+          return;
+        }
+        const w = Number(stream.width);
+        const h = Number(stream.height);
+        if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+          resolve(null);
+          return;
+        }
+        // Check rotation from tags or side_data
+        let rotation = 0;
+        if (stream.tags?.rotate) {
+          rotation = Number(stream.tags.rotate) || 0;
+        } else if (stream.side_data_list) {
+          for (const sd of stream.side_data_list) {
+            if (sd.rotation !== undefined) {
+              rotation = Number(sd.rotation) || 0;
+              break;
+            }
+          }
+        }
+        // Normalize rotation to 0/90/180/270
+        rotation = ((Math.round(rotation) % 360) + 360) % 360;
+        resolve({ width: w, height: h, rotation });
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+}
+
 export type MultitrackManifestTrack = {
   producerId: string;
   kind: "audio" | "video";
@@ -572,6 +637,39 @@ export async function mergeMultitrackManifestToMp4(params: {
     videoTracks.map((t) => probeStreamDurationSec(t.path)),
   );
 
+  // Probe actual frame dimensions and rotation metadata from the recorded .mp4 files.
+  // Flutter apps report landscape dims (e.g. 1280×720) in appData even when the actual
+  // encoded frames may differ. The .mp4 may also contain rotation metadata (side_data/tags)
+  // that FFmpeg would auto-apply — we disable auto-rotate and handle it here explicitly.
+  const probedFrameInfos = await Promise.all(
+    videoTracks.map((t) => probeVideoFrameInfo(t.path)),
+  );
+  for (let i = 0; i < videoTracks.length; i++) {
+    const probed = probedFrameInfos[i];
+    if (probed) {
+      const tr = videoTracks[i];
+      const dimsChanged = tr.width !== probed.width || tr.height !== probed.height;
+      const hasContainerRotation = probed.rotation !== 0;
+      if (dimsChanged || hasContainerRotation) {
+        console.log("[recording:merge:probe] overriding manifest with probed info", {
+          producerId: tr.producerId,
+          manifest: { width: tr.width, height: tr.height, rotation: tr.rotation },
+          probed,
+        });
+      }
+      if (dimsChanged) {
+        tr.width = probed.width;
+        tr.height = probed.height;
+      }
+      // If the .mp4 container has rotation metadata AND no explicit appData rotation was set,
+      // use the container rotation. This handles cases where the encoder (e.g. iOS H.264)
+      // sets rotation in the bitstream/container that appData didn't capture.
+      if (hasContainerRotation && (tr.rotation === 0 || tr.rotation === undefined)) {
+        tr.rotation = probed.rotation;
+      }
+    }
+  }
+
   ({ tracks: videoTracks, durationsSec: videoProbedDurationsSec } =
     dedupeVideoTracksByProducerId(videoTracks, videoProbedDurationsSec));
 
@@ -608,7 +706,9 @@ export async function mergeMultitrackManifestToMp4(params: {
   let inputIdx = 0;
   const videoIndices: number[] = [];
   for (const t of videoTracks) {
-    args.push("-i", path.resolve(t.path));
+    // Disable auto-rotation so FFmpeg doesn't apply container/side-data rotation.
+    // The filter graph handles orientation explicitly via buildVideoOrientationFilters.
+    args.push("-noautorotate", "-i", path.resolve(t.path));
     videoIndices.push(inputIdx);
     inputIdx++;
   }
