@@ -318,6 +318,10 @@ const Room = ({
     retryCount = 0,
     callGen = callGenRef.current,
   ) => {
+    if (String(newPeerUserId) === String(myUserId)) {
+      console.log("[room.js] fetchAndConsumeProducers: skip (cannot consume own user)");
+      return;
+    }
     // Abort if a new call has started since this retry chain was created
     if (callGenRef.current !== callGen) {
       console.log(
@@ -1859,6 +1863,13 @@ const Room = ({
 
         for (const p of existing) {
           try {
+            if (String(p.userId) === String(userId)) {
+              console.log(
+                "[room.js] existing producers: skipping own producer",
+                p.producerId,
+              );
+              continue;
+            }
             if (consumedProducerIdsRef.current.has(p.producerId)) {
               console.log(
                 "[room.js] existing producers: skipping duplicate producer",
@@ -1977,6 +1988,13 @@ const Room = ({
               height,
               rotation,
             });
+            if (String(remoteUserId) === String(userId)) {
+              console.log(
+                "[room.js] MS-new-producer: skipping own producer",
+                producerId,
+              );
+              return;
+            }
             if (kind === "video") {
               setRemoteVideoMeta(remoteUserId, { rotation, width, height });
             }
@@ -2867,18 +2885,13 @@ const Room = ({
                 style={{ flex: 1, minHeight: 0, width: "100%" }}
               >
                 <VideoBox>
-                  {userVideoAudio["localUser"].video ? (
-                    <Label>You</Label>
-                  ) : (
-                    <UserName>You</UserName>
-                  )}
+                  <LocalNameLabel>You</LocalNameLabel>
                   {/* Hide expand icon during screen share to prevent infinite loop */}
                   {!screenShare && (
                     <FaIcon className="fas fa-expand" onClick={expandScreen} />
                   )}
                   <MyVideo
                     ref={userVideoRef}
-                    $useContain={screenShare}
                     muted
                     autoPlay
                     playsInline
@@ -3207,7 +3220,8 @@ const MyVideo = styled.video`
   min-height: 0;
   width: 100%;
   border-radius: 10px;
-  object-fit: ${(p) => (p.$useContain ? "contain" : "cover")};
+  /* contain: full preview without cover-crop; aligns with how recordings are usually framed */
+  object-fit: contain;
   background-color: #000;
 `;
 
@@ -3223,8 +3237,21 @@ const UserName = styled.div`
   z-index: 2;
 `;
 
-const Label = styled(UserName)`
-  background-color: #1abc9c;
+/** Matches VideoCard NameLabel (bottom-left) for local “You” */
+const LocalNameLabel = styled.div`
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  background-color: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  z-index: 2;
+  max-width: 80%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 `;
 
 const FaIcon = styled.i`

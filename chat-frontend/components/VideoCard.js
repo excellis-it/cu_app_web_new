@@ -212,7 +212,6 @@ const VideoCard = ({
     <VideoContainer>
       <VideoElement
         ref={setVideoRef}
-        $screenShare={isScreenShare}
         $rotationDeg={isScreenShare ? 0 : rotationDeg}
         autoPlay
         playsInline
@@ -250,7 +249,8 @@ const VideoElement = styled.video`
   width: 100%;
   height: 100%;
   min-height: 0;
-  object-fit: ${(p) => (p.$screenShare ? "contain" : "cover")};
+  /* contain: full camera/screen frame visible (matches typical recording playback; cover crops edges) */
+  object-fit: contain;
   background-color: #000;
   transform: ${(p) =>
     p.$rotationDeg ? `rotate(${p.$rotationDeg}deg)` : "none"};

@@ -512,6 +512,10 @@ export async function createConsumer(
 
   if (!targetPeer || !targetUserId) return null;
 
+  if (String(targetUserId) === String(userId)) {
+    return null;
+  }
+
   const peer = room.peers.get(userId);
   if (!peer) return null;
 
