@@ -2,7 +2,16 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import styled from 'styled-components';
 
 // Mediasoup-only VideoCard: receives a MediaStream directly instead of a simple-peer instance.
-const VideoCard = ({ stream, username, fullName, isMuted, isScreenShare, onFreeze }) => {
+const VideoCard = ({
+  stream,
+  username,
+  fullName,
+  isMuted,
+  isScreenShare,
+  onFreeze,
+  /** Degrees from producerAppDataRotationToCssDeg; 0 for screen share */
+  rotationDeg = 0,
+}) => {
   const videoRef = useRef();
   const [showVideo, setShowVideo] = useState(false);
 
@@ -194,7 +203,7 @@ const VideoCard = ({ stream, username, fullName, isMuted, isScreenShare, onFreez
         });
       }
     },
-    [stream]
+    [stream, rotationDeg]
   );
 
   // Always mount video element so it can receive stream/tracks immediately;
@@ -204,6 +213,7 @@ const VideoCard = ({ stream, username, fullName, isMuted, isScreenShare, onFreez
       <VideoElement
         ref={setVideoRef}
         $screenShare={isScreenShare}
+        $rotationDeg={isScreenShare ? 0 : rotationDeg}
         autoPlay
         playsInline
         controls={false}
@@ -242,7 +252,8 @@ const VideoElement = styled.video`
   min-height: 0;
   object-fit: ${(p) => (p.$screenShare ? "contain" : "cover")};
   background-color: #000;
-  transform: scaleX(1);
+  transform: ${(p) =>
+    p.$rotationDeg ? `rotate(${p.$rotationDeg}deg)` : "none"};
 
   &::-webkit-media-controls {
     display: none !important;

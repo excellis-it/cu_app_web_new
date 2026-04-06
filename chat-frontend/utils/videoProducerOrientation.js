@@ -61,3 +61,16 @@ export function localPreviewCssRotationDeg(orientationMeta) {
   if (r === 180) return 180;
   return 0;
 }
+
+/**
+ * Same CSS rotation as localPreviewCssRotationDeg for producer `appData.rotation`
+ * (0, 90, 180, 270). Use on remote <video> so tiles match server recording orientation.
+ */
+export function producerAppDataRotationToCssDeg(rotation) {
+  const n = rotation == null || Number.isNaN(Number(rotation)) ? 0 : Number(rotation);
+  return localPreviewCssRotationDeg({
+    reportedWidth: 640,
+    reportedHeight: 480,
+    reportedRotation: n,
+  });
+}

@@ -6,6 +6,8 @@ import { spawn } from "child_process";
 import fsp from "fs/promises";
 import path from "path";
 
+import { getRecordingGridCellFit } from "../helpers/recordingConfig";
+
 export type MergeRecordingScope = "call" | "screen";
 
 const ffmpegBinary = process.env.FFMPEG_PATH || "ffmpeg";
@@ -82,8 +84,20 @@ function computeCanvasSize(
   return { width: capW, height: capH };
 }
 
-/** Scale to cover WxH then center-crop so grid cells fill like gallery apps (no thick black bars). */
-function ffScaleCropCoverCell(cellW: number, cellH: number): string[] {
+const mergeGridCellFit = getRecordingGridCellFit();
+
+/** Scale each grid cell: "cover" fills (center crop); "contain" letterboxes (matches calmer live preview). */
+function ffScaleCellToBox(
+  cellW: number,
+  cellH: number,
+  fit: "cover" | "contain",
+): string[] {
+  if (fit === "contain") {
+    return [
+      `scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear`,
+      `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black`,
+    ];
+  }
   return [
     `scale=${cellW}:${cellH}:force_original_aspect_ratio=increase:flags=fast_bilinear`,
     `crop=${cellW}:${cellH}:(iw-${cellW})/2:(ih-${cellH})/2`,
@@ -131,7 +145,7 @@ function buildAlignedMergeVideoBranch(params: {
   const tailPad = Math.max(0, T - delay - windowLen);
 
   if (tr.kind !== "video") {
-    const [sc, cr] = ffScaleCropCoverCell(cellW, cellH);
+    const [sc, cr] = ffScaleCellToBox(cellW, cellH, mergeGridCellFit);
     return `[${idx}:v]setpts=PTS-STARTPTS,trim=start=0:duration=${windowLen.toFixed(4)},fps=${fps},${sc},${cr},tpad=start_duration=${delay.toFixed(4)}:start_mode=add:color=black,tpad=stop_mode=clone:stop_duration=${tailPad.toFixed(4)}[${label}]`;
   }
 
@@ -184,7 +198,7 @@ function buildAlignedMergeVideoBranch(params: {
     chain.push("transpose=2:passthrough=portrait");
   }
   chain.push(
-    ...ffScaleCropCoverCell(cellW, cellH),
+    ...ffScaleCellToBox(cellW, cellH, mergeGridCellFit),
     `tpad=start_duration=${delay.toFixed(4)}:start_mode=add:color=black`,
     `tpad=stop_mode=clone:stop_duration=${tailPad.toFixed(4)}`,
   );

@@ -422,6 +422,7 @@ export async function createProducer(
   kind: types.MediaKind,
   rtpParameters: types.RtpParameters,
   encodings?: types.RtpEncodingParameters[],
+  /** Mobile/native must send accurate width×height and rotation (0|90|180|270) for recording + web remote preview. */
   appData?: {
     width?: number;
     height?: number;

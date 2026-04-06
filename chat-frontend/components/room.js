@@ -16,6 +16,7 @@ import * as callService from "../utils/callService";
 import {
   computeVideoProducerOrientation,
   localPreviewCssRotationDeg,
+  producerAppDataRotationToCssDeg,
 } from "../utils/videoProducerOrientation";
 
 const Room = ({
@@ -98,6 +99,8 @@ const Room = ({
   const consumeRtpCapabilitiesRef = useRef(null);
 
   const [localPreviewRotationDeg, setLocalPreviewRotationDeg] = useState(0);
+  /** Mediasoup producer appData per remote userId (rotation from mobile/web produce). */
+  const [remoteProducerAppData, setRemoteProducerAppData] = useState({});
 
   const refreshLocalPreviewOrientation = useCallback(() => {
     if (isAudioOnlyCall) {
@@ -114,6 +117,26 @@ const Room = ({
     const meta = computeVideoProducerOrientation(t, isMobileBrowser);
     setLocalPreviewRotationDeg(localPreviewCssRotationDeg(meta));
   }, [isAudioOnlyCall]);
+
+  const setRemoteVideoMeta = useCallback((userId, partial) => {
+    if (userId == null) return;
+    const uid = String(userId);
+    setRemoteProducerAppData((prev) => ({
+      ...prev,
+      [uid]: { ...prev[uid], ...partial },
+    }));
+  }, []);
+
+  const clearRemoteVideoMeta = useCallback((userId) => {
+    if (userId == null) return;
+    const uid = String(userId);
+    setRemoteProducerAppData((prev) => {
+      if (!(uid in prev)) return prev;
+      const next = { ...prev };
+      delete next[uid];
+      return next;
+    });
+  }, []);
 
   const filterPreferredCodecs = (caps) => {
     if (!caps || !Array.isArray(caps.codecs)) return caps;
@@ -447,6 +470,13 @@ const Room = ({
               stream: s,
             })),
           );
+          if (kind === "video") {
+            setRemoteVideoMeta(newPeerUserId, {
+              rotation: p.rotation,
+              width: p.width,
+              height: p.height,
+            });
+          }
           console.log(
             "[room.js] fetchAndConsumeProducers: consumed producer for",
             newPeerUserId,
@@ -1061,6 +1091,7 @@ const Room = ({
             // Remove any mediasoup-rendered stream for this user
             if (remoteStreamsRef.current[userName]) {
               delete remoteStreamsRef.current[userName];
+              clearRemoteVideoMeta(userName);
               setRemotePeers(
                 Object.entries(remoteStreamsRef.current).map(
                   ([uid, stream]) => ({
@@ -1151,6 +1182,7 @@ const Room = ({
 
             if (remoteStreamsRef.current[userNameToRemove]) {
               delete remoteStreamsRef.current[userNameToRemove];
+              clearRemoteVideoMeta(userNameToRemove);
               setRemotePeers(
                 Object.entries(remoteStreamsRef.current).map(
                   ([uid, stream]) => ({
@@ -1196,6 +1228,7 @@ const Room = ({
 
             if (remoteStreamsRef.current[userNameToRemove]) {
               delete remoteStreamsRef.current[userNameToRemove];
+              clearRemoteVideoMeta(userNameToRemove);
               setRemotePeers(
                 Object.entries(remoteStreamsRef.current).map(
                   ([uid, stream]) => ({
@@ -1886,6 +1919,13 @@ const Room = ({
                 stream,
               })),
             );
+            if (kind === "video") {
+              setRemoteVideoMeta(p.userId, {
+                rotation: p.rotation,
+                width: p.width,
+                height: p.height,
+              });
+            }
             console.log("[room.js] remotePeers after consuming existing", {
               keys: Object.keys(remoteStreamsRef.current),
             });
@@ -1898,15 +1938,13 @@ const Room = ({
               consumerId: consumer.id,
             });
 
-            // For video: start at the lower temporal layer (L1T1 = 300kbps) so the
-            // browser's REMB/TWCC can ramp up only as bandwidth allows.
             if (kind === "video") {
               socket.emit("MS-set-preferred-layers", {
                 roomId,
                 userId,
                 consumerId: consumer.id,
                 spatialLayer: 0,
-                temporalLayer: 0,
+                temporalLayer: 1,
               });
             }
           } catch (err) {
@@ -1922,13 +1960,26 @@ const Room = ({
       socket.off("MS-new-producer");
       socket.on(
         "MS-new-producer",
-        async ({ producerId, userId: remoteUserId, kind }) => {
+        async ({
+          producerId,
+          userId: remoteUserId,
+          kind,
+          width,
+          height,
+          rotation,
+        }) => {
           try {
             console.log("[room.js] MS-new-producer received", {
               producerId,
               remoteUserId,
               kind,
+              width,
+              height,
+              rotation,
             });
+            if (kind === "video") {
+              setRemoteVideoMeta(remoteUserId, { rotation, width, height });
+            }
             if (consumedProducerIdsRef.current.has(producerId)) {
               console.log(
                 "[room.js] MS-new-producer: skipping duplicate producer",
@@ -1996,14 +2047,13 @@ const Room = ({
               consumerId: consumer.id,
             });
 
-            // For video: request lower temporal layer initially so REMB can ramp up naturally.
             if (trackKind === "video") {
               socket.emit("MS-set-preferred-layers", {
                 roomId,
                 userId,
                 consumerId: consumer.id,
                 spatialLayer: 0,
-                temporalLayer: 0,
+                temporalLayer: 1,
               });
             }
           } catch (err) {
@@ -2054,6 +2104,7 @@ const Room = ({
       pendingConsumePeerIdsRef.current.clear();
       hasReceivedInitialUsers.current = false;
       setRemotePeers([]);
+      setRemoteProducerAppData({});
       setUserVideoAudio({ localUser: { video: true, audio: true } });
       // Re-join the signalling room so BE restores presence / FE-user-join events
       try {
@@ -2890,6 +2941,9 @@ const Room = ({
                         isScreenShare={isScreenSharing}
                         callType={callType}
                         onFreeze={handleRemoteVideoFreeze}
+                        rotationDeg={producerAppDataRotationToCssDeg(
+                          remoteProducerAppData[remote.userId]?.rotation,
+                        )}
                       />
                     </VideoBox>
                   );
@@ -3038,7 +3092,9 @@ const ModalContent = styled.div`
   border-radius: 12px;
   box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.5);
   width: 100%;
-  height: ${(props) => (props?.$isFloating ? "100%" : "100vh")};
+  min-height: 0;
+  flex: 1;
+  height: ${(props) => (props?.$isFloating ? "100%" : "100%")};
   overflow: hidden;
   display: flex;
   flex-direction: column;

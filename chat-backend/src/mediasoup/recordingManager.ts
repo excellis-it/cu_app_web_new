@@ -11,7 +11,7 @@ import {
   startKeyframeTimer, 
   stopKeyframeTimer 
 } from "./mediaRoomManager";
-import { recordingConfig } from "../helpers/recordingConfig";
+import { getRecordingGridCellFit, recordingConfig } from "../helpers/recordingConfig";
 import CallRecording from "../db/schemas/callrecording.schema";
 import ScreenRecording from "../db/schemas/screen-recording.schema";
 
@@ -788,10 +788,18 @@ function buildOneVideoBranchToCell(
   } else if (!streamHasVideoOrientationExtmap && !hasExplicitRotation && isPortrait) {
     chain.push("transpose=2:passthrough=portrait");
   }
-  chain.push(
-    `scale=${cellW}:${cellH}:force_original_aspect_ratio=increase:flags=fast_bilinear`,
-    `crop=${cellW}:${cellH}:(iw-${cellW})/2:(ih-${cellH})/2`,
-  );
+  const fit = getRecordingGridCellFit();
+  if (fit === "contain") {
+    chain.push(
+      `scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear`,
+      `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black`,
+    );
+  } else {
+    chain.push(
+      `scale=${cellW}:${cellH}:force_original_aspect_ratio=increase:flags=fast_bilinear`,
+      `crop=${cellW}:${cellH}:(iw-${cellW})/2:(ih-${cellH})/2`,
+    );
+  }
   return `${chain.join(",")}[${label}]`;
 }
 

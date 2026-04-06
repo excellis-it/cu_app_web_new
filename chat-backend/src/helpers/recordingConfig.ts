@@ -13,6 +13,12 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   return Math.floor(parsed);
 }
 
+/** Grid cell scaling: "cover" = fill cell (center crop). "contain" = letterbox in cell (no face chop). */
+export function getRecordingGridCellFit(): "cover" | "contain" {
+  const v = String(process.env.RECORDING_GRID_CELL_FIT || "cover").toLowerCase();
+  return v === "contain" ? "contain" : "cover";
+}
+
 export const recordingConfig = {
   tempUploadDir: process.env.RECORDING_TEMP_UPLOAD_DIR || DEFAULT_TEMP_UPLOAD_DIR,
   cdnBaseUrl: process.env.RECORDING_CDN_BASE_URL || "",
