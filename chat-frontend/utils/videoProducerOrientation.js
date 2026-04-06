@@ -74,38 +74,3 @@ export function producerAppDataRotationToCssDeg(rotation) {
     reportedRotation: n,
   });
 }
-
-/**
- * CSS rotation for a remote producer's <video>, combining appData.rotation with
- * heuristics that mirror server recording (see recordingManager portrait-lock notes).
- *
- * Flutter iOS often encodes portrait-locked camera with landscape WxH and rotation 0
- * while the decoded frame is 180° vs Android / browser; mobile should send
- * `platform: "ios"` in produce appData to enable the half-turn correction.
- */
-export function remoteVideoCssRotationDeg(meta) {
-  const base = producerAppDataRotationToCssDeg(meta?.rotation);
-  const platform = String(meta?.platform || "").toLowerCase();
-  const source = String(meta?.source || "").toLowerCase();
-  const portraitLock = meta?.portraitLock === true;
-  const w = Number(meta?.width) || 0;
-  const h = Number(meta?.height) || 0;
-  const r = (((Number(meta?.rotation) || 0) % 360) + 360) % 360;
-
-  let deg = base;
-  if (
-    platform === "ios" &&
-    source === "flutter-app" &&
-    portraitLock &&
-    w > 0 &&
-    h > 0 &&
-    w > h &&
-    r === 0
-  ) {
-    deg += 180;
-  }
-
-  let n = ((deg % 360) + 360) % 360;
-  if (n > 180) n -= 360;
-  return n;
-}
