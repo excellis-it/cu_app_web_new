@@ -82,8 +82,16 @@ function computeCanvasSize(
   return { width: capW, height: capH };
 }
 
+/** Scale to cover WxH then center-crop so grid cells fill like gallery apps (no thick black bars). */
+function ffScaleCropCoverCell(cellW: number, cellH: number): string[] {
+  return [
+    `scale=${cellW}:${cellH}:force_original_aspect_ratio=increase:flags=fast_bilinear`,
+    `crop=${cellW}:${cellH}:(iw-${cellW})/2:(ih-${cellH})/2`,
+  ];
+}
+
 /**
- * Build one grid cell: trim file content to the active window, scale/pad, then
+ * Build one grid cell: trim file content to the active window, scale/crop, then
  * tpad black before delay and clone-pad after so PTS matches the master canvas (0…T).
  * Without this, overlay enable=between(t,delay,end) never sees late-joiner frames because
  * their stream PTS still starts at 0 while output time t is already past delay.
@@ -123,7 +131,8 @@ function buildAlignedMergeVideoBranch(params: {
   const tailPad = Math.max(0, T - delay - windowLen);
 
   if (tr.kind !== "video") {
-    return `[${idx}:v]setpts=PTS-STARTPTS,trim=start=0:duration=${windowLen.toFixed(4)},fps=${fps},scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black,tpad=start_duration=${delay.toFixed(4)}:start_mode=add:color=black,tpad=stop_mode=clone:stop_duration=${tailPad.toFixed(4)}[${label}]`;
+    const [sc, cr] = ffScaleCropCoverCell(cellW, cellH);
+    return `[${idx}:v]setpts=PTS-STARTPTS,trim=start=0:duration=${windowLen.toFixed(4)},fps=${fps},${sc},${cr},tpad=start_duration=${delay.toFixed(4)}:start_mode=add:color=black,tpad=stop_mode=clone:stop_duration=${tailPad.toFixed(4)}[${label}]`;
   }
 
   const streamHasVideoOrientationExtmap = !!tr.hasVideoOrientationExtmap;
@@ -175,8 +184,7 @@ function buildAlignedMergeVideoBranch(params: {
     chain.push("transpose=2:passthrough=portrait");
   }
   chain.push(
-    `scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear`,
-    `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black`,
+    ...ffScaleCropCoverCell(cellW, cellH),
     `tpad=start_duration=${delay.toFixed(4)}:start_mode=add:color=black`,
     `tpad=stop_mode=clone:stop_duration=${tailPad.toFixed(4)}`,
   );

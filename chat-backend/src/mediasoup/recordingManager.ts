@@ -789,8 +789,8 @@ function buildOneVideoBranchToCell(
     chain.push("transpose=2:passthrough=portrait");
   }
   chain.push(
-    `scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease:flags=fast_bilinear`,
-    `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=black`,
+    `scale=${cellW}:${cellH}:force_original_aspect_ratio=increase:flags=fast_bilinear`,
+    `crop=${cellW}:${cellH}:(iw-${cellW})/2:(ih-${cellH})/2`,
   );
   return `${chain.join(",")}[${label}]`;
 }
@@ -813,7 +813,7 @@ function buildVideoGridFilter(params: {
     }
   >;
   baseLabel: string;
-  /** When true and exactly one video: no black canvas / overlay — scale+pad only. Saves large CPU vs compositing every frame. */
+  /** When true and exactly one video: no black canvas / overlay — scale+cover+crop only. Saves large CPU vs compositing every frame. */
   skipCanvasOverlay?: boolean;
 }): { filterParts: string[]; videoOutputLabel: string } {
   const {
