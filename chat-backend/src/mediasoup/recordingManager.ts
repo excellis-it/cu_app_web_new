@@ -157,7 +157,7 @@ const DEFAULT_RTP_BASE_PORT = 50000;
 const DEFAULT_RTP_MAX_PORT = 59999;
 const rtpBasePort = Number(process.env.RECORDING_RTP_BASE_PORT) || DEFAULT_RTP_BASE_PORT;
 const rtpMaxPort = Number(process.env.RECORDING_RTP_MAX_PORT) || DEFAULT_RTP_MAX_PORT;
-const applyHalfTurnRotation = String(process.env.RECORDING_APPLY_180_ROTATION || "").toLowerCase() === "true";
+const applyHalfTurnRotation = String(process.env.RECORDING_APPLY_180_ROTATION || "true").toLowerCase() !== "false";
 const recordingOutputFps = Math.max(
   6,
   Math.min(24, Number(process.env.RECORDING_OUTPUT_FPS) || 10),
