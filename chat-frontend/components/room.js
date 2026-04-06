@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { IconButton } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import styled, { keyframes } from "styled-components";
 import VideoCard from "./VideoCard";
+import ParticipantInitialAvatar from "./ParticipantInitialAvatar";
 import BottomBar from "./BottomBar";
 import ChatArea from "./ChatArea";
 import { useRouter } from "next/router";
@@ -19,6 +20,7 @@ import {
   producerAppDataRotationToCssDeg,
 } from "../utils/videoProducerOrientation";
 import { getEqualCallGridStyle } from "../utils/equalCallGridLayout";
+import { MAIN_STAGE_MAX } from "../utils/callStageLayout";
 
 const Room = ({
   socketRef,
@@ -36,6 +38,11 @@ const Room = ({
   const [userVideoAudio, setUserVideoAudio] = useState({
     localUser: { video: true, audio: true },
   });
+  /** Always current map for socket handlers registered once inside initializeMedia (avoids stale closure). */
+  const userVideoAudioRef = useRef(userVideoAudio);
+  useEffect(() => {
+    userVideoAudioRef.current = userVideoAudio;
+  }, [userVideoAudio]);
   const [constraints, setConstraints] = useState({ audio: true, video: true });
   const [videoDevices, setVideoDevices] = useState([]);
   const [screenShare, setScreenShare] = useState(false);
@@ -51,6 +58,23 @@ const Room = ({
   const [hasRealVideo, setHasRealVideo] = useState(false);
   const [waitingCalls, setWaitingCalls] = useState([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const peerAudioRmsRef = useRef({});
+  const speakerLevelEmaRef = useRef({});
+  /** Stabilizes active speaker so tiles don’t swap on sub‑second silence (debounced + EMA). */
+  const dominantStickyRef = useRef({
+    committedId: null,
+    pendingId: null,
+    pendingSince: 0,
+  });
+  const [dominantSpeakerId, setDominantSpeakerId] = useState(null);
+  /** Two participants pinned to the main stage; filmstrip holds the rest. Swaps when a bottom user becomes dominant. */
+  const [focusPairIds, setFocusPairIds] = useState(null);
+  /** Comma-sorted ids with raw RMS ≥ threshold; updated on rAF for realtime dots / rings (not for stage swap timing). */
+  const [liveSpeakingKey, setLiveSpeakingKey] = useState("");
+  const liveSpeakingSet = useMemo(() => {
+    if (!liveSpeakingKey) return new Set();
+    return new Set(liveSpeakingKey.split(","));
+  }, [liveSpeakingKey]);
 
   // Screen recording (SuperAdmin / admin role only — server-side via mediasoup)
   const [isScreenRecording, setIsScreenRecording] = useState(false);
@@ -62,6 +86,9 @@ const Room = ({
   const [isCallRecording, setIsCallRecording] = useState(false);
 
   const isAudioOnlyCall = callType === "audio";
+
+  /** Byte time-domain RMS; keep in sync with local `setIsSpeaking(rms > 4)` and dominant rawPick. */
+  const SPEAKING_RMS_THRESHOLD = 4;
 
   const groupAdmins =
     chatAreaProps?.groupDataDetails?.admins ||
@@ -581,8 +608,8 @@ const Room = ({
           sum += v * v;
         }
         const rms = Math.sqrt(sum / dataArray.length);
-        // Slightly lower threshold so normal speech is detected
-        setIsSpeaking(rms > 4);
+        peerAudioRmsRef.current.localUser = rms;
+        setIsSpeaking(rms > SPEAKING_RMS_THRESHOLD);
         rafId = requestAnimationFrame(tick);
       };
 
@@ -604,6 +631,95 @@ const Room = ({
       } catch {}
     };
   }, [stream]);
+
+  const remoteStreamsSignature = useMemo(
+    () =>
+      remotePeers
+        .map(
+          (p) =>
+            `${String(p.userId)}:${p.stream?.id ?? ""}:${p.stream?.getAudioTracks?.()?.[0]?.id ?? ""}`,
+        )
+        .join("|"),
+    [remotePeers],
+  );
+
+  // Remote mic levels for active-speaker detection (every participant runs this on received audio)
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    if (isFloating || remotePeers.length === 0) return undefined;
+
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return undefined;
+
+    let ctx;
+    const cleanups = [];
+    const entries = [];
+
+    try {
+      ctx = new AC();
+    } catch (e) {
+      console.warn("[room] AudioContext for remote levels failed:", e);
+      return undefined;
+    }
+
+    remotePeers.forEach((peer) => {
+      const track = peer.stream?.getAudioTracks?.()?.[0];
+      if (!track || track.readyState === "ended") return;
+      try {
+        const src = ctx.createMediaStreamSource(new MediaStream([track]));
+        const an = ctx.createAnalyser();
+        an.fftSize = 512;
+        src.connect(an);
+        entries.push([String(peer.userId), an]);
+        cleanups.push(() => {
+          try {
+            src.disconnect();
+          } catch {}
+          try {
+            an.disconnect();
+          } catch {}
+        });
+      } catch (e) {
+        console.warn("[room] remote audio analyser failed:", peer.userId, e);
+      }
+    });
+
+    if (entries.length === 0) {
+      ctx.close().catch(() => {});
+      return undefined;
+    }
+
+    ctx.resume?.().catch(() => {});
+
+    const buf = new Uint8Array(512);
+    let raf;
+    const tick = () => {
+      for (const [uid, an] of entries) {
+        try {
+          an.getByteTimeDomainData(buf);
+          let sum = 0;
+          for (let i = 0; i < buf.length; i++) {
+            const v = buf[i] - 128;
+            sum += v * v;
+          }
+          peerAudioRmsRef.current[uid] = Math.sqrt(sum / buf.length);
+        } catch {
+          peerAudioRmsRef.current[uid] = 0;
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      cleanups.forEach((fn) => fn());
+      entries.forEach(([uid]) => {
+        delete peerAudioRmsRef.current[uid];
+      });
+      ctx.close().catch(() => {});
+    };
+  }, [remoteStreamsSignature, isFloating]);
 
   const initializeMedia = async () => {
     try {
@@ -1072,7 +1188,7 @@ const Room = ({
               );
               return;
             }
-            const info = userVideoAudio[userName] || {};
+            const info = userVideoAudioRef.current[userName] || {};
             const displayName =
               info.senderName ||
               info.name ||
@@ -1110,9 +1226,11 @@ const Room = ({
         );
 
         socketRef.current.on("FE-toggle-camera", ({ userId, switchTarget }) => {
-          const targetUserName = Object.keys(userVideoAudio).find(
+          const uv = userVideoAudioRef.current;
+          const targetUserName = Object.keys(uv).find(
             (name) =>
-              name === userId || userVideoAudio[name]?.socketId === userId,
+              name === userId ||
+              String(uv[name]?.socketId ?? "") === String(userId),
           );
           if (!targetUserName) return;
 
@@ -1135,19 +1253,25 @@ const Room = ({
         socketRef.current.on(
           "FE-toggle-screen-share",
           ({ userId, isScreenShare, userName }) => {
-            const peerIdx = findPeer(userId);
-            if (peerIdx) {
+            const uv = userVideoAudioRef.current;
+            const found = Object.entries(uv).find(
+              ([, inf]) =>
+                inf &&
+                String(inf.socketId ?? "") === String(userId),
+            );
+            const peerUserName = found ? found[0] : null;
+            if (peerUserName) {
               setUserVideoAudio((prev) => ({
                 ...prev,
-                [peerIdx.userName]: {
-                  ...prev[peerIdx.userName],
+                [peerUserName]: {
+                  ...prev[peerUserName],
                   isScreenShare: isScreenShare,
                 },
               }));
 
               // Track who is currently sharing
               if (isScreenShare) {
-                setCurrentScreenSharer({ userId, userName: peerIdx.userName });
+                setCurrentScreenSharer({ userId, userName: peerUserName });
               } else {
                 // Clear if this user stopped sharing
                 setCurrentScreenSharer((prev) =>
@@ -2252,6 +2376,247 @@ const Room = ({
     };
   }, [screenShare, screenShareLoading]);
 
+  const participantOrder = useMemo(
+    () => ["localUser", ...remotePeers.map((p) => String(p.userId))],
+    [remotePeers],
+  );
+
+  const anyoneScreenSharing = useMemo(
+    () =>
+      screenShare ||
+      !!currentScreenSharer ||
+      remotePeers.some((p) => userVideoAudio[p.userId]?.isScreenShare),
+    [screenShare, currentScreenSharer, remotePeers, userVideoAudio],
+  );
+
+  const useStageLayout = useMemo(
+    () =>
+      !isFloating &&
+      !anyoneScreenSharing &&
+      participantOrder.length > MAIN_STAGE_MAX,
+    [isFloating, anyoneScreenSharing, participantOrder.length],
+  );
+
+  const { stageIds, filmstripIds } = useMemo(() => {
+    if (!useStageLayout) {
+      return { stageIds: participantOrder, filmstripIds: [] };
+    }
+    if (!focusPairIds || focusPairIds.length !== 2) {
+      if (participantOrder.length > MAIN_STAGE_MAX) {
+        const stageIds = participantOrder.slice(0, MAIN_STAGE_MAX);
+        const filmstripIds = participantOrder.slice(MAIN_STAGE_MAX);
+        return { stageIds, filmstripIds };
+      }
+      return { stageIds: participantOrder, filmstripIds: [] };
+    }
+    const fset = new Set(focusPairIds);
+    const filmstripIds = participantOrder.filter((id) => !fset.has(id));
+    const d = dominantSpeakerId;
+    let stageIds = [...focusPairIds];
+    if (d != null && fset.has(d)) {
+      const other = focusPairIds.find((x) => String(x) !== String(d));
+      if (other != null) {
+        stageIds = [d, other];
+      }
+    }
+    return { stageIds, filmstripIds };
+  }, [
+    useStageLayout,
+    focusPairIds,
+    participantOrder,
+    dominantSpeakerId,
+  ]);
+
+  useEffect(() => {
+    if (!useStageLayout) {
+      setFocusPairIds(null);
+      return;
+    }
+    setFocusPairIds((prev) => {
+      const order = participantOrder;
+      if (order.length < 2) {
+        return null;
+      }
+      if (prev && prev.length === 2) {
+        const still = prev.filter((id) => order.includes(id));
+        if (still.length === 2) {
+          return prev;
+        }
+        if (still.length === 1) {
+          const keep = still[0];
+          const fill = order.find((id) => id !== keep);
+          return fill ? [keep, fill] : [order[0], order[1]];
+        }
+      }
+      return [order[0], order[1]];
+    });
+  }, [useStageLayout, participantOrder]);
+
+  useEffect(() => {
+    if (!useStageLayout || !focusPairIds || focusPairIds.length !== 2) {
+      return;
+    }
+    const d = dominantSpeakerId;
+    if (d == null) {
+      return;
+    }
+    if (focusPairIds.some((id) => String(id) === String(d))) {
+      return;
+    }
+    const [a, b] = focusPairIds;
+    const emaA = speakerLevelEmaRef.current[a] ?? 0;
+    const emaB = speakerLevelEmaRef.current[b] ?? 0;
+    const keep = emaA >= emaB ? a : b;
+    setFocusPairIds([d, keep]);
+  }, [dominantSpeakerId, useStageLayout, focusPairIds]);
+
+  /** Active speaker from mic levels — all call sizes (not only 5+ / stage layout). */
+  const shouldDetectActiveSpeaker = useMemo(
+    () => !isFloating && participantOrder.length > 1,
+    [isFloating, participantOrder.length],
+  );
+
+  useEffect(() => {
+    if (!shouldDetectActiveSpeaker) {
+      speakerLevelEmaRef.current = {};
+      dominantStickyRef.current = {
+        committedId: null,
+        pendingId: null,
+        pendingSince: 0,
+      };
+      setDominantSpeakerId(null);
+      return undefined;
+    }
+
+    const allowed = new Set(participantOrder);
+    for (const k of Object.keys(speakerLevelEmaRef.current)) {
+      if (!allowed.has(k)) {
+        delete speakerLevelEmaRef.current[k];
+      }
+    }
+
+    /** Slightly higher alpha = RMS reacts faster; still smoothed vs raw samples. */
+    const EMA_ALPHA = 0.4;
+    /** How long a new loudest participant must win before we commit (avoids dot/tile flicker). */
+    const MIN_SWITCH_MS = 340;
+    /** How long silence must hold before clearing the active speaker. */
+    const CLEAR_SILENCE_MS = 480;
+    const TICK_MS = 120;
+
+    const id = window.setInterval(() => {
+      const st0 = dominantStickyRef.current;
+      if (
+        st0.committedId != null &&
+        !participantOrder.includes(st0.committedId)
+      ) {
+        st0.committedId = null;
+        st0.pendingId = null;
+        setDominantSpeakerId(null);
+      }
+
+      for (const pid of participantOrder) {
+        const inst = peerAudioRmsRef.current[pid] ?? 0;
+        const prev = speakerLevelEmaRef.current[pid] ?? 0;
+        speakerLevelEmaRef.current[pid] = prev * (1 - EMA_ALPHA) + inst * EMA_ALPHA;
+      }
+
+      let bestId = null;
+      let bestSm = 0;
+      for (const pid of participantOrder) {
+        const sm = speakerLevelEmaRef.current[pid] ?? 0;
+        if (sm > bestSm) {
+          bestSm = sm;
+          bestId = pid;
+        }
+      }
+      const rawPick = bestSm >= SPEAKING_RMS_THRESHOLD ? bestId : null;
+
+      const st = dominantStickyRef.current;
+      const now = Date.now();
+
+      if (rawPick !== null && st.pendingId === "__clear__") {
+        st.pendingId = null;
+      }
+
+      if (rawPick === st.committedId) {
+        st.pendingId = null;
+        return;
+      }
+
+      if (rawPick === null) {
+        if (st.committedId == null) {
+          st.pendingId = null;
+          return;
+        }
+        if (st.pendingId !== "__clear__") {
+          st.pendingId = "__clear__";
+          st.pendingSince = now;
+          return;
+        }
+        if (now - st.pendingSince >= CLEAR_SILENCE_MS) {
+          st.committedId = null;
+          st.pendingId = null;
+          setDominantSpeakerId(null);
+        }
+        return;
+      }
+
+      if (st.committedId == null) {
+        if (st.pendingId !== rawPick) {
+          st.pendingId = rawPick;
+          st.pendingSince = now;
+          return;
+        }
+        if (now - st.pendingSince >= MIN_SWITCH_MS * 0.38) {
+          st.committedId = rawPick;
+          st.pendingId = null;
+          setDominantSpeakerId(rawPick);
+        }
+        return;
+      }
+
+      if (st.pendingId !== rawPick) {
+        st.pendingId = rawPick;
+        st.pendingSince = now;
+        return;
+      }
+      if (now - st.pendingSince >= MIN_SWITCH_MS) {
+        st.committedId = rawPick;
+        st.pendingId = null;
+        setDominantSpeakerId(rawPick);
+      }
+    }, TICK_MS);
+    return () => clearInterval(id);
+  }, [shouldDetectActiveSpeaker, participantOrder]);
+
+  useEffect(() => {
+    if (!shouldDetectActiveSpeaker) {
+      setLiveSpeakingKey("");
+      return undefined;
+    }
+
+    let rafId = 0;
+    let lastSig = "";
+    const tick = () => {
+      const rmsMap = peerAudioRmsRef.current;
+      const active = [];
+      for (const pid of participantOrder) {
+        if ((rmsMap[pid] ?? 0) >= SPEAKING_RMS_THRESHOLD) {
+          active.push(String(pid));
+        }
+      }
+      active.sort();
+      const sig = active.join(",");
+      if (sig !== lastSig) {
+        lastSig = sig;
+        setLiveSpeakingKey(sig);
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [shouldDetectActiveSpeaker, participantOrder]);
+
   function writeUserName(userName) {
     if (userVideoAudio[userName] && !userVideoAudio[userName].video) {
       return <UserName key={userName}>{userName}</UserName>;
@@ -2707,6 +3072,154 @@ const Room = ({
     if (isFloating) setIsFloating(false);
   };
 
+  const renderGallerySlot = (slotId, filmstripMode) => {
+    const fs = filmstripMode;
+    // Meet-style filmstrip: fixed 16:9 tiles, scroll horizontally
+    const boxStyle = fs
+      ? {
+          width: 160,
+          minWidth: 160,
+          height: 90,
+          flexShrink: 0,
+          boxSizing: "border-box",
+        }
+      : undefined;
+    const isLiveNow = shouldDetectActiveSpeaker
+      ? liveSpeakingSet.has(String(slotId))
+      : String(slotId) === "localUser" && isSpeaking;
+    const localSpeaking =
+      isLiveNow && userVideoAudio["localUser"].audio;
+
+    if (slotId === "localUser") {
+      const localShowInitial =
+        !screenShare &&
+        !screenShareLoading &&
+        (isAudioOnlyCall ||
+          !userVideoAudio["localUser"].video ||
+          !hasRealVideo);
+
+      return (
+        <VideoBox
+          key={`${fs ? "fs" : "st"}-local`}
+          style={boxStyle}
+          $isActiveSpeaker={localSpeaking}
+          $isFilmstrip={fs}
+        >
+          <LocalNameLabel
+            style={
+              fs
+                ? {
+                    fontSize: 11,
+                    padding: "2px 6px",
+                    top: 4,
+                    bottom: "auto",
+                    left: 4,
+                    maxWidth: "92%",
+                  }
+                : undefined
+            }
+          >
+            You
+          </LocalNameLabel>
+          {!fs && !screenShare && (
+            <FaIcon className="fas fa-expand" onClick={expandScreen} />
+          )}
+          <MyVideo
+            ref={userVideoRef}
+            muted
+            autoPlay
+            playsInline
+            controls={false}
+            style={{
+              transform: (() => {
+                if (screenShare || !hasRealVideo) return "scaleX(1)";
+                const rot = localPreviewRotationDeg;
+                if (rot) return `rotate(${rot}deg) scaleX(-1)`;
+                return "scaleX(-1)";
+              })(),
+              cursor: screenShare ? "default" : "pointer",
+              opacity: screenShareLoading
+                ? 0.5
+                : localShowInitial
+                  ? 0
+                  : 1,
+            }}
+            onClick={!screenShare ? expandScreen : undefined}
+          />
+          {localShowInitial && (
+            <ParticipantInitialAvatar
+              compact={fs}
+              name={
+                currentUserFullName ||
+                globalUser?.data?.user?.name ||
+                currentUser ||
+                "You"
+              }
+            />
+          )}
+          {screenShareLoading && (
+            <LoadingOverlay>
+              <LoadingSpinner />
+              <LoadingText>Starting Screen Share...</LoadingText>
+            </LoadingOverlay>
+          )}
+          {!userVideoAudio["localUser"].audio && (
+            <MuteIconContainer>🔇</MuteIconContainer>
+          )}
+          {localSpeaking && (
+            <SpeakingBadge $compact={fs}>Speaking</SpeakingBadge>
+          )}
+        </VideoBox>
+      );
+    }
+
+    const remote = remotePeers.find((p) => String(p.userId) === String(slotId));
+    if (!remote) return null;
+    const info = userVideoAudio[remote.userId] || {};
+    const displayName =
+      info.senderName || info.name || info.fullName || remote.userId;
+    const isMuted = info.audio === false;
+    const isScreenSharing = info.isScreenShare;
+    const showRemoteSpeaking =
+      liveSpeakingSet.has(String(remote.userId)) && !isMuted;
+
+    return (
+      <VideoBox
+        key={`${fs ? "fs" : "st"}-remote-${remote.userId}`}
+        onClick={!isScreenSharing ? expandScreen : undefined}
+        $isScreenShare={isScreenSharing}
+        $isActiveSpeaker={showRemoteSpeaking}
+        $isFilmstrip={fs}
+        style={{
+          cursor: isScreenSharing ? "default" : "pointer",
+          ...boxStyle,
+        }}
+      >
+        {writeUserName(displayName)}
+        {!fs && !isScreenSharing && (
+          <FaIcon className="fas fa-expand" />
+        )}
+        <VideoCard
+          stream={remote.stream}
+          username={remote.userId}
+          number={remotePeers.length}
+          fullName={displayName}
+          isMuted={isMuted}
+          isScreenShare={isScreenSharing}
+          callType={callType}
+          onFreeze={handleRemoteVideoFreeze}
+          compact={fs}
+          rotationDeg={producerAppDataRotationToCssDeg(
+            remoteProducerAppData[remote.userId]?.rotation,
+          )}
+        />
+        {showRemoteSpeaking && (
+          <SpeakingBadge $compact={fs}>Speaking</SpeakingBadge>
+        )}
+      </VideoBox>
+    );
+  };
+
   return (
     <>
       {showModal && (
@@ -2880,96 +3393,166 @@ const Room = ({
                 flex: 1,
                 minHeight: 0,
                 position: "relative",
+                /* BottomBar is position:absolute; reserve its height so filmstrip/name labels are not covered */
+                paddingBottom: 52,
+                boxSizing: "border-box",
               }}
             >
-              <VideoContainer
-                $isFloating={isFloating}
-                style={{
-                  flex: 1,
-                  minHeight: 0,
-                  width: "100%",
-                  display: "grid",
-                  ...getEqualCallGridStyle(1 + remotePeers.length),
-                }}
-              >
-                <VideoBox>
-                  <LocalNameLabel>You</LocalNameLabel>
-                  {/* Hide expand icon during screen share to prevent infinite loop */}
-                  {!screenShare && (
-                    <FaIcon className="fas fa-expand" onClick={expandScreen} />
-                  )}
-                  <MyVideo
-                    ref={userVideoRef}
-                    muted
-                    autoPlay
-                    playsInline
-                    controls={false}
-                    style={{
-                      transform: (() => {
-                        if (screenShare || !hasRealVideo) return "scaleX(1)";
-                        const rot = localPreviewRotationDeg;
-                        if (rot)
-                          return `rotate(${rot}deg) scaleX(-1)`;
-                        return "scaleX(-1)";
-                      })(),
-                      cursor: screenShare ? "default" : "pointer",
-                      opacity: screenShareLoading ? 0.5 : 1,
-                    }}
-                    onClick={!screenShare ? expandScreen : undefined}
-                  />
-                  {/* Screen share loading indicator */}
-                  {screenShareLoading && (
-                    <LoadingOverlay>
-                      <LoadingSpinner />
-                      <LoadingText>Starting Screen Share...</LoadingText>
-                    </LoadingOverlay>
-                  )}
-                  {!userVideoAudio["localUser"].audio && (
-                    <MuteIconContainer>🔇</MuteIconContainer>
-                  )}
-                  {isSpeaking && userVideoAudio["localUser"].audio && (
-                    <SpeakingDot />
-                  )}
-                </VideoBox>
-                {remotePeers.map((remote, index, arr) => {
-                  const info = userVideoAudio[remote.userId] || {};
-                  const displayName =
-                    info.senderName ||
-                    info.name ||
-                    info.fullName ||
-                    remote.userId;
-                  const isMuted = info.audio === false;
-                  const isScreenSharing = info.isScreenShare;
-
-                  return (
-                    <VideoBox
-                      key={remote.userId}
-                      onClick={!isScreenSharing ? expandScreen : undefined}
-                      $isScreenShare={isScreenSharing}
+              {useStageLayout ? (
+                <MeetStageColumn>
+                  <MeetStageMain>
+                    <VideoContainer
+                      $isFloating={isFloating}
+                      $stageLayout
                       style={{
-                        cursor: isScreenSharing ? "default" : "pointer",
+                        flex: 1,
+                        minHeight: 0,
+                        width: "100%",
+                        display: "grid",
+                        ...getEqualCallGridStyle(stageIds.length),
                       }}
                     >
-                      {writeUserName(displayName)}
-                      {/* Hide expand icon when screen sharing to prevent infinite loop */}
-                      {!isScreenSharing && <FaIcon className="fas fa-expand" />}
-                      <VideoCard
-                        stream={remote.stream}
-                        username={remote.userId}
-                        number={arr.length}
-                        fullName={displayName}
-                        isMuted={isMuted}
-                        isScreenShare={isScreenSharing}
-                        callType={callType}
-                        onFreeze={handleRemoteVideoFreeze}
-                        rotationDeg={producerAppDataRotationToCssDeg(
-                          remoteProducerAppData[remote.userId]?.rotation,
+                      {stageIds.map((slotId) => renderGallerySlot(slotId, false))}
+                    </VideoContainer>
+                  </MeetStageMain>
+                  {filmstripIds.length > 0 ? (
+                    <MeetFilmstripBar>
+                      {filmstripIds.map((slotId) =>
+                        renderGallerySlot(slotId, true),
+                      )}
+                    </MeetFilmstripBar>
+                  ) : null}
+                </MeetStageColumn>
+              ) : (
+                <VideoContainer
+                  $isFloating={isFloating}
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    width: "100%",
+                    display: "grid",
+                    ...getEqualCallGridStyle(1 + remotePeers.length),
+                  }}
+                >
+                  <VideoBox
+                    $isActiveSpeaker={
+                      shouldDetectActiveSpeaker
+                        ? liveSpeakingSet.has("localUser")
+                        : isSpeaking
+                    }
+                  >
+                    <LocalNameLabel>You</LocalNameLabel>
+                    {!screenShare && (
+                      <FaIcon className="fas fa-expand" onClick={expandScreen} />
+                    )}
+                    <MyVideo
+                      ref={userVideoRef}
+                      muted
+                      autoPlay
+                      playsInline
+                      controls={false}
+                      style={{
+                        transform: (() => {
+                          if (screenShare || !hasRealVideo) return "scaleX(1)";
+                          const rot = localPreviewRotationDeg;
+                          if (rot)
+                            return `rotate(${rot}deg) scaleX(-1)`;
+                          return "scaleX(-1)";
+                        })(),
+                        cursor: screenShare ? "default" : "pointer",
+                        opacity: (() => {
+                          if (screenShareLoading) return 0.5;
+                          const showInit =
+                            !screenShare &&
+                            !screenShareLoading &&
+                            (isAudioOnlyCall ||
+                              !userVideoAudio["localUser"].video ||
+                              !hasRealVideo);
+                          return showInit ? 0 : 1;
+                        })(),
+                      }}
+                      onClick={!screenShare ? expandScreen : undefined}
+                    />
+                    {!screenShare &&
+                      !screenShareLoading &&
+                      (isAudioOnlyCall ||
+                        !userVideoAudio["localUser"].video ||
+                        !hasRealVideo) && (
+                        <ParticipantInitialAvatar
+                          compact={false}
+                          name={
+                            currentUserFullName ||
+                            globalUser?.data?.user?.name ||
+                            currentUser ||
+                            "You"
+                          }
+                        />
+                      )}
+                    {screenShareLoading && (
+                      <LoadingOverlay>
+                        <LoadingSpinner />
+                        <LoadingText>Starting Screen Share...</LoadingText>
+                      </LoadingOverlay>
+                    )}
+                    {!userVideoAudio["localUser"].audio && (
+                      <MuteIconContainer>🔇</MuteIconContainer>
+                    )}
+                    {(shouldDetectActiveSpeaker
+                      ? liveSpeakingSet.has("localUser")
+                      : isSpeaking) &&
+                      userVideoAudio["localUser"].audio && (
+                      <SpeakingBadge $compact={false}>Speaking</SpeakingBadge>
+                    )}
+                  </VideoBox>
+                  {remotePeers.map((remote, index, arr) => {
+                    const info = userVideoAudio[remote.userId] || {};
+                    const displayName =
+                      info.senderName ||
+                      info.name ||
+                      info.fullName ||
+                      remote.userId;
+                    const isMuted = info.audio === false;
+                    const isScreenSharing = info.isScreenShare;
+                    const isRemoteLive = liveSpeakingSet.has(
+                      String(remote.userId),
+                    );
+                    const showRemoteSpeaking = isRemoteLive && !isMuted;
+
+                    return (
+                      <VideoBox
+                        key={remote.userId}
+                        onClick={!isScreenSharing ? expandScreen : undefined}
+                        $isScreenShare={isScreenSharing}
+                        $isActiveSpeaker={showRemoteSpeaking}
+                        style={{
+                          cursor: isScreenSharing ? "default" : "pointer",
+                        }}
+                      >
+                        {writeUserName(displayName)}
+                        {!isScreenSharing && (
+                          <FaIcon className="fas fa-expand" />
                         )}
-                      />
-                    </VideoBox>
-                  );
-                })}
-              </VideoContainer>
+                        <VideoCard
+                          stream={remote.stream}
+                          username={remote.userId}
+                          number={arr.length}
+                          fullName={displayName}
+                          isMuted={isMuted}
+                          isScreenShare={isScreenSharing}
+                          callType={callType}
+                          onFreeze={handleRemoteVideoFreeze}
+                          rotationDeg={producerAppDataRotationToCssDeg(
+                            remoteProducerAppData[remote.userId]?.rotation,
+                          )}
+                        />
+                        {showRemoteSpeaking && (
+                          <SpeakingBadge $compact={false}>Speaking</SpeakingBadge>
+                        )}
+                      </VideoBox>
+                    );
+                  })}
+                </VideoContainer>
+              )}
               {showChat && (
                 <ChatSidebarContainer show={showChat}>
                   <ChatSidebarHeader>
@@ -3108,6 +3691,7 @@ const ModalOverlay_minimize = styled.div`
 `;
 
 const ModalContent = styled.div`
+  position: relative;
   background: #1a1a1a;
   padding: ${(props) => (props?.$isFloating ? "20px" : "10px")};
   border-radius: 12px;
@@ -3141,14 +3725,75 @@ const ModalContent = styled.div`
     }
   `}
 `;
-// grid-template-columns: ${props => props?.isFloating ? '1fr' : 'repeat(auto-fit, minmax(200px, 1fr))'};
-const VideoContainer = styled.div`
-  gap: ${(props) => (props?.$isFloating ? "8px" : "8px")};
-  height: ${(props) =>
-    props?.$isFloating ? "calc(100% - 50px)" : "100%"};
+/** Meet-style: main grid sits on dark canvas above the filmstrip */
+const MeetStageColumn = styled.div`
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+`;
+
+const MeetStageMain = styled.div`
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #131314;
+  padding: 12px;
   box-sizing: border-box;
   overflow: hidden;
-  padding: 0 5px;
+`;
+
+const MeetFilmstripBar = styled.div`
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  gap: 10px;
+  padding: 10px 16px 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  align-items: center;
+  background: #202124;
+  border-top: 1px solid #3c4043;
+  min-height: 118px;
+  max-height: 118px;
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: #5f6368 #131314;
+
+  &::-webkit-scrollbar {
+    height: 6px;
+  }
+  &::-webkit-scrollbar-track {
+    background: #131314;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: #5f6368;
+    border-radius: 3px;
+  }
+`;
+
+// grid-template-columns: ${props => props?.isFloating ? '1fr' : 'repeat(auto-fit, minmax(200px, 1fr))'};
+const VideoContainer = styled.div`
+  gap: ${(props) =>
+    props?.$stageLayout ? "10px" : props?.$isFloating ? "8px" : "8px"};
+  height: ${(props) =>
+    props?.$isFloating
+      ? "calc(100% - 50px)"
+      : props?.$stageLayout
+        ? "auto"
+        : "100%"};
+  ${(props) =>
+    props?.$stageLayout &&
+    `
+    flex: 1;
+  `}
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: ${(props) => (props?.$stageLayout ? "0" : "0 5px")};
   min-height: 0;
   align-content: stretch;
   align-items: stretch;
@@ -3159,7 +3804,8 @@ const VideoContainer = styled.div`
 const VideoBox = styled.div`
   background: #2c2c2c;
   border-radius: 8px;
-  padding: ${(props) => (props?.$isFloating ? "8px" : "4px")};
+  padding: ${(props) =>
+    props?.$isFilmstrip ? "2px" : props?.$isFloating ? "8px" : "4px"};
   position: relative;
   width: 100%;
   min-height: 0;
@@ -3170,6 +3816,24 @@ const VideoBox = styled.div`
   align-items: stretch;
   justify-content: stretch;
   overflow: hidden;
+
+  ${(props) =>
+    props?.$isActiveSpeaker &&
+    (props?.$isFilmstrip
+      ? `
+    box-shadow:
+      0 0 0 1.5px #5dff5a,
+      0 0 12px rgba(93, 255, 90, 0.45),
+      0 0 20px rgba(34, 197, 94, 0.2);
+    z-index: 2;
+  `
+      : `
+    box-shadow:
+      0 0 0 2px #5dff5a,
+      0 0 18px rgba(93, 255, 90, 0.55),
+      0 0 36px rgba(34, 197, 94, 0.35);
+    z-index: 2;
+  `)}
 
   /* Main screen share takes full area */
   ${(props) =>
@@ -3295,15 +3959,21 @@ const MuteIconContainer = styled.div`
   z-index: 2;
 `;
 
-const SpeakingDot = styled.div`
+/** Top-right label; matches neon border on VideoBox when $isActiveSpeaker. */
+const SpeakingBadge = styled.span`
   position: absolute;
-  bottom: 8px;
-  right: 32px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background-color: #22c55e;
-  box-shadow: 0 0 8px rgba(34, 197, 94, 0.9);
+  top: ${(p) => (p.$compact ? "5px" : "10px")};
+  right: ${(p) => (p.$compact ? "6px" : "10px")};
+  z-index: 4;
+  font-size: ${(p) => (p.$compact ? "9px" : "13px")};
+  font-weight: 600;
+  color: #5dff5a;
+  letter-spacing: 0.03em;
+  pointer-events: none;
+  line-height: 1.2;
+  text-shadow:
+    0 0 8px rgba(93, 255, 90, 0.95),
+    0 0 16px rgba(34, 197, 94, 0.65);
 `;
 
 // Google Meet-style Layout Components

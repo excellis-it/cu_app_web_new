@@ -136,6 +136,7 @@ const Bar = styled.div`
   align-items: center;
   font-weight: 500;
   background-color: #f2f2f2;
+  z-index: 5;
 `;
 
 const Left = styled.div`

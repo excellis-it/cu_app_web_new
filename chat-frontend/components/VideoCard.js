@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import styled from 'styled-components';
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import styled from "styled-components";
+import ParticipantInitialAvatar from "./ParticipantInitialAvatar";
 
 // Mediasoup-only VideoCard: receives a MediaStream directly instead of a simple-peer instance.
 const VideoCard = ({
@@ -11,38 +12,43 @@ const VideoCard = ({
   onFreeze,
   /** Degrees from producerAppDataRotationToCssDeg; 0 for screen share */
   rotationDeg = 0,
+  /** Smaller name pill for filmstrip / gallery strip */
+  compact = false,
 }) => {
   const videoRef = useRef();
-  const [showVideo, setShowVideo] = useState(false);
-
-  // Update showVideo when stream or its tracks change
-  const updateShowVideo = useCallback((s) => {
-    if (!s) return false;
-    const hasVideo = s.getVideoTracks().length > 0;
-    const hasAudio = s.getAudioTracks().length > 0;
-    return hasVideo || hasAudio;
-  }, []);
+  /** True when a video track is live & enabled (show picture); false for audio-only or cam off */
+  const [videoTrackLive, setVideoTrackLive] = useState(false);
 
   useEffect(() => {
     if (!stream) {
-      setShowVideo(false);
+      setVideoTrackLive(false);
       if (videoRef.current) {
         videoRef.current.srcObject = null;
       }
-      return;
+      return undefined;
     }
 
-    const hasTracks = updateShowVideo(stream);
-    setShowVideo(hasTracks);
-
-    const onTracksChange = () => {
-      setShowVideo(updateShowVideo(stream));
+    const syncVideoTrackLive = () => {
+      const v = stream.getVideoTracks()[0];
+      setVideoTrackLive(!!(v && v.readyState === "live" && v.enabled));
     };
 
-    stream.addEventListener("addtrack", onTracksChange);
-    stream.addEventListener("removetrack", onTracksChange);
+    syncVideoTrackLive();
 
-    // Attach stream to video element - use setTimeout to ensure ref is set after render
+    const onTrackListOrMute = () => {
+      syncVideoTrackLive();
+    };
+
+    stream.addEventListener("addtrack", onTrackListOrMute);
+    stream.addEventListener("removetrack", onTrackListOrMute);
+
+    const vts = stream.getVideoTracks();
+    vts.forEach((t) => {
+      t.addEventListener("ended", onTrackListOrMute);
+      t.addEventListener("mute", onTrackListOrMute);
+      t.addEventListener("unmute", onTrackListOrMute);
+    });
+
     const applyStream = () => {
       if (videoRef.current && stream) {
         if (videoRef.current.srcObject !== stream) {
@@ -62,18 +68,23 @@ const VideoCard = ({
 
     return () => {
       clearTimeout(t);
-      stream.removeEventListener("addtrack", onTracksChange);
-      stream.removeEventListener("removetrack", onTracksChange);
+      stream.removeEventListener("addtrack", onTrackListOrMute);
+      stream.removeEventListener("removetrack", onTrackListOrMute);
+      stream.getVideoTracks().forEach((track) => {
+        track.removeEventListener("ended", onTrackListOrMute);
+        track.removeEventListener("mute", onTrackListOrMute);
+        track.removeEventListener("unmute", onTrackListOrMute);
+      });
       if (videoRef.current) {
         videoRef.current.srcObject = null;
       }
     };
-  }, [stream, updateShowVideo]);
+  }, [stream]);
 
   // Log when a remote video appears frozen so freezes can be correlated with transport/network logs.
   useEffect(() => {
     const el = videoRef.current;
-    if (!el) return undefined;
+    if (!el || !stream) return undefined;
 
     let lastFrames = -1;
     let lastTs = 0;
@@ -118,6 +129,11 @@ const VideoCard = ({
     el.addEventListener("playing", onPlaying);
 
     const timer = setInterval(() => {
+      const vt = stream.getVideoTracks?.()?.[0];
+      if (!vt || vt.readyState !== "live" || !vt.enabled) {
+        return;
+      }
+
       const q =
         typeof el.getVideoPlaybackQuality === "function"
           ? el.getVideoPlaybackQuality()
@@ -161,7 +177,6 @@ const VideoCard = ({
                 : null,
             timestamp: new Date().toISOString(),
           });
-          // Notify parent so it can attempt ICE restart / keyframe recovery
           if (typeof onFreeze === "function") onFreeze(username);
         }
       } else {
@@ -188,11 +203,10 @@ const VideoCard = ({
       el.removeEventListener("stalled", onStalled);
       el.removeEventListener("playing", onPlaying);
     };
-  }, [stream, username, fullName]);
+  }, [stream, username, fullName, onFreeze]);
 
   const displayName = fullName || username;
 
-  // Ref callback: set srcObject as soon as video element mounts (handles tracks arriving async)
   const setVideoRef = useCallback(
     (el) => {
       videoRef.current = el;
@@ -206,8 +220,10 @@ const VideoCard = ({
     [stream, rotationDeg]
   );
 
-  // Always mount video element so it can receive stream/tracks immediately;
-  // overlay loader when no tracks yet
+  const showLoader = !stream || (isScreenShare && !videoTrackLive);
+  const showInitial =
+    !!stream && !videoTrackLive && !isScreenShare;
+
   return (
     <VideoContainer>
       <VideoElement
@@ -216,16 +232,23 @@ const VideoCard = ({
         autoPlay
         playsInline
         controls={false}
-        style={{ opacity: showVideo ? 1 : 0 }}
+        style={{ opacity: videoTrackLive ? 1 : 0 }}
       />
-      {!showVideo && (
-        <Loader style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
-          <LoaderSpinner>⟳</LoaderSpinner>
-          {isScreenShare ? "Loading screen share..." : "Loading video..."}
+      {showLoader && (
+        <Loader
+          $compact={compact}
+          style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
+        >
+          <LoaderSpinner $compact={compact}>⟳</LoaderSpinner>
+          {isScreenShare ? "Loading screen share..." : "Connecting..."}
         </Loader>
       )}
 
-      <NameLabel>{displayName}</NameLabel>
+      {showInitial && (
+        <ParticipantInitialAvatar name={displayName} compact={compact} />
+      )}
+
+      <NameLabel $compact={compact}>{displayName}</NameLabel>
       {isMuted && <MuteIconContainer>🔇</MuteIconContainer>}
     </VideoContainer>
   );
@@ -249,7 +272,6 @@ const VideoElement = styled.video`
   width: 100%;
   height: 100%;
   min-height: 0;
-  /* contain: full camera/screen frame visible (matches typical recording playback; cover crops edges) */
   object-fit: contain;
   background-color: #000;
   transform: ${(p) =>
@@ -268,45 +290,57 @@ const VideoElement = styled.video`
 
 const NameLabel = styled.div`
   position: absolute;
-  bottom: 8px;
-  left: 8px;
+  top: ${(p) => (p.$compact ? "4px" : "auto")};
+  bottom: ${(p) => (p.$compact ? "auto" : "8px")};
+  left: ${(p) => (p.$compact ? "4px" : "8px")};
   background-color: rgba(0, 0, 0, 0.7);
   color: white;
-  padding: 4px 8px;
+  padding: ${(p) => (p.$compact ? "2px 6px" : "4px 8px")};
   border-radius: 4px;
-  font-size: 14px;
+  font-size: ${(p) => (p.$compact ? "11px" : "14px")};
   z-index: 2;
-  max-width: 80%;
+  max-width: ${(p) => (p.$compact ? "90%" : "80%")};
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 `;
 const Loader = styled.div`
   color: white;
-  font-size: 16px;
+  font-size: ${(p) => (p.$compact ? "12px" : "16px")};
   font-weight: 500;
   text-align: center;
-  padding: 16px;
+  padding: ${(p) => (p.$compact ? "8px" : "16px")};
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
   animation: pulse 1.5s infinite;
+  z-index: 1;
 
   @keyframes pulse {
-    0% { opacity: 0.3; }
-    50% { opacity: 1; }
-    100% { opacity: 0.3; }
+    0% {
+      opacity: 0.3;
+    }
+    50% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0.3;
+    }
   }
 `;
 
 const LoaderSpinner = styled.div`
-  font-size: 32px;
+  font-size: ${(p) => (p.$compact ? "22px" : "32px")};
   animation: spin 1s linear infinite;
-  
+
   @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+    0% {
+      transform: rotate(0deg);
+    }
+    100% {
+      transform: rotate(360deg);
+    }
   }
 `;
 
@@ -325,6 +359,5 @@ const MuteIconContainer = styled.div`
   font-size: 14px;
   z-index: 2;
 `;
-
 
 export default VideoCard;
