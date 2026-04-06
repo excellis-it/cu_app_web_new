@@ -1530,78 +1530,22 @@ export const checkActiveCall = async (groupId: string, user: any) => {
       };
     }
 
-    // Get participant details - with a null check
     const participantIds = activeParticipants
-      .filter((p: { user: any }) => p.user) // Filter out any undefined users
+      .filter((p: { user: any }) => p.user)
       .map((p: any) => p.user);
 
-    // Extra guard against stale "joined" states:
-    // Only count participants whose 'isActiveInCall' flag is truly true in DB
-    const activeUsersInCall = await USERS.find(
-      { _id: { $in: participantIds }, isActiveInCall: true },
+    // Source of truth for "call still going": VideoCall.userActivity with status joined.
+    // Do not auto-end based on USERS.isActiveInCall alone — that flag can lag or clear for
+    // someone who left the UI while others remain; they still need Join + list pulse.
+    const participants = await USERS.find(
+      { _id: { $in: participantIds } },
       { _id: 1, name: 1, image: 1 }
     ).lean();
-    const activeUserCount = activeUsersInCall.length;
-
-    if (activeUserCount === 0) {
-      // No one is TRULY in the call anymore. Auto-end it.
-      await VideoCall.updateOne(
-        { _id: groupCall._id },
-        {
-          $set: {
-            status: 'ended',
-            endedAt: new Date(),
-            incommingCall: false,
-            // Force all 'joined' states to 'left' since they were stale
-            "userActivity.$[elem].status": "left",
-            "userActivity.$[elem].leftAt": new Date(),
-          }
-        },
-        {
-          arrayFilters: [{ "elem.status": "joined" }]
-        }
-      );
-
-      // Create a 'Call Has Ended' message so the chat list updates correctly
-      try {
-        const moment = require("moment");
-        const start = moment(groupCall.startedAt);
-        const end = moment(new Date());
-        const duration = moment.utc(moment.duration(end.diff(start)).asMilliseconds()).format("HH:mm:ss");
-        
-        // Find a suitable sender (the one who called this API or SuperAdmin)
-        const senderId = user?._id || participantIds[0];
-        const group = await Group.findById(groupId).lean() as any;
-
-        if (group && senderId) {
-          const sysMsg = await Message.create({
-            senderId: senderId,
-            groupId: groupId,
-            senderName: user?.name || "System",
-            message: `Call Has Ended | ${duration}`,
-            messageType: "text",
-            createdAt: new Date(),
-            allRecipients: group.currentUsers,
-          });
-
-          // If socket instance is available, we would emit here, 
-          // but since this is an API call, the client will see the message 
-          // on next group refresh (which happens immediately after this API call).
-        }
-      } catch (e) {
-        console.error("Error creating auto-end message:", e);
-      }
-
-      return {
-        activeCall: false,
-        participantCount: 0
-      };
-    }
 
     return {
       activeCall: true,
-      participantCount: activeUsersInCall.length,
-      participants: activeUsersInCall,
+      participantCount: activeParticipants.length,
+      participants,
       startedAt: groupCall.startedAt,
       callType: groupCall.callType,
     };

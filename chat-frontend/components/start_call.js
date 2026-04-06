@@ -65,6 +65,12 @@ const CallButton = ({
       }
     });
 
+    socketRef.current.on("call-status-change", (data) => {
+      if (data?.groupId?.toString() === group_id?.toString()) {
+        checkActiveCall();
+      }
+    });
+
     socketRef.current.on("FE-call-ended", (data) => {
       if (data?.roomId?.toString() === group_id?.toString()) {
         checkActiveCall();
@@ -77,7 +83,8 @@ const CallButton = ({
       socketRef.current.off("incomming_call");
       socketRef.current.off("FE-error-user-exist");
       socketRef.current.off("FE-call-ended");
-      socketRef.current.off("FE-user-leave");
+      socketRef.current.off("FE-leave");
+      socketRef.current.off("call-status-change");
     };
   }, [socketRef.current]);
 

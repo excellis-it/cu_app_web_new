@@ -257,7 +257,9 @@ pin: ${values?.pin || ""}
             justifyContent: "end",
           }}
         >
-          {activeCall?.includes(values._id) && (
+          {activeCall?.some(
+            (cid) => String(cid) === String(values._id),
+          ) && (
             <p className="blinkingGreen">
               <RadioButtonChecked style={{ color: "#25767b" }} />
             </p>
@@ -416,11 +418,13 @@ const SingleTodo = ({
   };
 
   const checkActiveCall = async (group_id) => {
+    const gid = group_id != null ? String(group_id) : "";
+    if (!gid) return;
     try {
       const userStorage = localStorage.getItem("user");
       const token = userStorage ? JSON.parse(userStorage).data?.token : "";
       const response = await fetch(
-        `/api/groups/check-active-call?group_id=${group_id}`,
+        `/api/groups/check-active-call?group_id=${gid}`,
         {
           headers: { "access-token": token },
         },
@@ -428,9 +432,13 @@ const SingleTodo = ({
       if (response.ok) {
         const data = await response.json();
         if (data.success && data.data?.activeCall) {
-          setActiveCall((prev) => [...new Set([...prev, group_id])]);
+          setActiveCall((prev) => [
+            ...new Set([...prev.map((x) => String(x)), gid]),
+          ]);
         } else {
-          setActiveCall((prev) => prev.filter((id) => id !== group_id));
+          setActiveCall((prev) =>
+            prev.filter((id) => String(id) !== gid),
+          );
         }
       }
     } catch (error) {
@@ -441,26 +449,39 @@ const SingleTodo = ({
   // Throttle socket-triggered checks to avoid rapid-fire API calls
   const socketCheckThrottleRef = useRef({});
   const throttledCheckActiveCall = (group_id) => {
+    const gid = group_id != null ? String(group_id) : "";
+    if (!gid) return;
     const now = Date.now();
-    const lastCheck = socketCheckThrottleRef.current[group_id] || 0;
+    const lastCheck = socketCheckThrottleRef.current[gid] || 0;
     const throttleDelay = 2000; // Only check once every 2 seconds per group
 
     if (now - lastCheck < throttleDelay) {
       return; // Skip if checked recently
     }
 
-    socketCheckThrottleRef.current[group_id] = now;
-    checkActiveCall(group_id);
+    socketCheckThrottleRef.current[gid] = now;
+    checkActiveCall(gid);
   };
 
   useEffect(() => {
     if (!socketRef.current) return;
     const updateCalls = (data) => {
-      if (data?.roomId) {
-        throttledCheckActiveCall(data.roomId.toString());
-      }
-      if (data?.groupId) {
-        throttledCheckActiveCall(data.groupId.toString());
+      const id = (data?.groupId ?? data?.roomId)?.toString();
+      if (!id) return;
+      if (data.isActive === true) {
+        socketCheckThrottleRef.current[id] = 0;
+        setActiveCall((prev) => [
+          ...new Set([...prev.map((x) => String(x)), id]),
+        ]);
+        checkActiveCall(id);
+      } else if (data.isActive === false) {
+        socketCheckThrottleRef.current[id] = 0;
+        setActiveCall((prev) =>
+          prev.filter((g) => String(g) !== id),
+        );
+        checkActiveCall(id);
+      } else {
+        throttledCheckActiveCall(id);
       }
     };
     // When a call ends, bypass the throttle and immediately remove from activeCall.
@@ -468,7 +489,9 @@ const SingleTodo = ({
     const handleCallEnded = (data) => {
       const roomId = data?.roomId?.toString();
       if (roomId) {
-        setActiveCall((prev) => prev.filter((id) => id !== roomId));
+        setActiveCall((prev) =>
+          prev.filter((id) => String(id) !== roomId),
+        );
         // Reset throttle so a fresh check can happen immediately
         if (socketCheckThrottleRef.current) {
           socketCheckThrottleRef.current[roomId] = 0;
