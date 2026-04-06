@@ -43,6 +43,8 @@ const Room = ({
   useEffect(() => {
     userVideoAudioRef.current = userVideoAudio;
   }, [userVideoAudio]);
+  /** Dedup "left" vs "disconnected" toasts (graceful leave + socket disconnect both fire). */
+  const participantLeaveToastDedupeRef = useRef({});
   const [constraints, setConstraints] = useState({ audio: true, video: true });
   const [videoDevices, setVideoDevices] = useState([]);
   const [screenShare, setScreenShare] = useState(false);
@@ -1178,6 +1180,52 @@ const Room = ({
           }
         });
 
+        const LEAVE_TOAST_DEDUP_MS = 7000;
+        const toastOptsParticipantGone = {
+          position: "top-right",
+          autoClose: 3000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true,
+        };
+        const resolveParticipantGoneLabel = (userIdKey, data) => {
+          const info = userIdKey
+            ? userVideoAudioRef.current[userIdKey] || {}
+            : {};
+          const raw =
+            data?.fullName ||
+            info.senderName ||
+            info.name ||
+            info.fullName ||
+            data?.senderName ||
+            data?.name ||
+            data?.userName ||
+            userIdKey ||
+            "";
+          const s = String(raw).trim();
+          if (!s) return "A participant";
+          if (/^[a-f0-9]{24}$/i.test(s)) return "A participant";
+          return s;
+        };
+        const showParticipantGoneToastOnce = (userKey, kind, data) => {
+          const k = userKey != null ? String(userKey) : "";
+          if (!k) return;
+          const now = Date.now();
+          const map = participantLeaveToastDedupeRef.current;
+          if (map[k] != null && now - map[k] < LEAVE_TOAST_DEDUP_MS) return;
+          map[k] = now;
+          const label = resolveParticipantGoneLabel(k, data || {});
+          if (kind === "graceful") {
+            toast.info(`${label} left the call`, toastOptsParticipantGone);
+          } else {
+            toast.warning(
+              `${label} disconnected from the call`,
+              toastOptsParticipantGone,
+            );
+          }
+        };
+
         socketRef.current.on(
           "FE-user-leave",
           ({ userId, userName, fullName }) => {
@@ -1188,20 +1236,9 @@ const Room = ({
               );
               return;
             }
-            const info = userVideoAudioRef.current[userName] || {};
-            const displayName =
-              info.senderName ||
-              info.name ||
-              fullName ||
-              info.fullName ||
-              userName;
-            toast.info(`${displayName} left the call`, {
-              position: "top-right",
-              autoClose: 3000,
-              hideProgressBar: false,
-              closeOnClick: true,
-              pauseOnHover: true,
-              draggable: true,
+            showParticipantGoneToastOnce(userName, "graceful", {
+              fullName,
+              userName,
             });
 
             setUserVideoAudio((prevUserVideoAudio) => {
@@ -1286,19 +1323,13 @@ const Room = ({
           const disconnectedUserId = data?.userSocketId;
           if (!disconnectedUserId) return;
 
-          // Show toast notification when user disconnects
-          const displayName =
-            data?.fullName || data?.userName || "A participant";
-          toast.warning(`${displayName} disconnected from the call`, {
-            position: "top-right",
-            autoClose: 3000,
-            hideProgressBar: false,
-            closeOnClick: true,
-            pauseOnHover: true,
-            draggable: true,
-          });
-
           const userNameToRemove = data?.userName;
+          showParticipantGoneToastOnce(
+            userNameToRemove || disconnectedUserId,
+            "abrupt",
+            data,
+          );
+
 
           if (userNameToRemove) {
             setUserVideoAudio((prevUserVideoAudio) => {
@@ -1331,20 +1362,11 @@ const Room = ({
           const userNameToRemove = data?.userName;
 
           if (userNameToRemove) {
-            // Show toast notification when guest disconnects
-            const displayName =
-              data?.senderName ||
-              data?.name ||
-              data?.fullName ||
-              userNameToRemove ||
-              "Guest";
-            toast.warning(`${displayName} disconnected from the call`, {
-              position: "top-right",
-              autoClose: 3000,
-              hideProgressBar: false,
-              closeOnClick: true,
-              pauseOnHover: true,
-              draggable: true,
+            showParticipantGoneToastOnce(userNameToRemove, "abrupt", {
+              senderName: data?.senderName,
+              name: data?.name,
+              fullName: data?.fullName,
+              userName: userNameToRemove,
             });
 
             setUserVideoAudio((prevUserVideoAudio) => {

@@ -257,9 +257,26 @@ pin: ${values?.pin || ""}
             justifyContent: "end",
           }}
         >
-          {activeCall?.some(
-            (cid) => String(cid) === String(values._id),
-          ) && (
+          {(() => {
+            const rawStatus =
+              values?.Video_call_details?.status != null
+                ? String(values.Video_call_details.status).toLowerCase()
+                : null;
+            const listReportsEnded =
+              rawStatus != null &&
+              ["ended", "completed", "inactive", "closed", "cancelled"].includes(
+                rawStatus,
+              );
+            const listReportsActive = rawStatus === "active";
+            const inTrackedActiveCalls = activeCall?.some(
+              (cid) => String(cid) === String(values._id),
+            );
+            const showOngoingCallPulse =
+              inTrackedActiveCalls &&
+              !listReportsEnded &&
+              (listReportsActive || rawStatus === null);
+            return showOngoingCallPulse;
+          })() && (
             <p className="blinkingGreen">
               <RadioButtonChecked style={{ color: "#25767b" }} />
             </p>
@@ -510,6 +527,28 @@ const SingleTodo = ({
       socketRef.current.off("call-status-change", updateCalls);
     };
   }, [socketRef.current]);
+
+  // Drop sidebar pulse when group list metadata says the call finished (avoids stale activeCall).
+  useEffect(() => {
+    if (!groupList?.length) return;
+    setActiveCall((prev) => {
+      const next = prev.filter((gid) => {
+        const g = groupList.find((x) => String(x._id) === String(gid));
+        if (!g?.Video_call_details?.status) return true;
+        const st = String(g.Video_call_details.status).toLowerCase();
+        return !["ended", "completed", "inactive", "closed", "cancelled"].includes(
+          st,
+        );
+      });
+      if (
+        next.length === prev.length &&
+        next.every((id, i) => String(id) === String(prev[i]))
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, [groupList]);
 
   // Track which groups have been checked recently to avoid duplicate calls
   const checkedGroupsRef = useRef(new Set());
