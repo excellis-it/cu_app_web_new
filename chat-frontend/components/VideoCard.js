@@ -9,7 +9,7 @@ const VideoCard = ({
   isMuted,
   isScreenShare,
   onFreeze,
-  /** Degrees from producerAppDataRotationToCssDeg; 0 for screen share */
+  /** Degrees from remoteVideoCssRotationDeg / producer appData; 0 for screen share */
   rotationDeg = 0,
 }) => {
   const videoRef = useRef();

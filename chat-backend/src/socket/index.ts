@@ -2153,6 +2153,7 @@ export default function initializeSocket() {
             rotation?: number;
             source?: string;
             portraitLock?: boolean;
+            platform?: string;
           };
         },
         cb: (payload: any) => void,
@@ -2207,6 +2208,9 @@ export default function initializeSocket() {
                     width: appData.width,
                     height: appData.height,
                     rotation: appData.rotation,
+                    source: appData.source,
+                    portraitLock: appData.portraitLock,
+                    platform: appData.platform,
                   }
                 : {}),
             });

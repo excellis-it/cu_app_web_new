@@ -16,7 +16,7 @@ import * as callService from "../utils/callService";
 import {
   computeVideoProducerOrientation,
   localPreviewCssRotationDeg,
-  producerAppDataRotationToCssDeg,
+  remoteVideoCssRotationDeg,
 } from "../utils/videoProducerOrientation";
 import { getEqualCallGridStyle } from "../utils/equalCallGridLayout";
 
@@ -480,6 +480,9 @@ const Room = ({
               rotation: p.rotation,
               width: p.width,
               height: p.height,
+              source: p.source,
+              portraitLock: p.portraitLock,
+              platform: p.platform,
             });
           }
           console.log(
@@ -1936,6 +1939,9 @@ const Room = ({
                 rotation: p.rotation,
                 width: p.width,
                 height: p.height,
+                source: p.source,
+                portraitLock: p.portraitLock,
+                platform: p.platform,
               });
             }
             console.log("[room.js] remotePeers after consuming existing", {
@@ -1979,6 +1985,9 @@ const Room = ({
           width,
           height,
           rotation,
+          source,
+          portraitLock,
+          platform,
         }) => {
           try {
             console.log("[room.js] MS-new-producer received", {
@@ -1988,6 +1997,9 @@ const Room = ({
               width,
               height,
               rotation,
+              source,
+              portraitLock,
+              platform,
             });
             if (String(remoteUserId) === String(userId)) {
               console.log(
@@ -1997,7 +2009,14 @@ const Room = ({
               return;
             }
             if (kind === "video") {
-              setRemoteVideoMeta(remoteUserId, { rotation, width, height });
+              setRemoteVideoMeta(remoteUserId, {
+                rotation,
+                width,
+                height,
+                source,
+                portraitLock,
+                platform,
+              });
             }
             if (consumedProducerIdsRef.current.has(producerId)) {
               console.log(
@@ -2960,8 +2979,8 @@ const Room = ({
                         isScreenShare={isScreenSharing}
                         callType={callType}
                         onFreeze={handleRemoteVideoFreeze}
-                        rotationDeg={producerAppDataRotationToCssDeg(
-                          remoteProducerAppData[remote.userId]?.rotation,
+                        rotationDeg={remoteVideoCssRotationDeg(
+                          remoteProducerAppData[remote.userId],
                         )}
                       />
                     </VideoBox>
