@@ -21,14 +21,14 @@ export function getRecordingGridCellFit(): "cover" | "contain" {
 
 /**
  * Flutter often sends landscape resolution + portraitLock with rotation 0. We pick an FFmpeg
- * `transpose` for that heuristic: 1 = 90° CW, 2 = 90° CCW. Using CW when the bitstream was
- * already rotated the other way yields a 180° (upside-down) composite. Default CCW (`2`).
- * Set RECORDING_FLUTTER_PORTRAIT_TRANSPOSE=1 (or cw) to restore the old behavior.
+ * `transpose` for that heuristic: 1 = 90° CW, 2 = 90° CCW. Using CCW when the bitstream
+ * (e.g. iPhone) is oriented the opposite way yields a 180° (upside-down) composite. Default CW (`1`).
+ * Set RECORDING_FLUTTER_PORTRAIT_TRANSPOSE=2 (or ccw) to use counter-clockwise instead.
  */
 export function getRecordingFlutterPortraitTranspose(): 1 | 2 {
-  const v = String(process.env.RECORDING_FLUTTER_PORTRAIT_TRANSPOSE || "2").toLowerCase();
-  if (v === "1" || v === "cw" || v === "clockwise") return 1;
-  return 2;
+  const v = String(process.env.RECORDING_FLUTTER_PORTRAIT_TRANSPOSE || "1").toLowerCase();
+  if (v === "2" || v === "ccw" || v === "counterclockwise") return 2;
+  return 1;
 }
 
 export const recordingConfig = {
