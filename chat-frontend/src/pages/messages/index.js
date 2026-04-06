@@ -7,7 +7,11 @@ import InfoIcon from "@mui/icons-material/Info";
 import MenuIcon from "@mui/icons-material/Menu";
 import { io } from "socket.io-client";
 import Link from "next/link";
-import { useAppContext } from "../../../appContext/appContext";
+import {
+  useAppContext,
+  clearClientAuthSession,
+  beginVoluntaryLogout,
+} from "../../../appContext/appContext";
 import EditGroupModal from "../../../components/EditGroupModal";
 import SingleTodo from "../../../components/SingleTodo";
 import { useRouter } from "next/router";
@@ -629,16 +633,21 @@ const GroupMessage = () => {
       },
     }).then(async (result) => {
       if (result.isConfirmed) {
-        let logoutUser = localStorage.getItem("user");
-        logoutUser = JSON.parse(logoutUser);
-        const response = await axios.post(`/api/users/logout/web`, {
-          user_id: logoutUser.data.user._id,
-        });
-        localStorage.removeItem("user");
-        document.cookie =
-          "access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;";
+        beginVoluntaryLogout();
+        const raw = localStorage.getItem("user");
+        try {
+          const logoutUser = raw ? JSON.parse(raw) : null;
+          if (logoutUser?.data?.user?._id) {
+            await axios.post(`/api/users/logout/web`, {
+              user_id: logoutUser.data.user._id,
+            });
+          }
+        } catch (e) {
+          console.warn("Logout API failed", e);
+        }
+        clearClientAuthSession(setGlobalUser);
         toast.success("Logged out successfully");
-        router.push("/login");
+        router.replace("/login");
       }
     });
   };

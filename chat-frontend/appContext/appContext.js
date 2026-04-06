@@ -2,14 +2,38 @@
 
 import { createContext, useContext, useEffect, useState } from 'react';
 import axios from 'axios';
+import { useRouter } from 'next/router';
 
 const AppContext = createContext();
+
+/** Set while the user confirms logout so 401s from teardown requests do not add ?session_expired=true. */
+let voluntaryLogoutUntil = 0;
+
+export function beginVoluntaryLogout() {
+  voluntaryLogoutUntil = Date.now() + 8000;
+}
+
+function isVoluntaryLogoutWindow() {
+  return Date.now() < voluntaryLogoutUntil;
+}
 
 export function useAppContext() {
   return useContext(AppContext);
 }
 
+/** Clears local auth storage, in-app user state, and client cookies used by middleware. */
+export function clearClientAuthSession(setGlobalUser) {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem('user');
+  setGlobalUser?.(null);
+  document.cookie =
+    'access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+  document.cookie =
+    'access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+}
+
 export function AppProvider({ children }) {
+  const router = useRouter();
   const [globalUser, setGlobalUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [forgotPassEmail, setforgotPassEmail] = useState()
@@ -88,7 +112,52 @@ export function AppProvider({ children }) {
     };
 
     initApp();
-  }, [])
+  }, []);
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      if (router.pathname === '/login') {
+        return;
+      }
+      console.warn('[App] Unauthorized access detected. Logging out...');
+      const hadStoredUser =
+        typeof localStorage !== 'undefined' &&
+        !!localStorage.getItem('user');
+      const usePlainLogin =
+        isVoluntaryLogoutWindow() || !hadStoredUser;
+      clearClientAuthSession(setGlobalUser);
+      router.replace(
+        usePlainLogin ? '/login' : '/login?session_expired=true'
+      );
+      return new Promise(() => {});
+    };
+
+    const interceptor = axios.interceptors.response.use(
+      (response) => {
+        if (
+          response.data &&
+          response.data.success === false &&
+          (response.data.message === 'Unauthorized' ||
+            response.data.error?.status === 401)
+        ) {
+          return (
+            handleUnauthorized() || Promise.reject(new Error('Unauthorized'))
+          );
+        }
+        return response;
+      },
+      (error) => {
+        if (error.response && error.response.status === 401) {
+          return handleUnauthorized() || Promise.reject(error);
+        }
+        return Promise.reject(error);
+      }
+    );
+
+    return () => {
+      axios.interceptors.response.eject(interceptor);
+    };
+  }, [router, setGlobalUser]);
 
   return (
     <AppContext.Provider value={{ globalUser, setGlobalUser, loading, forgotPassEmail, setforgotPassEmail, forgotPassSlug, setforgotPassSlug, siteSettings, setSiteSettings }}>

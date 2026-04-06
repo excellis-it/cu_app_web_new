@@ -7,6 +7,17 @@ import Link from "next/link";
 import { toast } from "react-toastify";
 import { FaRegEyeSlash, FaRegEye } from "react-icons/fa";
 
+function navigateAfterLogin(router, redirectUrl) {
+  const target =
+    redirectUrl && String(redirectUrl).trim() ? String(redirectUrl).trim() : "/messages";
+  if (target.startsWith("http://") || target.startsWith("https://")) {
+    window.location.href = target;
+    return;
+  }
+  const path = target.startsWith("/") ? target : `/${target}`;
+  router.replace(path);
+}
+
 const Login = () => {
   const router = useRouter();
   const { globalUser, setGlobalUser, loading } = useAppContext();
@@ -98,30 +109,35 @@ const Login = () => {
   }
 
   useEffect(() => {
-    if (window != undefined) {
-      document.title = "Login";
+    if (typeof window === "undefined") return;
+    document.title = "Login";
+    if (!router.isReady || loading || globalUser == null || isLoginSubmitted) {
+      return;
     }
-    // Only auto-redirect if user is already logged in AND this is not a fresh login submission
-    if (!loading && globalUser != null && !isLoginSubmitted) {
-      // Check for redirect in URL query params (from middleware) first
-      const urlRedirect = router.query.redirect;
-      // Then check localStorage (from client-side deep link handling)
-      const savedRedirect = localStorage.getItem('redirectAfterLogin');
+    const urlRedirectRaw = router.query.redirect;
+    const urlRedirect = Array.isArray(urlRedirectRaw)
+      ? urlRedirectRaw[0]
+      : urlRedirectRaw;
+    const savedRedirect = localStorage.getItem("redirectAfterLogin");
+    const redirectUrl = urlRedirect || savedRedirect;
 
-      const redirectUrl = urlRedirect || savedRedirect;
-
-      if (redirectUrl) {
-        console.log('[Login] Auto-redirect found URL:', redirectUrl);
-        // Clear localStorage to prevent reuse
-        if (savedRedirect) {
-          localStorage.removeItem('redirectAfterLogin');
-        }
-        window.location.href = redirectUrl;
-      } else {
-        window.location.href = "/messages";
+    if (redirectUrl) {
+      console.log("[Login] Auto-redirect found URL:", redirectUrl);
+      if (savedRedirect) {
+        localStorage.removeItem("redirectAfterLogin");
       }
+      navigateAfterLogin(router, redirectUrl);
+    } else {
+      navigateAfterLogin(router, "/messages");
     }
-  }, [globalUser, loading, router.query, isLoginSubmitted]);
+  }, [
+    globalUser,
+    loading,
+    router,
+    router.isReady,
+    router.query,
+    isLoginSubmitted,
+  ]);
   const handleInputChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
@@ -143,24 +159,24 @@ const Login = () => {
           document.cookie = `access-token=${token}; path=/; max-age=86400; SameSite=Lax`;
         }
 
-        // Check for redirect URL from router query (middleware) or localStorage (client-side)
-        const urlRedirect = router.query.redirect;
-        const savedRedirect = localStorage.getItem('redirectAfterLogin');
+        const urlRedirectRaw = router.query.redirect;
+        const urlRedirect = Array.isArray(urlRedirectRaw)
+          ? urlRedirectRaw[0]
+          : urlRedirectRaw;
+        const savedRedirect = localStorage.getItem("redirectAfterLogin");
         const redirectUrl = urlRedirect || savedRedirect;
 
-        console.log('[Login] Found stored redirect URL:', redirectUrl);
+        console.log("[Login] Found stored redirect URL:", redirectUrl);
 
-        if (redirectUrl) {
-          // Clear localStorage to prevent reuse
-          if (savedRedirect) {
-            localStorage.removeItem('redirectAfterLogin');
-          }
-          console.log('[Login] Redirecting to saved URL...');
-          window.location.href = redirectUrl;
-        } else {
-          console.log('[Login] No saved URL, going to /messages');
-          window.location.href = "/messages";
+        if (savedRedirect) {
+          localStorage.removeItem("redirectAfterLogin");
         }
+        if (redirectUrl) {
+          console.log("[Login] Redirecting to saved URL...");
+        } else {
+          console.log("[Login] No saved URL, going to /messages");
+        }
+        navigateAfterLogin(router, redirectUrl || "/messages");
       } else {
         setIsLoginSubmitted(false); // Reset flag on login failure
         setLoginLoading(false);

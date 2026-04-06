@@ -2,66 +2,13 @@ import "@/styles/globals.css";
 import "bootstrap/dist/css/bootstrap.min.css";
 import { AppProvider } from "../../appContext/appContext";
 import { ToastContainer } from "react-toastify";
-import axios from "axios";
-import { useRouter } from "next/router";
 import 'react-toastify/dist/ReactToastify.css';
 import { useEffect } from "react";
 import useUserActivity from "../../components/userActivity";
 
 export default function App({ Component, pageProps }) {
 
-  const router = useRouter();
-
   useUserActivity()
-
-  // Global Axios Interceptor for Unauthorized (handles both 401 status and 200 OK with error body)
-  useEffect(() => {
-    const handleUnauthorized = () => {
-      // Avoid redirect loop if already on login page
-      if (router.pathname !== "/login") {
-        console.warn("[App] Unauthorized access detected. Logging out...");
-
-        // Clear storage
-        localStorage.removeItem("user");
-
-        // Clear cookie (use 'access-token' not 'access_token')
-        document.cookie = "access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;";
-
-        // Redirect with full reload to clear all state
-        window.location.href = "/login?session_expired=true";
-
-        // Return a pending promise to halt execution
-        return new Promise(() => { });
-      }
-    };
-
-    const interceptor = axios.interceptors.response.use(
-      (response) => {
-        // Check for 200 OK responses that are actually unauthorized errors
-        // Matches structure: { success: false, message: "Unauthorized", error: { status: 401 } }
-        if (
-          response.data &&
-          response.data.success === false &&
-          (response.data.message === "Unauthorized" || response.data.error?.status === 401)
-        ) {
-          return handleUnauthorized() || Promise.reject(new Error("Unauthorized"));
-        }
-        return response;
-      },
-      (error) => {
-        // Check for actual 401 HTTP status responses
-        if (error.response && error.response.status === 401) {
-          return handleUnauthorized() || Promise.reject(error);
-        }
-        return Promise.reject(error);
-      }
-    );
-
-    return () => {
-      axios.interceptors.response.eject(interceptor);
-    };
-  }, [router]);
-  // Listen for messages from the Service Worker
 
   // Suppress non-critical WebSocket connection errors from browser extensions/dev tools
   useEffect(() => {
