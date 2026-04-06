@@ -591,6 +591,21 @@ export async function restartTransportIce(
   return entry.transport.restartIce();
 }
 
+/** Mediasoup peer userId that owns this producer (for recording manifest / merge). */
+export function getProducerOwnerUserId(
+  roomId: string,
+  producerId: string,
+): string | null {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  for (const [userId, peer] of room.peers.entries()) {
+    if (peer.producers.has(producerId)) {
+      return userId;
+    }
+  }
+  return null;
+}
+
 export function getRoomProducers(
   roomId: string,
   excludeUserId?: string

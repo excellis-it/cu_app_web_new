@@ -6,7 +6,10 @@ import { spawn } from "child_process";
 import fsp from "fs/promises";
 import path from "path";
 
-import { getRecordingGridCellFit } from "../helpers/recordingConfig";
+import {
+  getRecordingFlutterPortraitTranspose,
+  getRecordingGridCellFit,
+} from "../helpers/recordingConfig";
 
 export type MergeRecordingScope = "call" | "screen";
 
@@ -52,6 +55,8 @@ export type MultitrackManifestTrack = {
   delaySec: number;
   /** Seconds after session start when producer closed (optional; else session end) */
   endSec?: number;
+  /** Mediasoup peer id (set at finalize) — used to merge one tile per participant in call recordings */
+  userId?: string;
   width?: number;
   height?: number;
   rotation?: number;
@@ -85,6 +90,71 @@ function computeCanvasSize(
 }
 
 const mergeGridCellFit = getRecordingGridCellFit();
+
+/** One row per unique producer id (keep longest probed track if duplicates). */
+function dedupeVideoTracksByProducerId(
+  tracks: MultitrackManifestTrack[],
+  durationsSec: number[],
+): { tracks: MultitrackManifestTrack[]; durationsSec: number[] } {
+  const best = new Map<
+    string,
+    { t: MultitrackManifestTrack; d: number; order: number }
+  >();
+  for (let i = 0; i < tracks.length; i++) {
+    const t = tracks[i];
+    const d = durationsSec[i] ?? 0;
+    const prev = best.get(t.producerId);
+    if (!prev) {
+      best.set(t.producerId, { t, d, order: i });
+    } else if (d > prev.d) {
+      best.set(t.producerId, { t, d, order: prev.order });
+    }
+  }
+  const rows = [...best.values()].sort((a, b) => a.order - b.order);
+  return {
+    tracks: rows.map((r) => r.t),
+    durationsSec: rows.map((r) => r.d),
+  };
+}
+
+/**
+ * Call recordings: one video cell per participant (longest track wins if the same user had multiple producers).
+ * Without userId (legacy manifests), each producer stays separate so behavior matches older files.
+ */
+function collapseCallVideosToOnePerParticipant(
+  tracks: MultitrackManifestTrack[],
+  durationsSec: number[],
+): { tracks: MultitrackManifestTrack[]; durationsSec: number[] } {
+  const hasAnyUser = tracks.some(
+    (t) => t.userId != null && String(t.userId).length > 0,
+  );
+  if (!hasAnyUser) {
+    return { tracks, durationsSec };
+  }
+  const best = new Map<
+    string,
+    { t: MultitrackManifestTrack; d: number; order: number }
+  >();
+  for (let i = 0; i < tracks.length; i++) {
+    const t = tracks[i];
+    const d = durationsSec[i] ?? 0;
+    const key =
+      t.userId != null && String(t.userId).length > 0
+        ? `u:${String(t.userId)}`
+        : `p:${t.producerId}`;
+    const prev = best.get(key);
+    if (!prev) {
+      best.set(key, { t, d, order: i });
+    } else if (d > prev.d) {
+      best.set(key, { t, d, order: prev.order });
+    }
+  }
+  const rows = [...best.values()].sort((a, b) => a.order - b.order);
+  return {
+    tracks: rows.map((r) => r.t),
+    durationsSec: rows.map((r) => r.d),
+  };
+}
 
 /** Scale each grid cell: "cover" fills (center crop); "contain" letterboxes (matches calmer live preview). */
 function ffScaleCellToBox(
@@ -193,7 +263,7 @@ function buildAlignedMergeVideoBranch(params: {
       chain.push("hflip,vflip");
     }
   } else if (isFlutterPortraitLocked && isLandscape) {
-    chain.push("transpose=1:passthrough=portrait");
+    chain.push(`transpose=${getRecordingFlutterPortraitTranspose()}:passthrough=portrait`);
   } else if (!streamHasVideoOrientationExtmap && !hasExplicitRotation && isPortrait) {
     chain.push("transpose=2:passthrough=portrait");
   }
@@ -224,6 +294,7 @@ function buildGridOverlayChain(params: {
   fps: number;
   totalDurationSec: number;
   applyHalfTurnRotation: boolean;
+  recordingScope: MergeRecordingScope;
 }): { filterParts: string[]; videoOutLabel: string } {
   const {
     videoInputIndices,
@@ -235,10 +306,26 @@ function buildGridOverlayChain(params: {
     fps,
     totalDurationSec,
     applyHalfTurnRotation,
+    recordingScope,
   } = params;
   const n = videoInputIndices.length;
-  const cols = Math.ceil(Math.sqrt(n));
-  const rows = Math.ceil(n / cols);
+  let cols: number;
+  let rows: number;
+  if (recordingScope === "call") {
+    if (n <= 1) {
+      cols = 1;
+      rows = 1;
+    } else if (n === 2) {
+      cols = 2;
+      rows = 1;
+    } else {
+      cols = Math.ceil(Math.sqrt(n));
+      rows = Math.ceil(n / cols);
+    }
+  } else {
+    cols = Math.ceil(Math.sqrt(n));
+    rows = Math.ceil(n / cols);
+  }
   const cellW = Math.floor(targetWidth / cols) & ~1;
   const cellH = Math.floor(targetHeight / rows) & ~1;
 
@@ -306,7 +393,7 @@ export async function mergeMultitrackManifestToMp4(params: {
   const T = Math.max(0.5, manifest.totalDurationSec);
   // Preserve manifest order (multitrack session insertion order). Sorting by producerId
   // previously reordered tiles vs live view (e.g. web left / mobile right became swapped).
-  const videoTracks = manifest.tracks.filter((t) => t.kind === "video");
+  let videoTracks = manifest.tracks.filter((t) => t.kind === "video");
   const audioTracks = manifest.tracks.filter((t) => t.kind === "audio");
 
   for (const t of [...videoTracks, ...audioTracks]) {
@@ -317,9 +404,21 @@ export async function mergeMultitrackManifestToMp4(params: {
     }
   }
 
-  const videoProbedDurationsSec = await Promise.all(
+  let videoProbedDurationsSec = await Promise.all(
     videoTracks.map((t) => probeStreamDurationSec(t.path)),
   );
+
+  ({ tracks: videoTracks, durationsSec: videoProbedDurationsSec } =
+    dedupeVideoTracksByProducerId(videoTracks, videoProbedDurationsSec));
+
+  if (manifest.recordingScope === "call") {
+    const collapsed = collapseCallVideosToOnePerParticipant(
+      videoTracks,
+      videoProbedDurationsSec,
+    );
+    videoTracks = collapsed.tracks;
+    videoProbedDurationsSec = collapsed.durationsSec;
+  }
 
   const capW =
     manifest.recordingScope === "screen" ? screenCanvasWidth : canvasWidth;
@@ -370,6 +469,7 @@ export async function mergeMultitrackManifestToMp4(params: {
       fps,
       totalDurationSec: T,
       applyHalfTurnRotation,
+      recordingScope: manifest.recordingScope,
     });
 
     const fc: string[] = [...filterParts];

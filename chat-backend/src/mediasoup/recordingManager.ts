@@ -5,13 +5,18 @@ import { spawn } from "node:child_process";
 
 import { types } from "mediasoup";
 
-import { 
-  getOrCreateRoom, 
-  getRoomProducers, 
-  startKeyframeTimer, 
-  stopKeyframeTimer 
+import {
+  getOrCreateRoom,
+  getProducerOwnerUserId,
+  getRoomProducers,
+  startKeyframeTimer,
+  stopKeyframeTimer,
 } from "./mediaRoomManager";
-import { getRecordingGridCellFit, recordingConfig } from "../helpers/recordingConfig";
+import {
+  getRecordingFlutterPortraitTranspose,
+  getRecordingGridCellFit,
+  recordingConfig,
+} from "../helpers/recordingConfig";
 import CallRecording from "../db/schemas/callrecording.schema";
 import ScreenRecording from "../db/schemas/screen-recording.schema";
 
@@ -89,6 +94,8 @@ type RecordingSession = {
 
 type MultitrackTrackRecorder = {
   producerId: string;
+  /** Mediasoup peer id (set when track starts) — merge uses this for one tile per participant */
+  userId?: string;
   kind: types.MediaKind;
   transport: types.PlainTransport;
   consumer: types.Consumer;
@@ -779,9 +786,11 @@ function buildOneVideoBranchToCell(
       );
     }
   } else if (isFlutterPortraitLocked && isLandscape) {
-    chain.push("transpose=1:passthrough=portrait");
+    const ft = getRecordingFlutterPortraitTranspose();
+    chain.push(`transpose=${ft}:passthrough=portrait`);
     console.log("[recording:orientation] applied flutter portrait-lock transpose fallback", {
       streamIndex: streamIndexForLog,
+      transpose: ft,
       width: effectiveWidth,
       height: effectiveHeight,
     });
@@ -1692,6 +1701,7 @@ async function addMultitrackRecordingTrack(
 
   const track: MultitrackTrackRecorder = {
     producerId: s.producerId,
+    userId: getProducerOwnerUserId(session.roomId, s.producerId) ?? undefined,
     kind: s.kind,
     transport,
     consumer,
@@ -2126,6 +2136,12 @@ async function finalizeMultitrackRecording(
       source: track.source,
       portraitLock: track.portraitLock,
       hasVideoOrientationExtmap: track.hasVideoOrientationExtmap,
+      userId:
+        track.kind === "video"
+          ? track.userId ??
+            getProducerOwnerUserId(session.roomId, track.producerId) ??
+            undefined
+          : undefined,
     };
     if (track.trackEndedWallMs !== null) {
       entry.endSec = Math.min(
