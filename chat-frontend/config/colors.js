@@ -35,26 +35,14 @@ const colors = {
   warning: '#ffc107',          // Yellow for warnings
   info: '#3085d6',             // Blue for info
   
-  // Gradient
-  gradient: 'linear-gradient(268deg, #1da678 38%, #145c4b 93.09%)',
-  
   // Utility Colors
   white: '#ffffff',
   black: '#000000',
   transparent: 'transparent',
 };
 
-/**
- * Get gradient with custom colors
- * @param {string} startColor - Start color for gradient
- * @param {string} endColor - End color for gradient
- * @param {number} startPercent - Start percentage (default: 38)
- * @param {number} endPercent - End percentage (default: 93.09)
- * @returns {string} CSS gradient string
- */
-const getGradient = (startColor = colors.primary, endColor = colors.secondary, startPercent = 38, endPercent = 93.09) => {
-  return `linear-gradient(268deg, ${startColor} ${startPercent}%, ${endColor} ${endPercent}%)`;
-};
+/** @returns {string} Solid fill color (legacy API; extra args ignored) */
+const getGradient = (startColor = colors.primary) => startColor;
 
 // CommonJS export for Node.js (Tailwind config)
 module.exports = {

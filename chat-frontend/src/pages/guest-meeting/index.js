@@ -724,7 +724,7 @@ export default function GuestMeeting() {
                         onClick={handleStartCall}
                         fullWidth
                         sx={{
-                            background: 'linear-gradient(135deg, #1da678 0%, #ad1e23 100%)',
+                            background: '#1da678',
                             color: "white",
                             padding: "12px",
                             fontSize: "16px",
@@ -760,7 +760,7 @@ const styles = {
         overflow: 'hidden',
     },
     header: {
-        background: 'linear-gradient(135deg, #1da678 0%, #ad1e23 100%)',
+        background: '#1da678',
         padding: '40px 30px',
         textAlign: 'center',
     },
@@ -807,7 +807,7 @@ const styles = {
     joinButton: {
         width: '100%',
         padding: '16px 40px',
-        background: 'linear-gradient(135deg, #1da678 0%, #ad1e23 100%)',
+        background: '#1da678',
         color: '#ffffff',
         border: 'none',
         borderRadius: '6px',

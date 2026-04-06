@@ -638,7 +638,7 @@ const ChatArea = ({
         >
           <div
             style={{
-              background: "linear-gradient(135deg, #3dbf8a 0%, #1da678 100%)",
+              background: "#1da678",
               borderRadius: "24px",
               padding: "1px",
               maxWidth: "630px",
@@ -682,7 +682,7 @@ const ChatArea = ({
                 >
                   <div
                     style={{
-                      background: "linear-gradient(135deg, #1da678, #178f5e)",
+                      background: "#1da678",
                       width: "52px",
                       height: "52px",
                       borderRadius: "16px",
@@ -1098,7 +1098,7 @@ const ChatArea = ({
                   {/* Schedule Section */}
                   <div
                     style={{
-                      background: "linear-gradient(to right, #ffffff, #f8fafc)",
+                      background: "#f8fafc",
                       borderRadius: "20px",
                       padding: "24px",
                       border: "1px solid #edf2f7",

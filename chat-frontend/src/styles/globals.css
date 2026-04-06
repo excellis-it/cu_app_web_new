@@ -38,8 +38,6 @@
   --color-warning: #ffc107;
   --color-info: #3085d6;
 
-  /* Gradient */
-  --gradient-primary: linear-gradient(268deg, var(--primary-color) 38%, var(--secondary-color) 93.09%);
 }
 
 .max-width-90 {
@@ -65,8 +63,7 @@
   left: 0;
   width: 100%;
   height: 300px;
-  /* background: var(--primary-color); */
-  background: linear-gradient(268deg, var(--primary-color) 38%, var(--secondary-color) 93.09%);
+  background: var(--primary-color);
 }
 
 .opening_inner {
@@ -90,7 +87,7 @@
 
 .opening_content a {
   display: block;
-  background: linear-gradient(268deg, var(--primary-color) 38%, var(--secondary-color) 93.09%);
+  background: var(--primary-color);
   color: #cd2c2c;
   padding: 12px;
   border-radius: 0px 30px 30px 30px;
