@@ -65,6 +65,7 @@ type ServerStream = {
   rotation?: number;
   source?: string;
   portraitLock?: boolean;
+  platform?: string;
   hasVideoOrientationExtmap?: boolean;
 };
 
@@ -114,6 +115,7 @@ type MultitrackTrackRecorder = {
   rotation?: number;
   source?: string;
   portraitLock?: boolean;
+  platform?: string;
   hasVideoOrientationExtmap?: boolean;
   keyframeTimer: NodeJS.Timeout | null;
 };
@@ -739,6 +741,7 @@ function buildOneVideoBranchToCell(
         rotation?: number;
         source?: string;
         portraitLock?: boolean;
+        platform?: string;
         hasVideoOrientationExtmap?: boolean;
       }
     | undefined,
@@ -755,6 +758,7 @@ function buildOneVideoBranchToCell(
   const isFlutterPortraitLocked =
     String(dims?.source || "").toLowerCase() === "flutter-app" &&
     dims?.portraitLock === true;
+  const isIOS = String(dims?.platform || "").toLowerCase() === "ios";
   const effectiveWidth =
     dims && normalizedRotation % 180 !== 0 ? dims.height : dims?.width;
   const effectiveHeight =
@@ -787,13 +791,25 @@ function buildOneVideoBranchToCell(
     }
   } else if (isFlutterPortraitLocked && isLandscape) {
     const ft = getRecordingFlutterPortraitTranspose();
-    chain.push(`transpose=${ft}:passthrough=portrait`);
-    console.log("[recording:orientation] applied flutter portrait-lock transpose fallback", {
-      streamIndex: streamIndexForLog,
-      transpose: ft,
-      width: effectiveWidth,
-      height: effectiveHeight,
-    });
+    if (isIOS) {
+      // iOS front camera produces frames flipped 180° relative to Android.
+      chain.push(`hflip,vflip,transpose=${ft}:passthrough=portrait`);
+      console.log("[recording:orientation] iOS flutter portrait-lock: applied 180° flip + transpose", {
+        streamIndex: streamIndexForLog,
+        transpose: ft,
+        platform: dims?.platform,
+        width: effectiveWidth,
+        height: effectiveHeight,
+      });
+    } else {
+      chain.push(`transpose=${ft}:passthrough=portrait`);
+      console.log("[recording:orientation] applied flutter portrait-lock transpose fallback", {
+        streamIndex: streamIndexForLog,
+        transpose: ft,
+        width: effectiveWidth,
+        height: effectiveHeight,
+      });
+    }
   } else if (!streamHasVideoOrientationExtmap && !hasExplicitRotation && isPortrait) {
     chain.push("transpose=2:passthrough=portrait");
   }
@@ -826,6 +842,7 @@ function buildVideoGridFilter(params: {
       rotation?: number;
       source?: string;
       portraitLock?: boolean;
+      platform?: string;
       hasVideoOrientationExtmap?: boolean;
     }
   >;
@@ -896,6 +913,7 @@ function buildFfmpegArgs(params: {
       rotation?: number;
       source?: string;
       portraitLock?: boolean;
+      platform?: string;
       hasVideoOrientationExtmap?: boolean;
     }
   >;
@@ -1720,6 +1738,7 @@ async function addMultitrackRecordingTrack(
     rotation: s.rotation,
     source: s.source,
     portraitLock: s.portraitLock,
+    platform: s.platform,
     hasVideoOrientationExtmap:
       s.kind === "video" ? hasVideoOrientationExtmap(consumer) : false,
     keyframeTimer: null,
@@ -1885,6 +1904,7 @@ async function startMultitrackServerRecording(params: {
       rotation: p.rotation,
       source: p.source,
       portraitLock: p.portraitLock,
+      platform: p.platform,
     })),
     ...audioProducers.map((p) => ({
       producerId: p.producerId,
@@ -2135,6 +2155,7 @@ async function finalizeMultitrackRecording(
       rotation: track.rotation,
       source: track.source,
       portraitLock: track.portraitLock,
+      platform: track.platform,
       hasVideoOrientationExtmap: track.hasVideoOrientationExtmap,
       userId:
         track.kind === "video"
@@ -2320,6 +2341,7 @@ export async function startServerRecording(params: {
       rotation: (s as any).rotation,
       source: (s as any).source,
       portraitLock: (s as any).portraitLock,
+      platform: (s as any).platform,
       hasVideoOrientationExtmap:
         s.kind === "video" ? hasVideoOrientationExtmap(consumer) : false,
     });
@@ -2356,6 +2378,7 @@ export async function startServerRecording(params: {
       rotation?: number;
       source?: string;
       portraitLock?: boolean;
+      platform?: string;
       hasVideoOrientationExtmap?: boolean;
     }
   >();
@@ -2368,6 +2391,7 @@ export async function startServerRecording(params: {
         rotation: stream.rotation,
         source: stream.source,
         portraitLock: stream.portraitLock,
+        platform: stream.platform,
         hasVideoOrientationExtmap: stream.hasVideoOrientationExtmap,
       });
     }

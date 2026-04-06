@@ -127,6 +127,8 @@ export type MultitrackManifestTrack = {
   rotation?: number;
   source?: string;
   portraitLock?: boolean;
+  /** Client platform: 'ios', 'android', 'web', etc. */
+  platform?: string;
   hasVideoOrientationExtmap?: boolean;
 };
 
@@ -291,6 +293,7 @@ function buildVideoOrientationFilters(
   const isFlutterPortraitLocked =
     String(tr.source || "").toLowerCase() === "flutter-app" &&
     tr.portraitLock === true;
+  const isIOS = String(tr.platform || "").toLowerCase() === "ios";
   const effectiveWidth =
     normalizedRotation % 180 !== 0 ? tr.height : tr.width;
   const effectiveHeight =
@@ -322,9 +325,21 @@ function buildVideoOrientationFilters(
       parts.push("hflip,vflip");
     }
   } else if (isFlutterPortraitLocked && isLandscape) {
-    parts.push(
-      `transpose=${getRecordingFlutterPortraitTranspose()}:passthrough=portrait`,
-    );
+    // iOS front camera produces frames flipped 180° relative to Android.
+    // Apply hflip,vflip first, then transpose to portrait orientation.
+    const ft = getRecordingFlutterPortraitTranspose();
+    if (isIOS) {
+      parts.push(`hflip,vflip,transpose=${ft}:passthrough=portrait`);
+      console.log("[recording:merge:orientation] iOS flutter portrait-lock: applied 180° flip + transpose", {
+        streamIndex: streamIndexForLog,
+        transpose: ft,
+        platform: tr.platform,
+        width: effectiveWidth,
+        height: effectiveHeight,
+      });
+    } else {
+      parts.push(`transpose=${ft}:passthrough=portrait`);
+    }
   } else if (
     !streamHasVideoOrientationExtmap &&
     !hasExplicitRotation &&

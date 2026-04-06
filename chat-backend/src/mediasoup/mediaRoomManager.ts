@@ -14,6 +14,7 @@ type ProducerMeta = {
   rotation?: number;
   source?: string;
   portraitLock?: boolean;
+  platform?: string;
 };
 
 export interface PeerState {
@@ -429,6 +430,7 @@ export async function createProducer(
     rotation?: number;
     source?: string;
     portraitLock?: boolean;
+    platform?: string;
   },
 ): Promise<types.Producer | null> {
   const room = rooms.get(roomId);
@@ -468,7 +470,8 @@ export async function createProducer(
       appData.height ||
       appData.rotation !== undefined ||
       appData.source ||
-      appData.portraitLock !== undefined)
+      appData.portraitLock !== undefined ||
+      appData.platform)
   ) {
     peer.producerMeta.set(producer.id, {
       width: appData.width,
@@ -476,6 +479,7 @@ export async function createProducer(
       rotation: appData.rotation,
       source: appData.source,
       portraitLock: appData.portraitLock,
+      platform: appData.platform,
     });
   }
 
@@ -618,6 +622,7 @@ export function getRoomProducers(
   rotation?: number;
   source?: string;
   portraitLock?: boolean;
+  platform?: string;
 }[] {
   const room = rooms.get(roomId);
   if (!room) return [];
@@ -631,6 +636,7 @@ export function getRoomProducers(
     rotation?: number;
     source?: string;
     portraitLock?: boolean;
+    platform?: string;
   }[] = [];
 
   for (const [userId, peer] of room.peers.entries()) {
@@ -647,6 +653,7 @@ export function getRoomProducers(
         rotation: meta?.rotation,
         source: meta?.source,
         portraitLock: meta?.portraitLock,
+        platform: meta?.platform,
       });
     });
   }

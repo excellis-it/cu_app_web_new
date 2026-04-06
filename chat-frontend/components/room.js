@@ -1846,6 +1846,8 @@ const Room = ({
               width: reportedWidth,
               height: reportedHeight,
               rotation: reportedRotation,
+              source: "web",
+              platform: "web",
             },
           });
           console.log("[room.js] video producer created", {
