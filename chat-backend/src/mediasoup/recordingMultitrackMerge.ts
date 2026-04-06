@@ -632,7 +632,6 @@ export async function mergeMultitrackManifestToMp4(params: {
     );
 
     const useDynamicEqualCall =
-      manifest.recordingScope === "call" &&
       videoTracks.length >= 2 &&
       (videoTracks.length > 2 ||
         shouldStaggerCallTwoVideoLayout(videoTracks, T));
