@@ -1445,24 +1445,25 @@
   height: calc(100% - 50px);
 }
 
+/* Gallery grid: rows use minmax(0,1fr) so Tracks fill vertical space like Zoom/Skype */
 .width-peer0 {
   grid-template-columns: 1fr;
-  grid-template-rows: 1fr;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .width-peer1 {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .width-peer2 {
-  grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .width-peer3 {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
 }
 
 .width-peer4,
@@ -1471,8 +1472,8 @@
 .width-peer7,
 .width-peer8,
 .width-peer9 {
-  grid-template-columns: repeat(3, 1fr);
-  grid-auto-rows: 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
 }
 
 .meeting_schedule {

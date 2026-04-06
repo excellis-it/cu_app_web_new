@@ -2654,7 +2654,7 @@ const Room = ({
             $isFloating={isFloating}
           >
             <ReconnectModal visible={showReconnectModal} goToBack={goToBack} />
-            <div className="modal-header">
+            <div className="modal-header" style={{ flexShrink: 0 }}>
               <h5
                 className="modal-title"
                 style={{
@@ -2805,14 +2805,15 @@ const Room = ({
               style={{
                 display: "flex",
                 width: "100%",
-                height: "calc(100% - 50px)",
+                flex: 1,
+                minHeight: 0,
                 position: "relative",
               }}
             >
               <VideoContainer
                 $isFloating={isFloating}
-                className={`width-peer${remotePeers.length > 8 ? "" : remotePeers.length}`}
-                style={{ flex: 1, height: "100%" }}
+                className={`width-peer${Math.min(remotePeers.length, 9)}`}
+                style={{ flex: 1, minHeight: 0, width: "100%" }}
               >
                 <VideoBox>
                   {userVideoAudio["localUser"].video ? (
@@ -2826,6 +2827,7 @@ const Room = ({
                   )}
                   <MyVideo
                     ref={userVideoRef}
+                    $useContain={screenShare}
                     muted
                     autoPlay
                     playsInline
@@ -3068,13 +3070,15 @@ const VideoContainer = styled.div`
 
   gap: ${(props) => (props?.$isFloating ? "8px" : "8px")};
   height: ${(props) =>
-    props?.$isFloating ? "calc(100% - 50px)" : "calc(100% - 100px)"};
+    props?.$isFloating ? "calc(100% - 50px)" : "100%"};
+  box-sizing: border-box;
   overflow: hidden;
   padding: 0 5px;
   min-height: 0;
-  align-content: center;
+  align-content: stretch;
+  align-items: stretch;
+  justify-items: stretch;
   transition: all 0.3s ease-in-out;
-  overflow-y: auto;
 
   ${(props) =>
     !props?.$isFloating &&
@@ -3097,11 +3101,13 @@ const VideoBox = styled.div`
   padding: ${(props) => (props?.$isFloating ? "8px" : "4px")};
   position: relative;
   width: 100%;
-  // aspect-ratio: ${(props) => (props?.isFloating ? "4/3" : "16/9")};
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: stretch;
   overflow: hidden;
 
   /* Main screen share takes full area */
@@ -3141,10 +3147,12 @@ const VideoBox = styled.div`
 `;
 
 const MyVideo = styled.video`
+  flex: 1;
+  min-height: 0;
   width: 100%;
-  height: 100%;
-  object-fit: contain;
   border-radius: 10px;
+  object-fit: ${(p) => (p.$useContain ? "contain" : "cover")};
+  background-color: #000;
 `;
 
 const UserName = styled.div`

@@ -203,6 +203,7 @@ const VideoCard = ({ stream, username, fullName, isMuted, isScreenShare, onFreez
     <VideoContainer>
       <VideoElement
         ref={setVideoRef}
+        $screenShare={isScreenShare}
         autoPlay
         playsInline
         controls={false}
@@ -226,19 +227,20 @@ const VideoContainer = styled.div`
   position: relative;
   width: 100%;
   height: 100%;
+  min-height: 0;
   background-color: #222;
   border-radius: 8px;
   overflow: hidden;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: stretch;
 `;
 
 const VideoElement = styled.video`
   width: 100%;
   height: 100%;
-  object-fit: contain;
-  background-color: #000;
+  min-height: 0;
+  object-fit: ${(p) => (p.$screenShare ? "contain" : "cover")};
   background-color: #000;
   transform: scaleX(1);
 

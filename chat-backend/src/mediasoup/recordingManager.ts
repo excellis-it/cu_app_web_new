@@ -1116,6 +1116,39 @@ function selectRecordingVideoProducers(
   return [pick];
 }
 
+/**
+ * Stable grid order for composite / multitrack merge.
+ * Call recordings: put the admin who started recording (primaryUserId) first so the
+ * MP4 matches their UI (local "You" on the left). Without primaryUserId, fall back to
+ * userId lexicographic order. Multitrack merge previously re-sorted by producerId,
+ * which swapped arbitrary tiles vs live view.
+ */
+function orderVideoProducersForRecording(
+  videoProducers: ReturnType<typeof getRoomProducers>,
+  recordingScope: RecordingScope,
+  primaryUserId?: string,
+): ReturnType<typeof getRoomProducers> {
+  const copy = [...videoProducers];
+  if (recordingScope === "call" && primaryUserId) {
+    const p = String(primaryUserId);
+    copy.sort((a, b) => {
+      const aPrimary = String(a.userId) === p;
+      const bPrimary = String(b.userId) === p;
+      if (aPrimary !== bPrimary) return aPrimary ? -1 : 1;
+      const byUser = String(a.userId).localeCompare(String(b.userId));
+      if (byUser !== 0) return byUser;
+      return String(a.producerId).localeCompare(String(b.producerId));
+    });
+  } else {
+    copy.sort((a, b) => {
+      const byUser = String(a.userId).localeCompare(String(b.userId));
+      if (byUser !== 0) return byUser;
+      return String(a.producerId).localeCompare(String(b.producerId));
+    });
+  }
+  return copy;
+}
+
 export function scheduleRecordingRestart(roomId: string, recordingId: string) {
   if (roomsWithPendingRecordingStop.has(roomId)) return;
   if (recordingStopClaimed.has(recordingId)) return;
@@ -1811,7 +1844,11 @@ async function startMultitrackServerRecording(params: {
   const room = await getOrCreateRoom(roomId);
   const producers = getRoomProducers(roomId);
   const audioProducers = producers.filter((p) => p.kind === "audio");
-  const videoProducers = producers.filter((p) => p.kind === "video");
+  const videoProducers = orderVideoProducersForRecording(
+    producers.filter((p) => p.kind === "video"),
+    recordingScope,
+    primaryUserId,
+  );
   const selectedVideoProducers = selectRecordingVideoProducers(videoProducers, {
     isAudioOnly,
     recordingScope,
@@ -1927,7 +1964,11 @@ async function attachMissingMultitrackTracks(
   const producers = getRoomProducers(roomId);
   const isAudioOnly = !producers.some((p) => p.kind === "video");
   const audioProducers = producers.filter((p) => p.kind === "audio");
-  const videoProducers = producers.filter((p) => p.kind === "video");
+  const videoProducers = orderVideoProducersForRecording(
+    producers.filter((p) => p.kind === "video"),
+    session.recordingScope,
+    session.primaryUserId,
+  );
   const selectedVideo = selectRecordingVideoProducers(videoProducers, {
     isAudioOnly,
     recordingScope: session.recordingScope,
@@ -2175,7 +2216,11 @@ export async function startServerRecording(params: {
   const room = await getOrCreateRoom(roomId);
   const producers = getRoomProducers(roomId);
   const audioProducers = producers.filter((p) => p.kind === "audio");
-  const videoProducers = producers.filter((p) => p.kind === "video");
+  const videoProducers = orderVideoProducersForRecording(
+    producers.filter((p) => p.kind === "video"),
+    recordingScope,
+    primaryUserId,
+  );
 
   const selectedVideoProducers = selectRecordingVideoProducers(videoProducers, {
     isAudioOnly,

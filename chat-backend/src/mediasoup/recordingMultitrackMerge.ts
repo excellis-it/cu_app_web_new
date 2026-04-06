@@ -282,12 +282,10 @@ export async function mergeMultitrackManifestToMp4(params: {
   } = params;
 
   const T = Math.max(0.5, manifest.totalDurationSec);
-  const videoTracks = manifest.tracks
-    .filter((t) => t.kind === "video")
-    .sort((a, b) => a.producerId.localeCompare(b.producerId));
-  const audioTracks = manifest.tracks
-    .filter((t) => t.kind === "audio")
-    .sort((a, b) => a.producerId.localeCompare(b.producerId));
+  // Preserve manifest order (multitrack session insertion order). Sorting by producerId
+  // previously reordered tiles vs live view (e.g. web left / mobile right became swapped).
+  const videoTracks = manifest.tracks.filter((t) => t.kind === "video");
+  const audioTracks = manifest.tracks.filter((t) => t.kind === "audio");
 
   for (const t of [...videoTracks, ...audioTracks]) {
     try {
