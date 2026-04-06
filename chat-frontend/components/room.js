@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { IconButton } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import styled, { keyframes } from "styled-components";
@@ -13,6 +13,10 @@ import { Device } from "mediasoup-client";
 import { createDummyMediaStream } from "../utils/createDummyMediaStream";
 import axios from "axios";
 import * as callService from "../utils/callService";
+import {
+  computeVideoProducerOrientation,
+  localPreviewCssRotationDeg,
+} from "../utils/videoProducerOrientation";
 
 const Room = ({
   socketRef,
@@ -92,6 +96,24 @@ const Room = ({
   const unmountingRef = useRef(false);
   const iceRestartInProgressRef = useRef(false); // true while an ICE restart is pending
   const consumeRtpCapabilitiesRef = useRef(null);
+
+  const [localPreviewRotationDeg, setLocalPreviewRotationDeg] = useState(0);
+
+  const refreshLocalPreviewOrientation = useCallback(() => {
+    if (isAudioOnlyCall) {
+      setLocalPreviewRotationDeg(0);
+      return;
+    }
+    const t = userStream.current?.getVideoTracks?.()?.[0];
+    if (!t || t.readyState === "ended") {
+      setLocalPreviewRotationDeg(0);
+      return;
+    }
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+    const isMobileBrowser = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+    const meta = computeVideoProducerOrientation(t, isMobileBrowser);
+    setLocalPreviewRotationDeg(localPreviewCssRotationDeg(meta));
+  }, [isAudioOnlyCall]);
 
   const filterPreferredCodecs = (caps) => {
     if (!caps || !Array.isArray(caps.codecs)) return caps;
@@ -471,6 +493,26 @@ const Room = ({
     );
   }, [remotePeers]);
 
+  useEffect(() => {
+    refreshLocalPreviewOrientation();
+  }, [stream, refreshLocalPreviewOrientation]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onOrient = () => refreshLocalPreviewOrientation();
+    window.addEventListener("orientationchange", onOrient);
+    const so = typeof screen !== "undefined" ? screen.orientation : null;
+    if (so && typeof so.addEventListener === "function") {
+      so.addEventListener("change", onOrient);
+    }
+    return () => {
+      window.removeEventListener("orientationchange", onOrient);
+      if (so && typeof so.removeEventListener === "function") {
+        so.removeEventListener("change", onOrient);
+      }
+    };
+  }, [refreshLocalPreviewOrientation]);
+
   // Local audio level detector to indicate when user is speaking
   useEffect(() => {
     if (!stream) return;
@@ -761,6 +803,7 @@ const Room = ({
 
       setStream(localStreamRef);
       userStream.current = localStreamRef;
+      refreshLocalPreviewOrientation();
 
       if (userVideoRef.current) {
         userVideoRef.current.srcObject = localStreamRef;
@@ -1698,6 +1741,7 @@ const Room = ({
             videoTrack = fresh;
             // Also update the local preview element
             if (userVideoRef.current) userVideoRef.current.srcObject = local;
+            refreshLocalPreviewOrientation();
             console.log("[room.js] re-acquired ended video track");
           } catch (e) {
             console.warn("[room.js] could not re-acquire video track", e);
@@ -1751,49 +1795,11 @@ const Room = ({
             },
           ];
 
-          const videoSettings = videoTrack.getSettings();
-          // On mobile devices the camera sensor often reports landscape-native
-          // dimensions regardless of phone orientation. We normalize width/height
-          // to portrait for portrait capture so server-side recording can orient
-          // those tracks consistently.
-          let reportedWidth = videoSettings.width;
-          let reportedHeight = videoSettings.height;
-          let reportedRotation = 0;
-
-          // Fallback: some mobile browsers return undefined from getSettings()
-          if (!reportedWidth || !reportedHeight) {
-            try {
-              const constraints = videoTrack.getConstraints();
-              if (!reportedWidth) {
-                const wc = constraints?.width;
-                reportedWidth =
-                  typeof wc === "object" ? wc.exact || wc.ideal || wc.max : wc;
-              }
-              if (!reportedHeight) {
-                const hc = constraints?.height;
-                reportedHeight =
-                  typeof hc === "object" ? hc.exact || hc.ideal || hc.max : hc;
-              }
-            } catch (_) {}
-          }
-          // Last resort default so the backend always has dimensions
-          if (!reportedWidth) reportedWidth = 480;
-          if (!reportedHeight) reportedHeight = 360;
-
-          if (isMobileBrowser && typeof window !== "undefined") {
-            const angle = screen?.orientation?.angle ?? window.orientation ?? 0;
-            const normalizedAngle = ((Number(angle) % 360) + 360) % 360;
-            if (normalizedAngle === 90 || normalizedAngle === 270) {
-              reportedRotation = normalizedAngle;
-            } else if (normalizedAngle === 180) {
-              reportedRotation = 180;
-            }
-            const isPortraitOrientation =
-              normalizedAngle === 0 || normalizedAngle === 180;
-            if (isPortraitOrientation && reportedWidth > reportedHeight) {
-              [reportedWidth, reportedHeight] = [reportedHeight, reportedWidth];
-            }
-          }
+          const {
+            reportedWidth,
+            reportedHeight,
+            reportedRotation,
+          } = computeVideoProducerOrientation(videoTrack, isMobileBrowser);
           videoProducerRef.current = await sendTransport.produce({
             track: videoTrack,
             encodings: videoEncodings,
@@ -2493,6 +2499,7 @@ const Room = ({
           userVideoRef.current.srcObject = userStream.current;
           userVideoRef.current.play().catch(() => {});
         }
+        refreshLocalPreviewOrientation();
 
         // Update mediasoup video producer track if available
         if (videoProducerRef.current && useMediasoup) {
@@ -2824,10 +2831,13 @@ const Room = ({
                     playsInline
                     controls={false}
                     style={{
-                      transform:
-                        screenShare || !hasRealVideo
-                          ? "scaleX(1)"
-                          : "scaleX(-1)",
+                      transform: (() => {
+                        if (screenShare || !hasRealVideo) return "scaleX(1)";
+                        const rot = localPreviewRotationDeg;
+                        if (rot)
+                          return `rotate(${rot}deg) scaleX(-1)`;
+                        return "scaleX(-1)";
+                      })(),
                       cursor: screenShare ? "default" : "pointer",
                       opacity: screenShareLoading ? 0.5 : 1,
                     }}

@@ -121,7 +121,7 @@ export default function App({ Component, pageProps }) {
           !errorMsg.includes('13.63.9.45') &&
           !errorMsg.includes('extalkapi.excellisit.net') ||
           !errorMsg.includes('api.cu-app.us') ||
-          !errorMsg.includes('cu-app.us')
+          !errorMsg.includes('cu-app.us')||message.includes('localhost')
         ) {
           event.preventDefault(); // Suppress the error
           return;
