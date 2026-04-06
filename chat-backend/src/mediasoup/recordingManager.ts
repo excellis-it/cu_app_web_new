@@ -1645,6 +1645,7 @@ async function addMultitrackRecordingTrack(
     rotation?: number;
     source?: string;
     portraitLock?: boolean;
+    platform?: string;
   },
 ): Promise<void> {
   const { recordingId, sdpDir } = session;
@@ -2021,6 +2022,7 @@ async function attachMissingMultitrackTracks(
     rotation?: number;
     source?: string;
     portraitLock?: boolean;
+    platform?: string;
   }> = [
     ...selectedVideo.map((p) => ({
       producerId: p.producerId,
@@ -2030,6 +2032,7 @@ async function attachMissingMultitrackTracks(
       rotation: p.rotation,
       source: p.source,
       portraitLock: p.portraitLock,
+      platform: p.platform,
     })),
     ...audioProducers.map((p) => ({
       producerId: p.producerId,
