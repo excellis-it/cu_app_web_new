@@ -176,6 +176,21 @@ function ffScaleCellToBox(
 
 const STAGGERED_CALL_MIN_GAP_SEC = 1.0;
 
+/**
+ * Equal-share grid for n simultaneous call participants: 1→1×1, 2→2×1, 3→3×1, 4→2×2,
+ * 5+→⌈√n⌉ columns with uniform cell size (last row may have empty cells).
+ */
+function computeCallEqualGridColsRows(n: number): { cols: number; rows: number } {
+  if (!Number.isFinite(n) || n <= 0) return { cols: 1, rows: 1 };
+  if (n === 1) return { cols: 1, rows: 1 };
+  if (n === 2) return { cols: 2, rows: 1 };
+  if (n === 3) return { cols: 3, rows: 1 };
+  if (n === 4) return { cols: 2, rows: 2 };
+  const cols = Math.ceil(Math.sqrt(n));
+  const rows = Math.ceil(n / cols);
+  return { cols, rows };
+}
+
 function computeAlignedVideoTiming(
   tr: MultitrackManifestTrack,
   probedDurationSec: number,
@@ -255,15 +270,14 @@ function buildVideoOrientationFilters(
   return parts.join(",");
 }
 
-/** Call recordings with two videos: first on screen by delay, then second — avoid empty grid cell for the solo segment. */
-function sortCallTwoVideosByDelayAsc(
+/** Call recordings: sort video tracks by join delay (stable) so layout matches join order. */
+function sortCallVideosByDelayAsc(
   tracks: MultitrackManifestTrack[],
   durationsSec: number[],
 ): { tracks: MultitrackManifestTrack[]; durationsSec: number[] } {
-  if (tracks.length !== 2) {
-    return { tracks, durationsSec };
-  }
-  const order = [0, 1].sort((a, b) => {
+  const n = tracks.length;
+  if (n <= 1) return { tracks, durationsSec };
+  const order = [...Array(n).keys()].sort((a, b) => {
     const da = Math.max(0, tracks[a].delaySec);
     const db = Math.max(0, tracks[b].delaySec);
     return da - db || a - b;
@@ -290,10 +304,10 @@ function shouldStaggerCallTwoVideoLayout(
 }
 
 /**
- * two call videos, staggered join: [0, secondDelay) fullscreen first participant; then 2-up.
- * Requires tracks sorted by delay ascending (earlier feed = index 0).
+ * Time-varying equal layout: while k+1 participants are present, split canvas as 100/(k+1) per tile.
+ * Tracks must be sorted by delaySec ascending; segment s uses [d[s], d[s+1]) with d[n]=T.
  */
-function buildStaggeredCallTwoVideoChain(params: {
+function buildDynamicEqualCallLayoutChain(params: {
   videoInputIndices: number[];
   targetWidth: number;
   targetHeight: number;
@@ -316,80 +330,60 @@ function buildStaggeredCallTwoVideoChain(params: {
     applyHalfTurnRotation,
   } = params;
 
-  const idx0 = videoInputIndices[0];
-  const idx1 = videoInputIndices[1];
-  const t0 = tracks[0];
-  const t1 = tracks[1];
-  const p0 = videoProbedDurationsSec[0] ?? 0;
-  const p1 = videoProbedDurationsSec[1] ?? 0;
+  const n = tracks.length;
   const T = Math.max(0.5, totalDurationSec);
-
-  const TW = targetWidth & ~1;
-  const TH = targetHeight & ~1;
-  const cols = 2;
-  const cellW = Math.floor(targetWidth / cols) & ~1;
-  const cellH = Math.floor(targetHeight) & ~1;
-
-  const dHi = Math.max(
-    0,
-    Math.max(t0.delaySec, t1.delaySec),
-  );
-  const soloEndF = dHi.toFixed(3);
-  const TF = T.toFixed(3);
-
-  const timing0 = computeAlignedVideoTiming(t0, p0, T);
-  const window0 = timing0.windowLen.toFixed(4);
-  const orient0 = buildVideoOrientationFilters(t0, 0, applyHalfTurnRotation);
-  const pre0 = [
-    `[${idx0}:v]setpts=PTS-STARTPTS,trim=start=0:duration=${window0},fps=${fps}`,
-    orient0 || null,
-    `split=2[stg0a][stg0b]`,
-  ]
-    .filter(Boolean)
-    .join(",");
-
-  const [scF, crF] = ffScaleCellToBox(TW, TH, mergeGridCellFit);
-  const [scH, crH] = ffScaleCellToBox(cellW, cellH, mergeGridCellFit);
-  const tpad1 = `tpad=start_duration=${timing0.delay.toFixed(4)}:start_mode=add:color=black`;
-  const tpad2 = `tpad=stop_mode=clone:stop_duration=${timing0.tailPad.toFixed(4)}`;
-
+  const d = tracks.map((t) => Math.max(0, t.delaySec));
   const filterParts: string[] = [];
-  filterParts.push(pre0);
-  filterParts.push(`[stg0a]${scF},${crF},${tpad1},${tpad2}[f0]`);
-  filterParts.push(`[stg0b]${scH},${crH},${tpad1},${tpad2}[h0]`);
+  let cur = `${baseInputIdx}:v`;
+  let overlayCounter = 0;
 
-  filterParts.push(
-    buildAlignedMergeVideoBranch({
-      idx: idx1,
-      cellW,
-      cellH,
-      label: "h1",
-      tr: t1,
-      streamIndexForLog: 1,
-      fps,
-      applyHalfTurnRotation,
-      probedDurationSec: p1,
-      masterDurationSec: T,
-    }),
-  );
+  for (let s = 0; s < n; s++) {
+    const segStart = d[s];
+    const segEnd = s + 1 < n ? d[s + 1] : T;
+    if (segEnd - segStart < 0.02) continue;
 
-  const baseLab = `${baseInputIdx}:v`;
-  filterParts.push(
-    `[${baseLab}][f0]overlay=0:0:enable='between(t,0,${soloEndF})':eof_action=pass:repeatlast=1[vsolo]`,
-  );
-  filterParts.push(
-    `[vsolo][h0]overlay=0:0:enable='between(t,${soloEndF},${TF})':eof_action=pass:repeatlast=1[vleft]`,
-  );
-  filterParts.push(
-    `[vleft][h1]overlay=${cellW}:0:enable='between(t,${soloEndF},${TF})':eof_action=pass:repeatlast=1[vstagger]`,
-  );
+    const activeCount = s + 1;
+    const { cols, rows } = computeCallEqualGridColsRows(activeCount);
+    const cellW = Math.floor(targetWidth / cols) & ~1;
+    const cellH = Math.floor(targetHeight / rows) & ~1;
 
-  console.log("[recording:merge:layout] staggered call (solo then 2-up)", {
-    soloFullScreenUntilSec: Number(soloEndF),
+    for (let j = 0; j <= s; j++) {
+      const col = j % cols;
+      const row = Math.floor(j / cols);
+      const x = col * cellW;
+      const y = row * cellH;
+      const label = `dy_s${s}_j${j}`;
+      filterParts.push(
+        buildAlignedMergeVideoBranch({
+          idx: videoInputIndices[j],
+          cellW,
+          cellH,
+          label,
+          tr: tracks[j],
+          streamIndexForLog: j,
+          fps,
+          applyHalfTurnRotation,
+          probedDurationSec: videoProbedDurationsSec[j] ?? 0,
+          masterDurationSec: T,
+        }),
+      );
+      const next = `dy_out${overlayCounter++}`;
+      const ss = segStart.toFixed(3);
+      const se = segEnd.toFixed(3);
+      filterParts.push(
+        `[${cur}][${label}]overlay=x=${x}:y=${y}:enable='between(t,${ss},${se})':eof_action=pass:repeatlast=1[${next}]`,
+      );
+      cur = next;
+    }
+  }
+
+  console.log("[recording:merge:layout] dynamic equal call layout", {
+    participants: n,
+    delaysSec: d.map((v) => Number(v.toFixed(3))),
     masterSec: T,
   });
 
-  return { filterParts, videoOutLabel: "vstagger" };
+  return { filterParts, videoOutLabel: cur };
 }
 
 /**
@@ -489,16 +483,9 @@ function buildGridOverlayChain(params: {
   let cols: number;
   let rows: number;
   if (recordingScope === "call") {
-    if (n <= 1) {
-      cols = 1;
-      rows = 1;
-    } else if (n === 2) {
-      cols = 2;
-      rows = 1;
-    } else {
-      cols = Math.ceil(Math.sqrt(n));
-      rows = Math.ceil(n / cols);
-    }
+    const g = computeCallEqualGridColsRows(n);
+    cols = g.cols;
+    rows = g.rows;
   } else {
     cols = Math.ceil(Math.sqrt(n));
     rows = Math.ceil(n / cols);
@@ -595,8 +582,8 @@ export async function mergeMultitrackManifestToMp4(params: {
     );
     videoTracks = collapsed.tracks;
     videoProbedDurationsSec = collapsed.durationsSec;
-    if (videoTracks.length === 2) {
-      const sorted = sortCallTwoVideosByDelayAsc(
+    if (videoTracks.length >= 2) {
+      const sorted = sortCallVideosByDelayAsc(
         videoTracks,
         videoProbedDurationsSec,
       );
@@ -644,11 +631,13 @@ export async function mergeMultitrackManifestToMp4(params: {
       `color=c=black:s=${targetWidth}x${targetHeight}:d=${T}:r=${fps}`,
     );
 
-    const useStaggeredCall =
+    const useDynamicEqualCall =
       manifest.recordingScope === "call" &&
-      shouldStaggerCallTwoVideoLayout(videoTracks, T);
-    const { filterParts, videoOutLabel } = useStaggeredCall
-      ? buildStaggeredCallTwoVideoChain({
+      videoTracks.length >= 2 &&
+      (videoTracks.length > 2 ||
+        shouldStaggerCallTwoVideoLayout(videoTracks, T));
+    const { filterParts, videoOutLabel } = useDynamicEqualCall
+      ? buildDynamicEqualCallLayoutChain({
           videoInputIndices: videoIndices,
           targetWidth,
           targetHeight,

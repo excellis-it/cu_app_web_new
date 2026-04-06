@@ -18,6 +18,7 @@ import {
   localPreviewCssRotationDeg,
   producerAppDataRotationToCssDeg,
 } from "../utils/videoProducerOrientation";
+import { getEqualCallGridStyle } from "../utils/equalCallGridLayout";
 
 const Room = ({
   socketRef,
@@ -2881,8 +2882,13 @@ const Room = ({
             >
               <VideoContainer
                 $isFloating={isFloating}
-                className={`width-peer${Math.min(remotePeers.length, 9)}`}
-                style={{ flex: 1, minHeight: 0, width: "100%" }}
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  width: "100%",
+                  display: "grid",
+                  ...getEqualCallGridStyle(1 + remotePeers.length),
+                }}
               >
                 <VideoBox>
                   <LocalNameLabel>You</LocalNameLabel>
@@ -3135,8 +3141,6 @@ const ModalContent = styled.div`
 `;
 // grid-template-columns: ${props => props?.isFloating ? '1fr' : 'repeat(auto-fit, minmax(200px, 1fr))'};
 const VideoContainer = styled.div`
-  ${(props) => !props?.$isFloating && `display: grid;`}
-
   gap: ${(props) => (props?.$isFloating ? "8px" : "8px")};
   height: ${(props) =>
     props?.$isFloating ? "calc(100% - 50px)" : "100%"};
@@ -3148,20 +3152,6 @@ const VideoContainer = styled.div`
   align-items: stretch;
   justify-items: stretch;
   transition: all 0.3s ease-in-out;
-
-  ${(props) =>
-    !props?.$isFloating &&
-    `
-    @media (max-width: 768px) {
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 6px;
-    }
-    
-    @media (max-width: 480px) {
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-      gap: 4px;
-    }
-  `}
 `;
 
 const VideoBox = styled.div`
