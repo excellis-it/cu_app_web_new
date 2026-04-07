@@ -258,24 +258,15 @@ pin: ${values?.pin || ""}
           }}
         >
           {(() => {
-            const rawStatus =
-              values?.Video_call_details?.status != null
-                ? String(values.Video_call_details.status).toLowerCase()
-                : null;
-            const listReportsEnded =
-              rawStatus != null &&
-              ["ended", "completed", "inactive", "closed", "cancelled"].includes(
-                rawStatus,
-              );
-            const listReportsActive = rawStatus === "active";
             const inTrackedActiveCalls = activeCall?.some(
               (cid) => String(cid) === String(values._id),
             );
-            const showOngoingCallPulse =
-              inTrackedActiveCalls &&
-              !listReportsEnded &&
-              (listReportsActive || rawStatus === null);
-            return showOngoingCallPulse;
+            // The activeCall array is populated by real-time socket events
+            // and confirmed by the check-active-call API, so it is the
+            // source of truth.  Video_call_details from the group list can
+            // be stale (e.g. showing "ended" from a previous call) and
+            // must not override the real-time signal.
+            return inTrackedActiveCalls;
           })() && (
             <p className="blinkingGreen">
               <RadioButtonChecked style={{ color: "#25767b" }} />

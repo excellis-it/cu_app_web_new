@@ -6,7 +6,7 @@ const siteSettings = new Schema(
     siteLogo: { type: String },
     siteDescription: { type: String },
     siteMainImage: { type: String },
-    primaryColor: { type: String, default: '#f37e20' },
+    primaryColor: { type: String, default: '#1da678' },
     secondaryColor: { type: String, default: '#35a200' },
     accentColor: { type: String, default: '#ff6b6b' },
     backgroundColor: { type: String, default: '#ffffff' },

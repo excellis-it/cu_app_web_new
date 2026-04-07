@@ -172,6 +172,8 @@ const ChatArea = ({
   onBack,
   forceChatView = false,
   isMeetingOverlay = false,
+  pendingCallPreview = null,
+  setPendingCallPreview,
 }) => {
   // Server time state - synced with backend
   const [serverTime, setServerTime] = useState(null);
@@ -476,6 +478,8 @@ const ChatArea = ({
                       user_name={globalUser?.data?.user?.name}
                       group_id={selected?._id}
                       socketRef={socketRef}
+                      pendingCallPreview={pendingCallPreview}
+                      setPendingCallPreview={setPendingCallPreview}
                       onStartCall={(callType, roomId) => {
                         setCallType(callType);
                         setRoomId(roomId);
@@ -1273,6 +1277,8 @@ const ChatArea = ({
                         user_name={globalUser?.data?.user?.name}
                         group_id={selected?._id}
                         socketRef={socketRef}
+                        pendingCallPreview={pendingCallPreview}
+                        setPendingCallPreview={setPendingCallPreview}
                         onStartCall={(callType, roomId) => {
                           setCallType(callType);
                           setRoomId(roomId);

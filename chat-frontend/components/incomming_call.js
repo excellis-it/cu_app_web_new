@@ -181,6 +181,7 @@ const IncomingCallButton = ({ socketRef, user_name, userId, onAcceptIncomingCall
       setErrMsg('Enter Room Name or User Name');
     } else {
       sessionStorage.setItem('user', userName);
+      sessionStorage.setItem("fullName", user_name);
       setErr(false);
       setErrMsg('');
       // Route.push(`/room/${r/oomName}`);

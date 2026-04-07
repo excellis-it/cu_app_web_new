@@ -16,6 +16,8 @@ const CallButton = ({
   user_name,
   onStartCall,
   renderTrigger,
+  pendingCallPreview,
+  setPendingCallPreview,
 }) => {
   const [open, setOpen] = useState(false);
   const [micOn, setMicOn] = useState(true);
@@ -201,15 +203,40 @@ const CallButton = ({
     }
 
     try {
-      setCameraOn((prev) => {
-        if (producers.video?.track) producers.video.track.enabled = !prev;
-        return !prev;
-      });
+      // Stop any leftover video tracks from a previous openModal() call
+      if (previewStreamRef.current) {
+        previewStreamRef.current.getVideoTracks().forEach((t) => t.stop());
+      }
+
+      const devices = await navigator?.mediaDevices?.enumerateDevices();
+      const hasAudio = devices?.some((d) => d?.kind === "audioinput");
+
+      if (hasAudio) {
+        const audioStream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: false,
+        });
+        setStream(audioStream);
+        previewStreamRef.current = audioStream;
+        setProducers({
+          audio: { track: audioStream.getAudioTracks()[0] },
+          video: null,
+        });
+      } else {
+        const dummyStream = getDummyStream();
+        setStream(dummyStream);
+        previewStreamRef.current = dummyStream;
+        setProducers({
+          audio: { track: dummyStream?.getAudioTracks()[0] },
+          video: null,
+        });
+      }
+
+      setCameraOn(false);
       setOpen(true);
       setCallType("audio");
     } catch (error) {
       console.error("Could not access mic", error);
-      alert("Could not access camera or mic");
     }
   };
 
@@ -247,18 +274,21 @@ const CallButton = ({
     }
   };
 
-  // Auto-open preview when navigating from an accepted incoming call
+  // Auto-open preview when an incoming call is accepted.
+  // pendingCallPreview is { roomId, callType } so we know the call type
+  // immediately without waiting for the checkActiveCall API.
   useEffect(() => {
-    const pending = sessionStorage.getItem("pendingCallPreview");
-    if (pending && pending === group_id?.toString()) {
-      sessionStorage.removeItem("pendingCallPreview");
-      // Small delay to let the component fully mount and activeCall state settle
-      const timer = setTimeout(() => {
-        openModal();
-      }, 500);
-      return () => clearTimeout(timer);
+    if (!pendingCallPreview) return;
+    if (pendingCallPreview.roomId !== group_id?.toString()) return;
+    const incomingCallType = pendingCallPreview.callType || "video";
+    // Consume the signal so it fires only once.
+    setPendingCallPreview?.(null);
+    if (incomingCallType === "audio") {
+      opencallModal();
+    } else {
+      openModal();
     }
-  }, [group_id]);
+  }, [pendingCallPreview, group_id]);
 
   useEffect(() => {
     if (open && stream && localVideoRef.current) {
@@ -296,7 +326,13 @@ const CallButton = ({
       // Hand off the pre-call media stream to the Room component so it can reuse
       // the same tracks instead of requesting camera/mic again.
       if (typeof window !== "undefined") {
-        window.exTalkPreCallStream = previewStreamRef.current || stream;
+        const preCallStream = previewStreamRef.current || stream;
+        // For audio calls, stop any lingering video tracks so the Room
+        // component does not accidentally broadcast video.
+        if (callType === "audio" && preCallStream) {
+          preCallStream.getVideoTracks().forEach((t) => t.stop());
+        }
+        window.exTalkPreCallStream = preCallStream;
       }
       onStartCall?.(callType, group_id);
       closeModal();
@@ -396,49 +432,80 @@ const CallButton = ({
             textAlign: "center",
           }}
         >
-          <Paper
-            elevation={3}
-            sx={{
-              width: "100%",
-              height: 250,
-              bgcolor: "#000",
-              position: "relative",
-              borderRadius: "8px",
-              overflow: "hidden",
-            }}
-          >
-            <video
-              ref={localVideoRef}
-              autoPlay
-              muted
-              playsInline
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-                transform: "scaleX(-1)",
+          {callType === "audio" ? (
+            /* ── Audio call preview: mic icon, no camera ── */
+            <Box
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                py: 3,
               }}
-            />
-            {!cameraOn && (
-              <Box
+            >
+              <Avatar
                 sx={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  height: "100%",
-                  bgcolor: "rgba(0,0,0,0.6)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
+                  width: 80,
+                  height: 80,
+                  bgcolor: "#1da678",
+                  mb: 1,
                 }}
               >
-                <Avatar sx={{ width: 80, height: 80, bgcolor: "#555" }}>
-                  <VideocamOffIcon />
-                </Avatar>
+                {micOn ? (
+                  <MicIcon sx={{ fontSize: 40, color: "#fff" }} />
+                ) : (
+                  <MicOffIcon sx={{ fontSize: 40, color: "#fff" }} />
+                )}
+              </Avatar>
+              <Box sx={{ mt: 1, fontSize: 14, color: "#555" }}>
+                Audio Call
               </Box>
-            )}
-          </Paper>
+            </Box>
+          ) : (
+            /* ── Video call preview: camera feed ── */
+            <Paper
+              elevation={3}
+              sx={{
+                width: "100%",
+                height: 250,
+                bgcolor: "#000",
+                position: "relative",
+                borderRadius: "8px",
+                overflow: "hidden",
+              }}
+            >
+              <video
+                ref={localVideoRef}
+                autoPlay
+                muted
+                playsInline
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  transform: "scaleX(-1)",
+                }}
+              />
+              {!cameraOn && (
+                <Box
+                  sx={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    height: "100%",
+                    bgcolor: "rgba(0,0,0,0.6)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Avatar sx={{ width: 80, height: 80, bgcolor: "#555" }}>
+                    <VideocamOffIcon />
+                  </Avatar>
+                </Box>
+              )}
+            </Paper>
+          )}
           <Button
             variant="contained"
             color="primary"

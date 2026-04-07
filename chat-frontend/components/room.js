@@ -83,9 +83,15 @@ const Room = ({
   const [screenRecordingBusy, setScreenRecordingBusy] = useState(false);
   const screenRecordingStartTimeRef = useRef(null);
   const screenRecTimerRef = useRef(null);
+  const isScreenRecordingRef = useRef(false);
 
   // Call recording (server-side via mediasoup — started by group admin)
   const [isCallRecording, setIsCallRecording] = useState(false);
+
+  // Keep ref in sync so event-handler closures always see current value
+  useEffect(() => {
+    isScreenRecordingRef.current = isScreenRecording;
+  }, [isScreenRecording]);
 
   const isAudioOnlyCall = callType === "audio";
 
@@ -125,6 +131,9 @@ const Room = ({
   const recoveryTimerRef = useRef(null);
   const recoveryInProgressRef = useRef(false);
   const unmountingRef = useRef(false);
+  const roomWaitingCallHandler = useRef(null);
+  const roomCallEndedHandler = useRef(null);
+  const roomLeaveHandler = useRef(null);
   const iceRestartInProgressRef = useRef(false); // true while an ICE restart is pending
   const consumeRtpCapabilitiesRef = useRef(null);
 
@@ -664,6 +673,19 @@ const Room = ({
       return undefined;
     }
 
+    // Silent gain node routed to destination ensures the browser actually
+    // processes the audio graph for remote tracks.  Without a path to
+    // ctx.destination some browsers optimise the AnalyserNode away and
+    // getByteTimeDomainData always returns silence for mediasoup consumer tracks.
+    let silentGain;
+    try {
+      silentGain = ctx.createGain();
+      silentGain.gain.value = 0;
+      silentGain.connect(ctx.destination);
+    } catch (e) {
+      console.warn("[room] silent gain node setup failed:", e);
+    }
+
     remotePeers.forEach((peer) => {
       const track = peer.stream?.getAudioTracks?.()?.[0];
       if (!track || track.readyState === "ended") return;
@@ -672,6 +694,9 @@ const Room = ({
         const an = ctx.createAnalyser();
         an.fftSize = 512;
         src.connect(an);
+        // Connect analyser → silentGain → destination so the browser keeps
+        // the audio graph alive and the analyser receives real sample data.
+        if (silentGain) an.connect(silentGain);
         entries.push([String(peer.userId), an]);
         cleanups.push(() => {
           try {
@@ -687,6 +712,7 @@ const Room = ({
     });
 
     if (entries.length === 0) {
+      try { silentGain?.disconnect(); } catch {}
       ctx.close().catch(() => {});
       return undefined;
     }
@@ -716,6 +742,7 @@ const Room = ({
     return () => {
       cancelAnimationFrame(raf);
       cleanups.forEach((fn) => fn());
+      try { silentGain?.disconnect(); } catch {}
       entries.forEach(([uid]) => {
         delete peerAudioRmsRef.current[uid];
       });
@@ -1258,6 +1285,7 @@ const Room = ({
                   }),
                 ),
               );
+              stopRecordingIfEmpty();
             }
           },
         );
@@ -1351,6 +1379,7 @@ const Room = ({
                   }),
                 ),
               );
+              stopRecordingIfEmpty();
             }
           }
         });
@@ -1388,11 +1417,12 @@ const Room = ({
                   }),
                 ),
               );
+              stopRecordingIfEmpty();
             }
           }
         });
 
-        socketRef.current.on("waiting_call", (data) => {
+        roomWaitingCallHandler.current = (data) => {
           setWaitingCalls((prev) => {
             // Avoid duplicates based on roomId or socketId
             if (prev.find((c) => c.roomId === data.roomId)) return prev;
@@ -1404,25 +1434,28 @@ const Room = ({
           toast.info(
             `${callerDisplay} is calling (${data.callType})... Call is waiting.`,
           );
-        });
+        };
+        socketRef.current.on("waiting_call", roomWaitingCallHandler.current);
 
         // Clear waiting calls when a call ends
-        socketRef.current.on("FE-call-ended", (data) => {
+        roomCallEndedHandler.current = (data) => {
           if (data?.roomId) {
             setWaitingCalls((prev) =>
               prev.filter((c) => c.roomId !== data.roomId),
             );
           }
-        });
+        };
+        socketRef.current.on("FE-call-ended", roomCallEndedHandler.current);
 
         // Clear waiting calls when user leaves
-        socketRef.current.on("FE-leave", (data) => {
+        roomLeaveHandler.current = (data) => {
           if (data?.roomId) {
             setWaitingCalls((prev) =>
               prev.filter((c) => c.roomId !== data.roomId),
             );
           }
-        });
+        };
+        socketRef.current.on("FE-leave", roomLeaveHandler.current);
       }
 
       // Join room with device capability info via callService
@@ -2312,9 +2345,9 @@ const Room = ({
       socketRef.current.off("FE-toggle-camera");
       socketRef.current.off("FE-user-disconnected");
       socketRef.current.off("FE-guest-disconnected");
-      socketRef.current.off("waiting_call");
-      socketRef.current.off("FE-call-ended");
-      socketRef.current.off("FE-leave");
+      if (roomWaitingCallHandler.current) socketRef.current.off("waiting_call", roomWaitingCallHandler.current);
+      if (roomCallEndedHandler.current) socketRef.current.off("FE-call-ended", roomCallEndedHandler.current);
+      if (roomLeaveHandler.current) socketRef.current.off("FE-leave", roomLeaveHandler.current);
       socketRef.current.off("MS-new-producer");
       socketRef.current.off("FE-screen-recording-started");
       socketRef.current.off("FE-screen-recording-stopped");
@@ -2661,6 +2694,16 @@ const Room = ({
     e.preventDefault();
     setShowReconnectModal(false);
     const activeCallId = sessionStorage.getItem("activeCallId");
+
+    // Auto-stop call recording if still active when leaving
+    if (isScreenRecordingRef.current && socketRef?.current) {
+      console.log("[room.js][SCREC] local user leaving — auto-stopping call recording");
+      socketRef.current.emit("BE-stop-screen-recording", {
+        roomId: activeCallId || roomId,
+        userId: currentUser,
+      });
+    }
+
     socketRef.current.emit(leaveEvent || "BE-leave-room", {
       roomId: activeCallId,
       leaver: currentUser,
@@ -3087,6 +3130,23 @@ const Room = ({
     // UI update happens when FE-screen-recording-stopped is received
   }
 
+  /** Auto-stop call recording when all remote peers have left. */
+  function stopRecordingIfEmpty() {
+    if (
+      Object.keys(remoteStreamsRef.current).length === 0 &&
+      isScreenRecordingRef.current &&
+      socketRef?.current
+    ) {
+      console.log(
+        "[room.js][SCREC] all participants left — auto-stopping call recording",
+      );
+      socketRef.current.emit("BE-stop-screen-recording", {
+        roomId,
+        userId: currentUser,
+      });
+    }
+  }
+
   // Chat implementation: Toggle sidebar
   const clickChat = () => {
     setShowChat(!showChat);
@@ -3353,7 +3413,7 @@ const Room = ({
                   ) : screenRecordingBusy ? (
                     "Saving..."
                   ) : (
-                    "Screen Rec"
+                    "Call Record"
                   )}
                 </button>
               ) : isScreenRecording ? (

@@ -144,6 +144,7 @@ const GroupMessage = () => {
   const [callMessage, setCallMessage] = useState("");
   const [callRplyMsg, setCallRplyMsg] = useState(null);
   const [showRoom, setShowRoom] = useState(false); // Controls Room visibility
+  const [pendingCallPreview, setPendingCallPreview] = useState(null); // { roomId, callType } — triggers CallButton preview
   const [callType, setCallType] = useState("video"); // Default call type
   const [roomId, setRoomId] = useState(null);
   const [sendLoading, setSendLoading] = useState(false);
@@ -812,7 +813,7 @@ const GroupMessage = () => {
       // Route UI to chat view and mark this as a navigation that should auto-open join preview.
       sessionStorage.setItem("isDeepLinkNavigation", "true");
       // Signal CallButton to auto-open the call preview for this group.
-      sessionStorage.setItem("pendingCallPreview", targetRoomId);
+      setPendingCallPreview({ roomId: targetRoomId, callType: callData?.callType || "video" });
       setShowActivity(true);
       setCallHistoryActivity(false);
       setMeetingsActivity(false);
@@ -3682,7 +3683,7 @@ const GroupMessage = () => {
           confirmButtonText: "Yes, create user",
           cancelButtonText: "No, cancel",
           confirmButtonColor: "#1da678",
-          cancelButtonColor: "#ff8500",
+          cancelButtonColor: "#1da678",
           customClass: {
             confirmButton: "swal-confirm-btn",
             cancelButton: "swal-cancel-btn",
@@ -4228,7 +4229,6 @@ const GroupMessage = () => {
           <div
             className={`chat_wrapper ${isHidden ? "collapsed" : ""}`}
             onReset={handleReset}
-            setIsHidden={setIsHidden}
           >
             <>
               <div
@@ -4492,8 +4492,6 @@ const GroupMessage = () => {
                           }
                           value={searchQuery}
                           onChange={(e) => handleSearch(e)}
-                          onClear={() => handleSearch("")}
-                          clearable
                         />
                       </div>
                       {showActivity && (
@@ -4625,8 +4623,7 @@ const GroupMessage = () => {
                   >
                     <div
                       className={styles.rightsecbody}
-                      style={{ height: "100%" }}
-                    >
+                      style={{ height: "100%" }}>
                       {showRoom && roomId && typeof callType === "string" && (
                         <div style={{ position: "absolute", zIndex: 9999 }}>
                           <Room
@@ -4782,6 +4779,8 @@ const GroupMessage = () => {
                             setCallType={setCallType}
                             setRoomId={setRoomId}
                             setShowRoom={setShowRoom}
+                            pendingCallPreview={pendingCallPreview}
+                            setPendingCallPreview={setPendingCallPreview}
                             setOpenEditModal={setOpenEditModal}
                             setOpenReportModal={setOpenReportModal}
                             setReportType={setReportType}

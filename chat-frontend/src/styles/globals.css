@@ -744,7 +744,7 @@
 }
 
 .sec_btn {
-  background: #ff8500 !important;
+  background: #1da678 !important;
   color: #fff !important;
   padding: 7px 17px;
   border-radius: 6px;
@@ -754,7 +754,7 @@
 }
 
 .sec_btn:hover {
-  background: #ff8500 !important;
+  background: #1da678 !important;
   color: #fff !important;
 }
 
@@ -1598,11 +1598,11 @@
   padding: 6px;
   cursor: pointer;
   border-radius: 5px;
-  background-color: #ff8500;
+  background-color: #1da678;
   color: #fff;
   width: 44px;
   height: 30px;
-  border: 1px solid #ff8500;
+  border: 1px solid #1da678;
 }
 
 .right_page_arrow {
@@ -1613,11 +1613,11 @@
   padding: 6px;
   cursor: pointer;
   border-radius: 5px;
-  background-color: #ff8500;
+  background-color: #1da678;
   color: #fff;
   width: 44px;
   height: 30px;
-  border: 1px solid #ff8500;
+  border: 1px solid #1da678;
 }
 
 .left_page_text {
