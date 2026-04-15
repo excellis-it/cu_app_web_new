@@ -3,6 +3,35 @@ import styles from "../src/styles/planning.module.css";
 import { Menu, MenuItem } from "@mui/material";
 import HlsVideo from "./HlsVideo";
 
+// Renders a tiny video thumbnail showing the first visible frame.
+// Most browsers paint a blank/black frame with `preload="metadata"` alone, so
+// we seek to ~0.1s once metadata is loaded — that forces a frame to render.
+function VideoThumb({ src, height = 60, width = 80 }) {
+  const handleLoadedMetadata = (e) => {
+    const v = e.currentTarget;
+    try {
+      if (v.duration && Number.isFinite(v.duration)) {
+        v.currentTime = Math.min(0.1, v.duration / 2);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+  return (
+    <video
+      src={src}
+      height={height}
+      width={width}
+      muted
+      playsInline
+      preload="metadata"
+      crossOrigin="anonymous"
+      onLoadedMetadata={handleLoadedMetadata}
+      style={{ objectFit: "cover", borderRadius: 4, background: "#000" }}
+    />
+  );
+}
+
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import DoneAllIcon from "@mui/icons-material/DoneAll";
 import DoneIcon from "@mui/icons-material/Done";
@@ -280,16 +309,14 @@ const MegaMessage = ({
                         />
                       ) : message.replyOf.msgType == "video" ||
                         message.replyOf.msgType === "screen_recording" ? (
-                        <video
-                          className={styles.replyOfMyFilebody}
-                          height="100px"
-                          src={resolveUploadsUrl(message.replyOf.msg)}
-                          // controls
-                          // playsInline
-                          // preload="metadata"
-                        >
-                          Your browser does not support the video tag.
-                        </video>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <VideoThumb src={resolveUploadsUrl(message.replyOf.msg)} />
+                          <span style={{ fontSize: 13, color: "#374151" }}>
+                            {message.replyOf.msgType === "screen_recording"
+                              ? "🎥 Call Recording"
+                              : "🎥 Video"}
+                          </span>
+                        </div>
                       ) : message.replyOf.msgType === "doc" ? (
                         <div className="link_message">
                           <a href={message.replyOf.msg} download>
@@ -630,17 +657,16 @@ const MegaMessage = ({
                             className={styles.replyOfMyFilebody}
                             src={message.replyOf.msg}
                           />
-                        ) : message.replyOf.msgType === "video" ? (
-                          <video
-                            className={styles.replyOfMyFilebody}
-                            height="100px"
-                            src={resolveUploadsUrl(message.replyOf.msg)}
-                            // controls
-                            // playsInline
-                            // preload="metadata"
-                          >
-                            Your browser does not support the video tag.
-                          </video>
+                        ) : message.replyOf.msgType === "video" ||
+                          message.replyOf.msgType === "screen_recording" ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <VideoThumb src={resolveUploadsUrl(message.replyOf.msg)} />
+                            <span style={{ fontSize: 13, color: "#374151" }}>
+                              {message.replyOf.msgType === "screen_recording"
+                                ? "🎥 Call Recording"
+                                : "🎥 Video"}
+                            </span>
+                          </div>
                         ) : message.replyOf.msgType === "doc" ? (
                           <div className="link_message">
                             <img
@@ -963,16 +989,14 @@ const MegaMessage = ({
                           />
                         ) : message.replyOf.msgType == "video" ||
                           message.replyOf.msgType === "screen_recording" ? (
-                          <video
-                            className={styles.replyOfMyFilebody}
-                            height="100px"
-                            src={resolveUploadsUrl(message.replyOf.msg)}
-                            // controls
-                            // playsInline
-                            // preload="metadata"
-                          >
-                            Your browser does not support the video tag.
-                          </video>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <VideoThumb src={resolveUploadsUrl(message.replyOf.msg)} />
+                            <span style={{ fontSize: 13, color: "#374151" }}>
+                              {message.replyOf.msgType === "screen_recording"
+                                ? "🎥 Call Recording"
+                                : "🎥 Video"}
+                            </span>
+                          </div>
                         ) : message.replyOf.msgType === "doc" ? (
                           <div className="link_message">
                             <a href={message.replyOf.msg} download>
