@@ -77,6 +77,63 @@ interface UserActivity {
 }
 
 /**
+ * Create the "processing" placeholder chat message for a screen recording and
+ * save its id back on ScreenRecording.uploadSessionId so the processor can
+ * later replace its body with the playback URL (or with "Recording failed" on
+ * error). Called the moment a stop is requested so users see the spinner
+ * immediately, before FFmpeg even finishes its graceful shutdown.
+ */
+async function createScreenRecordingPlaceholder(params: {
+  recordingId: string;
+  groupId: string;
+  startedById: string | null;
+  durationSec: number;
+}): Promise<string | null> {
+  const { recordingId, groupId, startedById, durationSec } = params;
+  if (!startedById) return null;
+  try {
+    const group = await Group.findById(groupId, { currentUsers: 1 }).lean() as any;
+    const recipients = group?.currentUsers || [];
+    if (recipients.length === 0) return null;
+
+    const senderDoc = await USERS.findOne({ _id: startedById }, { name: 1 }).lean() as any;
+    const senderDetailsDoc = await USERS.findOne({ _id: startedById }, { password: 0 }).lean() as any;
+
+    const placeholderMsg = await Message.create({
+      senderId: startedById,
+      groupId,
+      senderName: senderDoc?.name || "Admin",
+      message: "processing",
+      fileName: `Call Recording | ${formatDurationShort(durationSec)}`,
+      messageType: "screen_recording",
+      createdAt: new Date(),
+      allRecipients: recipients,
+    });
+    const placeholderMsgId = placeholderMsg._id.toString();
+
+    const socketPayload = {
+      ...placeholderMsg.toObject(),
+      senderDataAll: senderDetailsDoc,
+    };
+    const receiverIds = recipients
+      .map((id: any) => id?.toString?.() || "")
+      .filter((id: string) => id && id !== startedById);
+    emitMessageToUsers(startedById, receiverIds, socketPayload);
+    emitMessageToRoom(groupId, socketPayload);
+
+    await ScreenRecording.findByIdAndUpdate(recordingId, {
+      $set: { uploadSessionId: placeholderMsgId },
+    });
+    return placeholderMsgId;
+  } catch (err: any) {
+    console.warn("[recording] failed to create placeholder message (non-fatal)", {
+      recordingId, groupId, error: err?.message || String(err),
+    });
+    return null;
+  }
+}
+
+/**
  * Auto-stop any active screen recording for a room when no participants remain
  * in the call. Mirrors the manual-stop flow, including posting a placeholder
  * "processing" chat message so the recording always anchors in chat history
@@ -114,7 +171,13 @@ export async function autoStopRecordingsForRoom(roomId: string, io: Server) {
 
       notifyRecordingStopPending(roomId, recordingId);
 
-      // Stop FFmpeg and post placeholder chat message, then process in background
+      // Post placeholder chat message immediately so users see "Preparing your
+      // recording…" right away, before FFmpeg's graceful shutdown finishes.
+      const placeholderMsgId = await createScreenRecordingPlaceholder({
+        recordingId, groupId: roomId, startedById, durationSec,
+      });
+
+      // Stop FFmpeg and process in background
       (async () => {
         let outputPath = "";
         try {
@@ -127,49 +190,16 @@ export async function autoStopRecordingsForRoom(roomId: string, io: Server) {
           await ScreenRecording.findByIdAndUpdate(recordingId, {
             $set: { status: "failed", errorMessage: e?.message || String(e) },
           });
+          if (placeholderMsgId) {
+            await Message.findByIdAndUpdate(placeholderMsgId, {
+              $set: { message: "Recording failed", fileName: "Call Recording | Failed" },
+            }).catch(() => { /* non-fatal */ });
+          }
           return;
         }
 
-        // Create a placeholder "processing" chat message so the recording is
-        // visible in history immediately. The processor will later update this
-        // message with the playback URL, or mark it failed.
-        let placeholderMsgId: string | null = null;
-        try {
-          const group = await Group.findById(roomId, { currentUsers: 1 }).lean() as any;
-          const recipients = group?.currentUsers || [];
-          if (recipients.length > 0 && startedById) {
-            const senderDoc = await USERS.findOne({ _id: startedById }, { name: 1 }).lean() as any;
-            const senderDetailsDoc = await USERS.findOne({ _id: startedById }, { password: 0 }).lean() as any;
-            const placeholderMsg = await Message.create({
-              senderId: startedById,
-              groupId: roomId,
-              senderName: senderDoc?.name || "Admin",
-              message: "processing",
-              fileName: `Call Recording | ${formatDurationShort(durationSec)}`,
-              messageType: "screen_recording",
-              createdAt: new Date(),
-              allRecipients: recipients,
-            });
-            placeholderMsgId = placeholderMsg._id.toString();
-
-            const socketPayload = {
-              ...placeholderMsg.toObject(),
-              senderDataAll: senderDetailsDoc,
-            };
-            const receiverIds = recipients
-              .map((id: any) => id?.toString?.() || "")
-              .filter((id: string) => id && id !== startedById);
-            emitMessageToUsers(startedById, receiverIds, socketPayload);
-            emitMessageToRoom(roomId, socketPayload);
-          }
-        } catch (placeholderErr: any) {
-          console.warn("[auto-stop] failed to create placeholder message (non-fatal)", {
-            roomId, recordingId, error: placeholderErr?.message || String(placeholderErr),
-          });
-        }
-
         await ScreenRecording.findByIdAndUpdate(recordingId, {
-          $set: { rawFilePath: outputPath, uploadSessionId: placeholderMsgId },
+          $set: { rawFilePath: outputPath },
         });
 
         processScreenRecordingInBackground(recordingId).catch(async (e: any) => {
@@ -1409,6 +1439,16 @@ export default function initializeSocket() {
           stoppedBy: userId.toString(),
         });
 
+        // Post placeholder chat message immediately so users see "Preparing
+        // your recording…" right away, before FFmpeg's graceful shutdown
+        // (which can take 5–15 s) finishes.
+        const placeholderMsgId = await createScreenRecordingPlaceholder({
+          recordingId,
+          groupId: roomId,
+          startedById: userId.toString(),
+          durationSec,
+        });
+
         // Stop FFmpeg and process in background
         (async () => {
           let outputPath = "";
@@ -1424,6 +1464,11 @@ export default function initializeSocket() {
             await ScreenRecording.findByIdAndUpdate(recordingId, {
               $set: { status: "failed", errorMessage: e?.message || String(e) },
             });
+            if (placeholderMsgId) {
+              await Message.findByIdAndUpdate(placeholderMsgId, {
+                $set: { message: "Recording failed", fileName: "Call Recording | Failed" },
+              }).catch(() => { /* non-fatal */ });
+            }
             io.in(roomId).emit("FE-screen-recording-error", {
               roomId,
               message: e?.message || "Failed to stop server-side recording.",
@@ -1436,46 +1481,6 @@ export default function initializeSocket() {
           // Save the output path
           await ScreenRecording.findByIdAndUpdate(recordingId, {
             $set: { rawFilePath: outputPath },
-          });
-
-          // Create a placeholder "processing" message in chat immediately
-          // so users see feedback while transcode + upload runs.
-          const group = await Group.findById(roomId, { currentUsers: 1 }).lean() as any;
-          const senderDoc = await USERS.findOne({ _id: userId }, { name: 1 }).lean() as any;
-          const senderDetailsDoc = await USERS.findOne({ _id: userId }, { password: 0 }).lean() as any;
-          const recipients = group?.currentUsers || [];
-
-          let placeholderMsgId: string | null = null;
-          if (recipients.length > 0) {
-            const placeholderMsg = await Message.create({
-              senderId: userId,
-              groupId: roomId,
-              senderName: senderDoc?.name || "Admin",
-              message: "processing",
-              fileName: `Call Recording | ${formatDurationShort(durationSec)}`,
-              messageType: "screen_recording",
-              createdAt: new Date(),
-              allRecipients: recipients,
-            });
-            placeholderMsgId = placeholderMsg._id.toString();
-
-            const socketPayload = {
-              ...placeholderMsg.toObject(),
-              senderDataAll: senderDetailsDoc,
-            };
-
-            const senderId = userId.toString();
-            const receiverIds = recipients
-              .map((id: any) => id?.toString?.() || "")
-              .filter((id: string) => id && id !== senderId);
-
-            emitMessageToUsers(senderId, receiverIds, socketPayload);
-            emitMessageToRoom(roomId, socketPayload);
-          }
-
-          // Save placeholder message ID so processor can update it
-          await ScreenRecording.findByIdAndUpdate(recordingId, {
-            $set: { rawFilePath: outputPath, uploadSessionId: placeholderMsgId },
           });
 
           console.log("[BE-stop-screen-recording] processing", {

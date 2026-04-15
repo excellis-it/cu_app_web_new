@@ -415,7 +415,7 @@ const MegaMessage = ({
                       <div
                         style={{ fontSize: 13, color: "#666", fontWeight: 500 }}
                       >
-                        Processing screen recording...
+                        Preparing your recording...
                       </div>
                       <div
                         style={{ fontSize: 11, marginTop: 4, color: "#aaa" }}
@@ -776,7 +776,7 @@ const MegaMessage = ({
                             fontWeight: 500,
                           }}
                         >
-                          Processing screen recording...
+                          Preparing your recording...
                         </div>
                         <div
                           style={{ fontSize: 11, marginTop: 4, color: "#aaa" }}
@@ -1099,7 +1099,7 @@ const MegaMessage = ({
                             fontWeight: 500,
                           }}
                         >
-                          Processing call recording...
+                          Preparing your recording...
                         </div>
                         <div
                           style={{ fontSize: 11, marginTop: 4, color: "#aaa" }}
