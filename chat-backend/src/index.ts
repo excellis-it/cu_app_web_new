@@ -12,7 +12,7 @@ import usersRouter from "./routes/users.routes";
 import groupRouter from "./routes/group.routes";
 import adminRouter from "./routes/admin";
 import path, { join } from "path";
-import { cleanupOrphanedCalls } from "./app";
+import { cleanupOrphanedCalls, reconcileStuckRecordingsOnStartup } from "./app";
 import googleRouter from "./routes/google.routes";
 import { startScreenRecordingCleanupJob } from "./helpers/screenRecordingCleanup";
 import { cleanupOrphanedTempFiles } from "./helpers/screenRecordingProcessor";
@@ -40,6 +40,12 @@ setTimeout(() => {
   cleanupOrphanedCalls()
     .then(() => console.log("Call cleanup completed"))
     .catch(err => console.error("Call cleanup failed:", err));
+  // Startup-only: flip recordings stuck in "recording" (from prior crashed
+  // process) to "failed" so new recordings can start. Must NOT be invoked
+  // from per-request paths — would kill live recordings in this process.
+  reconcileStuckRecordingsOnStartup()
+    .then(() => console.log("Stuck recording reconciliation completed"))
+    .catch(err => console.error("Stuck recording reconciliation failed:", err));
 }, 10000);
 
 // Start daily cleanup of expired screen recordings (default: 30 days)

@@ -383,11 +383,31 @@ function shouldStaggerCallTwoVideoLayout(
   );
 }
 
+function computeTimelineBreakpoints(
+  tracks: MultitrackManifestTrack[],
+  totalDurationSec: number,
+): number[] {
+  const T = Math.max(0.5, totalDurationSec);
+  const points = new Set<number>([0, T]);
+  for (const tr of tracks) {
+    const start = Math.max(0, tr.delaySec || 0);
+    const end = Math.min(
+      T,
+      Math.max(start, typeof tr.endSec === "number" ? tr.endSec : T),
+    );
+    points.add(start);
+    points.add(end);
+  }
+  return [...points]
+    .filter((v) => Number.isFinite(v) && v >= 0 && v <= T)
+    .sort((a, b) => a - b);
+}
+
 /**
  * Time-varying equal layout: while k+1 participants are present, split canvas as 100/(k+1) per tile.
  * Tracks must be sorted by delaySec ascending; segment s uses [d[s], d[s+1]) with d[n]=T.
  */
-function buildDynamicEqualCallLayoutChain(params: {
+function buildDynamicTimelineLayoutChain(params: {
   videoInputIndices: number[];
   targetWidth: number;
   targetHeight: number;
@@ -397,6 +417,7 @@ function buildDynamicEqualCallLayoutChain(params: {
   fps: number;
   totalDurationSec: number;
   applyHalfTurnRotation: boolean;
+  recordingScope: MergeRecordingScope;
 }): { filterParts: string[]; videoOutLabel: string } {
   const {
     videoInputIndices,
@@ -408,42 +429,62 @@ function buildDynamicEqualCallLayoutChain(params: {
     fps,
     totalDurationSec,
     applyHalfTurnRotation,
+    recordingScope,
   } = params;
 
   const n = tracks.length;
   const T = Math.max(0.5, totalDurationSec);
-  const d = tracks.map((t) => Math.max(0, t.delaySec));
+  const breakpoints = computeTimelineBreakpoints(tracks, T);
   const filterParts: string[] = [];
   let cur = `${baseInputIdx}:v`;
   let overlayCounter = 0;
 
-  for (let s = 0; s < n; s++) {
-    const segStart = d[s];
-    const segEnd = s + 1 < n ? d[s + 1] : T;
+  for (let s = 0; s < breakpoints.length - 1; s++) {
+    const segStart = breakpoints[s];
+    const segEnd = breakpoints[s + 1];
     if (segEnd - segStart < 0.02) continue;
 
-    const activeCount = s + 1;
-    const { cols, rows } = computeCallEqualGridColsRows(activeCount);
+    const mid = (segStart + segEnd) / 2;
+    const activeIndices: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const tr = tracks[i];
+      const start = Math.max(0, tr.delaySec || 0);
+      const end = Math.min(
+        T,
+        Math.max(
+          start,
+          typeof tr.endSec === "number" ? tr.endSec : T,
+        ),
+      );
+      if (start <= mid && mid < end) activeIndices.push(i);
+    }
+    if (activeIndices.length === 0) continue;
+
+    const { cols, rows } =
+      recordingScope === "call"
+        ? computeCallEqualGridColsRows(activeIndices.length)
+        : computeCallEqualGridColsRows(activeIndices.length);
     const cellW = Math.floor(targetWidth / cols) & ~1;
     const cellH = Math.floor(targetHeight / rows) & ~1;
 
-    for (let j = 0; j <= s; j++) {
+    for (let j = 0; j < activeIndices.length; j++) {
+      const i = activeIndices[j];
       const col = j % cols;
       const row = Math.floor(j / cols);
       const x = col * cellW;
       const y = row * cellH;
-      const label = `dy_s${s}_j${j}`;
+      const label = `dy_s${s}_i${i}`;
       filterParts.push(
         buildAlignedMergeVideoBranch({
-          idx: videoInputIndices[j],
+          idx: videoInputIndices[i],
           cellW,
           cellH,
           label,
-          tr: tracks[j],
-          streamIndexForLog: j,
+          tr: tracks[i],
+          streamIndexForLog: i,
           fps,
           applyHalfTurnRotation,
-          probedDurationSec: videoProbedDurationsSec[j] ?? 0,
+          probedDurationSec: videoProbedDurationsSec[i] ?? 0,
           masterDurationSec: T,
         }),
       );
@@ -457,10 +498,11 @@ function buildDynamicEqualCallLayoutChain(params: {
     }
   }
 
-  console.log("[recording:merge:layout] dynamic equal call layout", {
+  console.log("[recording:merge:layout] dynamic timeline layout", {
     participants: n,
-    delaysSec: d.map((v) => Number(v.toFixed(3))),
+    breakpointsSec: breakpoints.map((v) => Number(v.toFixed(3))),
     masterSec: T,
+    scope: recordingScope,
   });
 
   return { filterParts, videoOutLabel: cur };
@@ -503,10 +545,17 @@ function buildAlignedMergeVideoBranch(params: {
     masterDurationSec,
   );
   const wl = windowLen.toFixed(4);
+  const hasExplicitTrackEnd =
+    typeof tr.endSec === "number" &&
+    Number.isFinite(tr.endSec) &&
+    tr.endSec < masterDurationSec - 0.01;
+  const tailPadFilter = hasExplicitTrackEnd
+    ? `tpad=stop_mode=add:stop_duration=${tailPad.toFixed(4)}:color=black`
+    : `tpad=stop_mode=clone:stop_duration=${tailPad.toFixed(4)}`;
 
   if (tr.kind !== "video") {
     const [sc, cr] = ffScaleCellToBox(cellW, cellH, mergeGridCellFit);
-    return `[${idx}:v]setpts=PTS-STARTPTS,trim=start=0:duration=${wl},fps=${fps},${sc},${cr},tpad=start_duration=${delay.toFixed(4)}:start_mode=add:color=black,tpad=stop_mode=clone:stop_duration=${tailPad.toFixed(4)}[${label}]`;
+    return `[${idx}:v]setpts=PTS-STARTPTS,trim=start=0:duration=${wl},fps=${fps},${sc},${cr},tpad=start_duration=${delay.toFixed(4)}:start_mode=add:color=black,${tailPadFilter}[${label}]`;
   }
 
   const orient = buildVideoOrientationFilters(
@@ -519,7 +568,7 @@ function buildAlignedMergeVideoBranch(params: {
     orient,
     ...ffScaleCellToBox(cellW, cellH, mergeGridCellFit),
     `tpad=start_duration=${delay.toFixed(4)}:start_mode=add:color=black`,
-    `tpad=stop_mode=clone:stop_duration=${tailPad.toFixed(4)}`,
+    tailPadFilter,
   ]
     .filter(Boolean)
     .join(",");
@@ -746,12 +795,20 @@ export async function mergeMultitrackManifestToMp4(params: {
       `color=c=black:s=${targetWidth}x${targetHeight}:d=${T}:r=${fps}`,
     );
 
-    const useDynamicEqualCall =
+    const hasTrackEndTransitions = videoTracks.some(
+      (t) =>
+        typeof t.endSec === "number" &&
+        Number.isFinite(t.endSec) &&
+        t.endSec < T - 0.05,
+    );
+    const hasJoinTransitions = videoTracks.some((t) => (t.delaySec || 0) > 0.05);
+    const useDynamicTimelineLayout =
       videoTracks.length >= 2 &&
-      (videoTracks.length > 2 ||
+      (hasTrackEndTransitions ||
+        hasJoinTransitions ||
         shouldStaggerCallTwoVideoLayout(videoTracks, T));
-    const { filterParts, videoOutLabel } = useDynamicEqualCall
-      ? buildDynamicEqualCallLayoutChain({
+    const { filterParts, videoOutLabel } = useDynamicTimelineLayout
+      ? buildDynamicTimelineLayoutChain({
           videoInputIndices: videoIndices,
           targetWidth,
           targetHeight,
@@ -761,6 +818,7 @@ export async function mergeMultitrackManifestToMp4(params: {
           fps,
           totalDurationSec: T,
           applyHalfTurnRotation,
+          recordingScope: manifest.recordingScope,
         })
       : buildGridOverlayChain({
           videoInputIndices: videoIndices,

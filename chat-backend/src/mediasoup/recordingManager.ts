@@ -2,6 +2,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import dgram from "node:dgram";
 
 import { types } from "mediasoup";
 
@@ -17,7 +18,6 @@ import {
   getRecordingGridCellFit,
   recordingConfig,
 } from "../helpers/recordingConfig";
-import CallRecording from "../db/schemas/callrecording.schema";
 import ScreenRecording from "../db/schemas/screen-recording.schema";
 
 import {
@@ -246,26 +246,65 @@ function ensureDir(dirPath: string) {
   if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true });
 }
 
-function allocatePortPair(): { rtpPort: number; rtcpPort: number } {
+/** Check whether a UDP port is actually bindable on the host. Returns true if free. */
+function probeUdpPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = dgram.createSocket("udp4");
+    const cleanup = (result: boolean) => {
+      try { sock.close(); } catch { /* ignore */ }
+      resolve(result);
+    };
+    sock.once("error", () => cleanup(false));
+    try {
+      sock.bind({ address: "0.0.0.0", port, exclusive: true }, () => cleanup(true));
+    } catch {
+      cleanup(false);
+    }
+  });
+}
+
+async function allocatePortPair(): Promise<{ rtpPort: number; rtcpPort: number }> {
   let rtpPort = nextPort;
   let scanned = 0;
   const totalRange = rtpMaxPort - rtpBasePort;
 
-  while (usedPorts.has(rtpPort) || usedPorts.has(rtpPort + 1)) {
+  // Walk the range in steps of 2 (RTP + RTCP). Skip pairs that are tracked
+  // in-memory OR that the OS refuses to bind (another process still holds them,
+  // e.g. a previous FFmpeg that is still releasing its socket on Windows).
+  while (scanned < totalRange) {
+    if (!usedPorts.has(rtpPort) && !usedPorts.has(rtpPort + 1)) {
+      // eslint-disable-next-line no-await-in-loop
+      const [rtpFree, rtcpFree] = await Promise.all([
+        probeUdpPortFree(rtpPort),
+        probeUdpPortFree(rtpPort + 1),
+      ]);
+      if (rtpFree && rtcpFree) {
+        const rtcpPort = rtpPort + 1;
+        usedPorts.add(rtpPort);
+        usedPorts.add(rtcpPort);
+        nextPort = rtcpPort + 1 >= rtpMaxPort ? rtpBasePort : rtcpPort + 1;
+        return { rtpPort, rtcpPort };
+      }
+      // OS says port is held — blacklist it in-memory so we skip immediately
+      // next time around. It will be retried after the cool-down release.
+      console.warn("[recording:server] skipping port pair: OS bind failed", {
+        rtpPort,
+        rtpFree,
+        rtcpFree,
+      });
+      usedPorts.add(rtpPort);
+      usedPorts.add(rtpPort + 1);
+      setTimeout(() => {
+        usedPorts.delete(rtpPort);
+        usedPorts.delete(rtpPort + 1);
+      }, 10000);
+    }
     rtpPort += 2;
     if (rtpPort >= rtpMaxPort) rtpPort = rtpBasePort;
     scanned += 2;
-    if (scanned >= totalRange) {
-      throw new Error("RTP port pool exhausted — no free port pairs available.");
-    }
   }
 
-  const rtcpPort = rtpPort + 1;
-  usedPorts.add(rtpPort);
-  usedPorts.add(rtcpPort);
-  nextPort = rtcpPort + 1 >= rtpMaxPort ? rtpBasePort : rtcpPort + 1;
-
-  return { rtpPort, rtcpPort };
+  throw new Error("RTP port pool exhausted — no free port pairs available.");
 }
 
 function releasePorts(ports: number[]) {
@@ -1272,16 +1311,11 @@ export async function recoverStaleRecordings() {
   const cutoff = new Date(Date.now() - STALE_THRESHOLD_MS);
 
   try {
-    const staleCallRecordings = await CallRecording.updateMany(
-      { status: { $in: ["recording", "processing"] }, updatedAt: { $lt: cutoff } },
-      { $set: { status: "failed", errorMessage: "Server restarted — recording session was orphaned." } },
-    );
     const staleScreenRecordings = await ScreenRecording.updateMany(
       { status: { $in: ["recording", "processing"] }, updatedAt: { $lt: cutoff } },
       { $set: { status: "failed", errorMessage: "Server restarted — recording session was orphaned." } },
     );
-    const totalRecovered = (staleCallRecordings.modifiedCount || 0) + (staleScreenRecordings.modifiedCount || 0);
-    if (totalRecovered > 0) {
+    if ((staleScreenRecordings.modifiedCount || 0) > 0) {
       console.log("[recording:recovery] marked stale recordings as failed on startup");
     }
   } catch (err: any) {
@@ -1318,17 +1352,11 @@ export async function restartServerRecording(params: {
   try {
     // If a stop flow has already switched DB status away from "recording",
     // do not interrupt the active session here. Let stopServerRecording own teardown.
-    const [callRecBefore, screenRecBefore] = await Promise.all([
-      CallRecording.findById(recordingId, { status: 1 }).lean() as any,
-      ScreenRecording.findById(recordingId, { status: 1 }).lean() as any,
-    ]);
-    const shouldRestartNow =
-      callRecBefore?.status === "recording" || screenRecBefore?.status === "recording";
-    if (!shouldRestartNow) {
+    const screenRecBefore = await ScreenRecording.findById(recordingId, { status: 1 }).lean() as any;
+    if (screenRecBefore?.status !== "recording") {
       console.log("[recording:restart] skip restart because recording is not active", {
         roomId,
         recordingId,
-        callStatus: callRecBefore?.status,
         screenStatus: screenRecBefore?.status,
       });
       return;
@@ -1415,17 +1443,11 @@ export async function restartServerRecording(params: {
 
     // If the recording was stopped while restart was in-flight, do not spin up
     // a new segment.
-    const [callRec, screenRec] = await Promise.all([
-      CallRecording.findById(recordingId, { status: 1 }).lean() as any,
-      ScreenRecording.findById(recordingId, { status: 1 }).lean() as any,
-    ]);
-    const stillRecordingActive =
-      callRec?.status === "recording" || screenRec?.status === "recording";
-    if (!stillRecordingActive) {
+    const screenRec = await ScreenRecording.findById(recordingId, { status: 1 }).lean() as any;
+    if (screenRec?.status !== "recording") {
       console.log("[recording:restart] skip restart because recording is no longer active", {
         roomId,
         recordingId,
-        callStatus: callRec?.status,
         screenStatus: screenRec?.status,
       });
       return;
@@ -1632,6 +1654,11 @@ async function onMultitrackProducerClosed(
     /* ignore */
   }
   releasePorts([track.rtpPort, track.rtcpPort]);
+
+  // Participant leave / reconnect can rotate producer ids for remaining peers.
+  // Proactively re-scan the room so newly created tracks are attached even if
+  // the corresponding MS-produce event was missed during transition.
+  scheduleMultitrackProducerAttach(session.roomId, recordingId);
 }
 
 async function addMultitrackRecordingTrack(
@@ -1651,7 +1678,7 @@ async function addMultitrackRecordingTrack(
   const { recordingId, sdpDir } = session;
   if (session.tracks.has(s.producerId)) return;
 
-  const { rtpPort, rtcpPort } = allocatePortPair();
+  const { rtpPort, rtcpPort } = await allocatePortPair();
   const sdpIp = getLocalIp();
   const transport = await room.router.createPlainTransport({
     listenIp: sdpIp,
@@ -2300,7 +2327,7 @@ export async function startServerRecording(params: {
 
   for (let i = 0; i < selectedStreams.length; i++) {
     const s = selectedStreams[i];
-    const { rtpPort, rtcpPort } = allocatePortPair();
+    const { rtpPort, rtcpPort } = await allocatePortPair();
     const transport = await room.router.createPlainTransport({ listenIp: sdpIp, rtcpMux: false, comedia: false });
     await transport.connect({ ip: sdpIp, port: rtpPort, rtcpPort });
     const consumer = await transport.consume({ producerId: s.producerId, rtpCapabilities: room.router.rtpCapabilities, paused: true });

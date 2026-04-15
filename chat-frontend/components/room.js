@@ -85,9 +85,6 @@ const Room = ({
   const screenRecTimerRef = useRef(null);
   const isScreenRecordingRef = useRef(false);
 
-  // Call recording (server-side via mediasoup — started by group admin)
-  const [isCallRecording, setIsCallRecording] = useState(false);
-
   // Keep ref in sync so event-handler closures always see current value
   useEffect(() => {
     isScreenRecordingRef.current = isScreenRecording;
@@ -1188,25 +1185,6 @@ const Room = ({
           setScreenRecordingBusy(false);
         });
 
-        // Call recording socket events (server-side recording started by group admin)
-        socketRef.current.on("FE-recording-started", (payload) => {
-          try {
-            console.log("[room.js] FE-recording-started", payload);
-            setIsCallRecording(true);
-          } catch (e) {
-            console.error("[room.js] FE-recording-started handler error", e);
-          }
-        });
-
-        socketRef.current.on("FE-recording-stopped", (payload) => {
-          try {
-            console.log("[room.js] FE-recording-stopped", payload);
-            setIsCallRecording(false);
-          } catch (e) {
-            console.error("[room.js] FE-recording-stopped handler error", e);
-          }
-        });
-
         const LEAVE_TOAST_DEDUP_MS = 7000;
         const toastOptsParticipantGone = {
           position: "top-right",
@@ -1479,20 +1457,6 @@ const Room = ({
           toast.error(ack.error);
         } else {
           console.log("Joined room successfully:", ack);
-
-          // Check if a call recording is already ongoing (late joiner support)
-          try {
-            const token = globalUser?.data?.token;
-            const res = await axios.get("/api/groups/recordings/ongoing", {
-              headers: { "access-token": token },
-              params: { groupId: roomId },
-            });
-            if (res?.data?.data?.isRecording) {
-              setIsCallRecording(true);
-            }
-          } catch (e) {
-            console.error("[room.js] Failed to check ongoing recording", e);
-          }
         }
       } catch (err) {
         console.error("Error joining room:", err);
@@ -2352,8 +2316,6 @@ const Room = ({
       socketRef.current.off("FE-screen-recording-started");
       socketRef.current.off("FE-screen-recording-stopped");
       socketRef.current.off("FE-screen-recording-error");
-      socketRef.current.off("FE-recording-started");
-      socketRef.current.off("FE-recording-stopped");
       window.removeEventListener("popstate", goToBack);
       // Reset the flag when leaving the room
       hasReceivedInitialUsers.current = false;
@@ -2695,14 +2657,10 @@ const Room = ({
     setShowReconnectModal(false);
     const activeCallId = sessionStorage.getItem("activeCallId");
 
-    // Auto-stop call recording if still active when leaving
-    if (isScreenRecordingRef.current && socketRef?.current) {
-      console.log("[room.js][SCREC] local user leaving — auto-stopping call recording");
-      socketRef.current.emit("BE-stop-screen-recording", {
-        roomId: activeCallId || roomId,
-        userId: currentUser,
-      });
-    }
+    // Recording auto-stop is handled by the backend when the LAST participant
+    // leaves (autoStopRecordingsForRoom). Do not emit stop here, because this
+    // code path fires for every leaver, which would stop recording even when
+    // other participants are still in the call.
 
     socketRef.current.emit(leaveEvent || "BE-leave-room", {
       roomId: activeCallId,
@@ -3130,22 +3088,12 @@ const Room = ({
     // UI update happens when FE-screen-recording-stopped is received
   }
 
-  /** Auto-stop call recording when all remote peers have left. */
-  function stopRecordingIfEmpty() {
-    if (
-      Object.keys(remoteStreamsRef.current).length === 0 &&
-      isScreenRecordingRef.current &&
-      socketRef?.current
-    ) {
-      console.log(
-        "[room.js][SCREC] all participants left — auto-stopping call recording",
-      );
-      socketRef.current.emit("BE-stop-screen-recording", {
-        roomId,
-        userId: currentUser,
-      });
-    }
-  }
+  // Recording auto-stop is handled server-side by autoStopRecordingsForRoom
+  // when the last participant leaves. A client-side check based on
+  // remoteStreamsRef would incorrectly stop the recording whenever the
+  // recorder is left alone in the call, even though they are still a valid
+  // participant and the session is still live.
+  function stopRecordingIfEmpty() {}
 
   // Chat implementation: Toggle sidebar
   const clickChat = () => {
@@ -3367,8 +3315,8 @@ const Room = ({
               >
                 -
               </button>
-              {/* Screen Recording button - SuperAdmin / admin role only (hidden during call recording) */}
-              {canScreenRecord && !isCallRecording ? (
+              {/* Screen Recording button - SuperAdmin / admin role only */}
+              {canScreenRecord ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -3441,32 +3389,6 @@ const Room = ({
                   REC
                 </span>
               ) : null}
-              {/* Call recording indicator (visible to all participants) */}
-              {isCallRecording && (
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    marginRight: "8px",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    color: "#ef4444",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: "50%",
-                      backgroundColor: "#ef4444",
-                      animation: "blink 1s infinite",
-                    }}
-                  />
-                  REC
-                </span>
-              )}
             </div>
             <div
               style={{

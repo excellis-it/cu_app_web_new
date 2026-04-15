@@ -9,7 +9,6 @@ const activeChats: any = {};
 import sendWebPush from "../helpers/webpush";
 import Group from "../db/schemas/group.schema";
 import videoCall from "../db/schemas/videocall.schema";
-import CallRecording from "../db/schemas/callrecording.schema";
 import ScreenRecording from "../db/schemas/screen-recording.schema";
 import GuestMeeting from "../db/schemas/guest-meeting.schema";
 import mongoose from "mongoose";
@@ -42,7 +41,6 @@ import {
   notifyRoomRecordingStopPending,
   clearRoomRecordingStopPending,
 } from "../mediasoup/recordingManager";
-import { processRecordingInBackground } from "../helpers/recordingProcessor";
 import { processScreenRecordingInBackground } from "../helpers/screenRecordingProcessor";
 import type { types as MediasoupTypes } from "mediasoup";
 
@@ -78,72 +76,14 @@ interface UserActivity {
 }
 
 /**
- * Auto-stop any active recordings (CallRecording + ScreenRecording) for a room
- * when no participants remain in the call.
+ * Auto-stop any active screen recording for a room when no participants remain
+ * in the call. Mirrors the manual-stop flow, including posting a placeholder
+ * "processing" chat message so the recording always anchors in chat history
+ * (even if the background transcode fails partway through, the placeholder
+ * stays visible and can be updated).
  */
-async function autoStopRecordingsForRoom(roomId: string, io: Server) {
+export async function autoStopRecordingsForRoom(roomId: string, io: Server) {
   try {
-    // 1. Check for active call recording
-    const activeCallRec = await CallRecording.findOne({
-      groupId: roomId,
-      status: "recording",
-    }).lean() as any;
-
-    if (activeCallRec?._id) {
-      notifyRoomRecordingStopPending(roomId);
-      const recordingIdStr = activeCallRec._id.toString();
-      const createdAt = activeCallRec.createdAt ? new Date(activeCallRec.createdAt) : null;
-      const durationSec = createdAt
-        ? Math.max(0, Math.round((Date.now() - createdAt.getTime()) / 1000))
-        : 0;
-
-      await CallRecording.findByIdAndUpdate(recordingIdStr, {
-        $set: { status: "processing", durationSec },
-      });
-
-      io.to(roomId).emit("FE-recording-stopped", {
-        roomId,
-        recordingId: activeCallRec._id,
-        startedBy: activeCallRec.startedBy?.toString?.() || null,
-        stoppedBy: "system",
-        stoppedAt: new Date(),
-        status: "processing",
-        reason: "auto-stopped: no participants remaining",
-      });
-
-      console.log("[auto-stop] stopping call recording", { roomId, recordingId: recordingIdStr });
-
-      notifyRecordingStopPending(roomId, recordingIdStr);
-
-      // Stop FFmpeg and process in background
-      (async () => {
-        let outputPath = "";
-        try {
-          const stopped = await stopServerRecording(recordingIdStr);
-          outputPath = stopped.outputPath;
-        } catch (e: any) {
-          console.error("[auto-stop] failed to stop call recording ffmpeg", {
-            roomId, recordingId: recordingIdStr, error: e?.message || String(e),
-          });
-          await CallRecording.findByIdAndUpdate(recordingIdStr, {
-            $set: { status: "failed", errorMessage: e?.message || String(e) },
-          });
-          return;
-        }
-
-        await CallRecording.findByIdAndUpdate(recordingIdStr, {
-          $set: { status: "processing", rawFilePath: outputPath },
-        });
-
-        processRecordingInBackground(recordingIdStr).catch((e: any) => {
-          console.error("[auto-stop] processRecordingInBackground failed", {
-            roomId, recordingId: recordingIdStr, error: e?.message || String(e),
-          });
-        });
-      })();
-    }
-
-    // 2. Check for active screen recording
     const activeScreenRec = await ScreenRecording.findOne({
       groupId: roomId,
       status: "recording",
@@ -152,6 +92,7 @@ async function autoStopRecordingsForRoom(roomId: string, io: Server) {
     if (activeScreenRec?._id) {
       notifyRoomRecordingStopPending(roomId);
       const recordingId = activeScreenRec._id.toString();
+      const startedById = activeScreenRec.startedBy?.toString?.() || null;
       const createdAt = activeScreenRec.createdAt ? new Date(activeScreenRec.createdAt) : null;
       const durationSec = createdAt
         ? Math.max(0, Math.round((Date.now() - createdAt.getTime()) / 1000))
@@ -172,7 +113,7 @@ async function autoStopRecordingsForRoom(roomId: string, io: Server) {
 
       notifyRecordingStopPending(roomId, recordingId);
 
-      // Stop FFmpeg and process in background
+      // Stop FFmpeg and post placeholder chat message, then process in background
       (async () => {
         let outputPath = "";
         try {
@@ -188,20 +129,107 @@ async function autoStopRecordingsForRoom(roomId: string, io: Server) {
           return;
         }
 
+        // Create a placeholder "processing" chat message so the recording is
+        // visible in history immediately. The processor will later update this
+        // message with the playback URL, or mark it failed.
+        let placeholderMsgId: string | null = null;
+        try {
+          const group = await Group.findById(roomId, { currentUsers: 1 }).lean() as any;
+          const recipients = group?.currentUsers || [];
+          if (recipients.length > 0 && startedById) {
+            const senderDoc = await USERS.findOne({ _id: startedById }, { name: 1 }).lean() as any;
+            const senderDetailsDoc = await USERS.findOne({ _id: startedById }, { password: 0 }).lean() as any;
+            const placeholderMsg = await Message.create({
+              senderId: startedById,
+              groupId: roomId,
+              senderName: senderDoc?.name || "Admin",
+              message: "processing",
+              fileName: `Screen Recording | ${durationSec}s`,
+              messageType: "screen_recording",
+              createdAt: new Date(),
+              allRecipients: recipients,
+            });
+            placeholderMsgId = placeholderMsg._id.toString();
+
+            const socketPayload = {
+              ...placeholderMsg.toObject(),
+              senderDataAll: senderDetailsDoc,
+            };
+            const receiverIds = recipients
+              .map((id: any) => id?.toString?.() || "")
+              .filter((id: string) => id && id !== startedById);
+            emitMessageToUsers(startedById, receiverIds, socketPayload);
+            emitMessageToRoom(roomId, socketPayload);
+          }
+        } catch (placeholderErr: any) {
+          console.warn("[auto-stop] failed to create placeholder message (non-fatal)", {
+            roomId, recordingId, error: placeholderErr?.message || String(placeholderErr),
+          });
+        }
+
         await ScreenRecording.findByIdAndUpdate(recordingId, {
-          $set: { rawFilePath: outputPath },
+          $set: { rawFilePath: outputPath, uploadSessionId: placeholderMsgId },
         });
 
-        processScreenRecordingInBackground(recordingId).catch((e: any) => {
+        processScreenRecordingInBackground(recordingId).catch(async (e: any) => {
           console.error("[auto-stop] processScreenRecordingInBackground failed", {
             roomId, recordingId, error: e?.message || String(e),
           });
+          try {
+            await ScreenRecording.findByIdAndUpdate(recordingId, {
+              $set: { status: "failed", errorMessage: e?.message || String(e) },
+            });
+            if (placeholderMsgId) {
+              await Message.findByIdAndUpdate(placeholderMsgId, {
+                $set: { message: "Recording failed", fileName: "Screen Recording | Failed" },
+              });
+            }
+          } catch { /* non-fatal */ }
         });
       })();
     }
   } catch (err) {
     console.error("[auto-stop] error stopping recordings for room", { roomId, error: err });
   }
+}
+
+/**
+ * Periodic safety sweep: every 30s, find any active recording whose room has
+ * zero joined participants and force-stop it. Guards against gaps in the
+ * participant-leave paths (socket disconnect, REST beacon, etc.).
+ */
+const RECORDING_SWEEP_INTERVAL_MS = 30000;
+let recordingSweepTimer: NodeJS.Timeout | null = null;
+
+function startRecordingSafetySweep(io: Server) {
+  if (recordingSweepTimer) return;
+  recordingSweepTimer = setInterval(async () => {
+    try {
+      const activeScreenRecRooms = await ScreenRecording.distinct("groupId", { status: "recording" });
+      const roomIds: string[] = Array.from(
+        new Set(activeScreenRecRooms.map((id: any) => id?.toString?.() || id))
+      ).filter(Boolean);
+
+      for (const roomId of roomIds) {
+        const call = await videoCall.findOne({ groupId: roomId, status: "active" }).lean() as any;
+        const hasJoinedParticipant = call?.userActivity?.some(
+          (a: any) => a.user && a.status === "joined",
+        );
+        if (!hasJoinedParticipant) {
+          console.log("[recording-sweep] force-stopping recording for orphaned room", { roomId });
+          await autoStopRecordingsForRoom(roomId, io);
+          if (call?._id) {
+            await videoCall.updateOne(
+              { _id: call._id },
+              { $set: { status: "ended", endedAt: new Date(), incommingCall: false } },
+            );
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[recording-sweep] error", err);
+    }
+  }, RECORDING_SWEEP_INTERVAL_MS);
 }
 
 let worker: any;
@@ -213,7 +241,10 @@ let rooms: any = {}; // store rooms
 const socketUserMap = new Map();
 const socketRoomMap = new Map();
 const socketConnectedAtMap = new Map<string, number>();
-let ioInstance: Server | null = null;
+export let ioInstance: Server | null = null;
+export function getIoInstance(): Server | null {
+  return ioInstance;
+}
 // Shared across all connections - each connection handler previously had its own socketList,
 // so callee could not see caller's info when building FE-user-join
 const socketList: {
@@ -287,6 +318,7 @@ export default function initializeSocket() {
   }
 
   ioInstance = io;
+  startRecordingSafetySweep(io);
 
   io.on("connection", (socket) => {
     console.log("[SOCKET] new connection", socket.id);
@@ -1202,308 +1234,6 @@ export default function initializeSocket() {
       });
     });
 
-    // ================================
-    // Call recording control (Phase 1)
-    // ================================
-    socket.on("BE-start-recording", async ({ roomId }: any) => {
-      const userId = socketUserMap.get(socket.id);
-      if (!roomId || !userId) {
-        socket.emit("FE-recording-error", {
-          roomId,
-          message: "Missing room or user context for recording start.",
-        });
-        return;
-      }
-
-      try {
-        console.log("[BE-start-recording] received", {
-          roomId,
-          userId: userId?.toString?.() || userId,
-          socketId: socket.id,
-        });
-
-        // Only group admins can record
-        const group = await Group.findById(roomId, { admins: 1 }).lean();
-        const isAdmin = Boolean(
-          group?.admins?.some(
-            (adminId: any) => adminId?.toString?.() === userId?.toString?.(),
-          ),
-        );
-        if (!isAdmin) {
-          console.warn("[BE-start-recording] not admin", {
-            roomId,
-            userId: userId?.toString?.() || userId,
-          });
-          socket.emit("FE-recording-error", {
-            roomId,
-            message: "Only group admins can start recording.",
-          });
-          return;
-        }
-
-        const activeCall = await videoCall
-          .findOne({ groupId: roomId, status: "active" }, { _id: 1 })
-          .lean();
-        if (!activeCall?._id) {
-          console.warn("[BE-start-recording] no active call", { roomId });
-          socket.emit("FE-recording-error", {
-            roomId,
-            message: "No active call found for this room.",
-          });
-          return;
-        }
-
-        console.log("[BE-start-recording] activeCall", {
-          roomId,
-          activeCallId: activeCall._id?.toString?.() || "",
-        });
-
-        const existing = await CallRecording.findOne(
-          {
-            groupId: roomId,
-            callId: activeCall._id,
-            status: { $in: ["recording", "uploading", "processing"] },
-          },
-          { _id: 1 },
-        ).lean();
-
-        if (existing?._id) {
-          socket.emit("FE-recording-error", {
-            roomId,
-            message: "A recording is already in progress for this call.",
-          });
-          return;
-        }
-
-        const newRecording = await CallRecording.create({
-          groupId: roomId,
-          callId: activeCall._id,
-          startedBy: userId.toString(),
-          status: "recording",
-          mimeType: null,
-          durationSec: 0,
-          sizeBytes: 0,
-          uploadSessionId: null,
-          totalChunks: 0,
-          receivedChunks: [],
-          rawFilePath: null,
-          rawObjectKey: null,
-          playbackUrl: null,
-          errorMessage: null,
-        });
-
-        console.log("[BE-start-recording] created", {
-          roomId,
-          recordingId: newRecording._id?.toString?.() || "",
-          startedBy: newRecording.startedBy?.toString?.() || "",
-        });
-
-        // Emit immediately so UI reflects recording state quickly.
-        io.to(roomId).emit("FE-recording-started", {
-          roomId,
-          recordingId: newRecording._id,
-          startedBy: userId.toString(),
-          startedAt: newRecording.createdAt,
-          status: newRecording.status,
-        });
-
-        // Phase 1 server-side policy:
-        // - Audio call: mix all audio producers into one audio track (no video)
-        // - Video call: 1 video producer + mixed audio
-        // We infer call type from the mediasoup producers present in this room.
-        const producersNow = getRoomProducers(roomId);
-        const isAudioOnly = !producersNow.some((p) => p.kind === "video");
-
-        startServerRecording({
-          roomId,
-          recordingId: newRecording._id.toString(),
-          isAudioOnly,
-          recordingScope: "call",
-          primaryUserId: userId.toString(),
-        }).catch(async (e: any) => {
-          console.error("[BE-start-recording] failed to start server ffmpeg", {
-            roomId,
-            recordingId: newRecording._id?.toString?.() || "",
-            error: e?.message || String(e),
-          });
-          await CallRecording.findByIdAndUpdate(newRecording._id, {
-            $set: { status: "failed", errorMessage: e?.message || String(e) },
-          });
-          io.to(roomId).emit("FE-recording-error", {
-            roomId,
-            message: e?.message || "Failed to start server-side recording.",
-          });
-          io.to(roomId).emit("FE-recording-stopped", {
-            roomId,
-            recordingId: newRecording._id,
-            startedBy: userId.toString(),
-            stoppedBy: userId.toString(),
-            stoppedAt: new Date(),
-            status: "failed",
-          });
-        });
-      } catch (error: any) {
-        console.error("BE-start-recording error:", error);
-        socket.emit("FE-recording-error", {
-          roomId,
-          message: error?.message || "Failed to start recording.",
-        });
-      }
-    });
-
-    socket.on("BE-stop-recording", async ({ roomId, recordingId }: any) => {
-      const userId = socketUserMap.get(socket.id);
-      if (!roomId || !recordingId || !userId) {
-        socket.emit("FE-recording-error", {
-          roomId,
-          message:
-            "Missing room, recording id, or user context for recording stop.",
-        });
-        return;
-      }
-
-      notifyRoomRecordingStopPending(roomId);
-
-      try {
-        console.log("[BE-stop-recording] received", {
-          roomId,
-          recordingId: recordingId?.toString?.() || recordingId,
-          userId: userId?.toString?.() || userId,
-          socketId: socket.id,
-        });
-
-        const group = await Group.findById(roomId, { admins: 1 }).lean();
-        const isAdmin = Boolean(
-          group?.admins?.some(
-            (adminId: any) => adminId?.toString?.() === userId?.toString?.(),
-          ),
-        );
-        if (!isAdmin) {
-          clearRoomRecordingStopPending(roomId);
-          console.warn("[BE-stop-recording] not admin", {
-            roomId,
-            userId: userId?.toString?.() || userId,
-          });
-          socket.emit("FE-recording-error", {
-            roomId,
-            message: "Only group admins can stop recording.",
-          });
-          return;
-        }
-
-        const recordingIdStr = recordingId?.toString?.() || recordingId;
-        const updatedRecording = await CallRecording.findOneAndUpdate(
-          { _id: recordingIdStr, groupId: roomId, status: "recording" },
-          { $set: { status: "processing" } },
-          { new: true },
-        ).lean();
-
-        if (!updatedRecording?._id) {
-          clearRoomRecordingStopPending(roomId);
-          console.warn("[BE-stop-recording] no active recording to update", {
-            roomId,
-            recordingId: recordingId?.toString?.() || recordingId,
-          });
-          socket.emit("FE-recording-error", {
-            roomId,
-            message: "No active recording found to stop.",
-          });
-          return;
-        }
-
-        const createdAt = updatedRecording.createdAt
-          ? new Date(updatedRecording.createdAt)
-          : null;
-        const durationSec = createdAt
-          ? Math.max(0, Math.round((Date.now() - createdAt.getTime()) / 1000))
-          : 0;
-
-        await CallRecording.findByIdAndUpdate(recordingIdStr, {
-          $set: {
-            status: "processing",
-            durationSec,
-          },
-        });
-
-        notifyRecordingStopPending(roomId, recordingIdStr);
-
-        // Update UI immediately; heavy stop/finalize runs in background.
-        io.to(roomId).emit("FE-recording-stopped", {
-          roomId,
-          recordingId: updatedRecording._id,
-          startedBy: updatedRecording.startedBy?.toString?.() || null,
-          stoppedBy: userId.toString(),
-          stoppedAt: new Date(),
-          status: "processing",
-        });
-
-        (async () => {
-          let outputPath = "";
-          try {
-            const stopped = await stopServerRecording(recordingIdStr);
-            outputPath = stopped.outputPath;
-          } catch (e: any) {
-            console.error("[BE-stop-recording] failed to stop server ffmpeg", {
-              roomId,
-              recordingId: recordingIdStr,
-              error: e?.message || String(e),
-            });
-            await CallRecording.findByIdAndUpdate(recordingIdStr, {
-              $set: { status: "failed", errorMessage: e?.message || String(e) },
-            });
-            io.to(roomId).emit("FE-recording-error", {
-              roomId,
-              message: e?.message || "Failed to stop server-side recording.",
-            });
-            return;
-          } finally {
-            clearRoomRecordingStopPending(roomId);
-          }
-
-          await CallRecording.findByIdAndUpdate(recordingIdStr, {
-            $set: {
-              status: "processing",
-              rawFilePath: outputPath,
-            },
-          });
-
-          console.log("[BE-stop-recording] ready for processing", {
-            roomId,
-            recordingId: recordingIdStr,
-            durationSec,
-            outputPath,
-          });
-
-          processRecordingInBackground(recordingIdStr).catch(async (e: any) => {
-            console.error(
-              "[BE-stop-recording] processRecordingInBackground failed",
-              {
-                roomId,
-                recordingId: recordingIdStr,
-                error: e?.message || String(e),
-              },
-            );
-            try {
-              await CallRecording.findByIdAndUpdate(recordingIdStr, {
-                $set: { status: "failed", errorMessage: e?.message || String(e) },
-              });
-            } catch { /* non-fatal */ }
-            io.to(roomId).emit("FE-recording-error", {
-              roomId,
-              message: e?.message || "Recording processing failed.",
-            });
-          });
-        })();
-      } catch (error: any) {
-        clearRoomRecordingStopPending(roomId);
-        console.error("BE-stop-recording error:", error);
-        socket.emit("FE-recording-error", {
-          roomId,
-          message: error?.message || "Failed to stop recording.",
-        });
-      }
-    });
-
     // =====================================================
     // Screen recording control (server-side via mediasoup)
     // =====================================================
@@ -1909,6 +1639,9 @@ export default function initializeSocket() {
           const participantCount = activeParticipants.length;
           // If no participants left, end the call
           if (participantCount === 0) {
+            // Auto-stop any active recordings before ending the call
+            await autoStopRecordingsForRoom(roomId, io);
+
             await videoCall.updateOne(
               { _id: groupCall._id },
               {

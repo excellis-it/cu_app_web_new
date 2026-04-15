@@ -3,6 +3,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import videoCall from "./db/schemas/videocall.schema";
 import USERS from "./db/schemas/users.schema";
+import ScreenRecording from "./db/schemas/screen-recording.schema";
 import usersRouter from './routes/users.routes';
 import groupRouter from './routes/group.routes';
 import adminRouter from './routes/admin';
@@ -101,6 +102,30 @@ export async function cleanupOrphanedCalls() {
     );
   } catch (error) {
     console.error("Error cleaning up orphaned calls:", error);
+  }
+}
+
+/**
+ * Startup-only: reconcile recordings stuck in "recording" status from a previous
+ * process. Their FFmpeg children died with the old process, so they cannot be
+ * completed. Mark them failed so a new recording can start for the same group.
+ *
+ * Must NOT be called from per-request paths (e.g. BE-leave-room) — doing so would
+ * kill live recordings whose FFmpeg is still running in THIS process.
+ */
+export async function reconcileStuckRecordingsOnStartup() {
+  try {
+    const stuckScreenRecs = await ScreenRecording.updateMany(
+      { status: "recording" },
+      { $set: { status: "failed", errorMessage: "server restart: recording interrupted" } }
+    );
+    if (stuckScreenRecs.modifiedCount) {
+      console.log("[startup] reconciled stuck recordings from previous process", {
+        screen: stuckScreenRecs.modifiedCount,
+      });
+    }
+  } catch (error) {
+    console.error("Error reconciling stuck recordings on startup:", error);
   }
 }
 

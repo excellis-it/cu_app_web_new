@@ -13,6 +13,7 @@ const mongoose = require("mongoose");
 const GmailMailer = require("../../helpers/gmailer");
 import { createCalendarEvent, updateCalendarEvent } from "../../helpers/googleCalendar.helper";
 import GuestMeetingMessage from "../../db/schemas/guest-meeting-message.schema";
+import { autoStopRecordingsForRoom, getIoInstance } from "../../socket";
 
 interface GetGroupsOptions {
   searchQuery?: string;
@@ -1519,6 +1520,12 @@ export const checkActiveCall = async (groupId: string, user: any) => {
 
     // If no active participants, update call status to ended
     if (activeParticipants.length === 0) {
+      // Auto-stop any active recordings before ending the call
+      const io = getIoInstance();
+      if (io) {
+        await autoStopRecordingsForRoom(groupId, io);
+      }
+
       await VideoCall.updateOne(
         { _id: groupCall._id },
         { $set: { status: 'ended', endedAt: new Date(), incommingCall: false } }

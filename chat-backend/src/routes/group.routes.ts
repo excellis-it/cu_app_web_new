@@ -3,16 +3,14 @@ import serverResponse from "../helpers/serverResponse";
 import authMiddleware from "../middleware/authMiddleware";
 import { AddNewGroupMessage, AddUserToGroup, CreateNewGroup, DeleteGroupMessage, GetGroups, GetSingleGroupDetails, GetSingleGroupMessages, updateGroup, RemoveUserFromGroup, ReportGroup, ReportMessage, testMessage, deliverySeen, infoMessage, checkActiveCall, GetGroupsActivity, GetSingleGroupCallDetails, GetOrCreateDirectChat, AddGroupAction, CreateGuestMeeting, GetGuestMeetingByPin, GetAllGuestMeeting, UpdateGuestMeeting, AddGuestMeetingMessage, GetAllGuestMeetingMessage } from "../controller/group/msgController";
 import {
-  checkRecordingOngoing,
-  getRecordingStatus,
-} from "../controller/group/recordingController";
-import {
   getScreenRecordingStatus,
   getScreenRecordingsList,
 } from "../controller/group/screenRecordingController";
+import ScreenRecording from "../db/schemas/screen-recording.schema";
 import multer from "multer";
 import { upload } from "../helpers/upload";
 import adminMiddleware from "../middleware/adminMiddleware";
+import { autoStopRecordingsForRoom, getIoInstance } from "../socket";
 const groupRouter = Router();
 const storage = multer.memoryStorage();
 const uploadFile = multer({ storage: storage });
@@ -253,73 +251,6 @@ groupRouter.get("/deliveried", authMiddleware, async (req: any, res: any) => {
     }
 });
 
-// ========================
-// Call recording endpoints
-// ========================
-groupRouter.post("/recordings/init", authMiddleware, async (req: any, res: any) => {
-    try {
-        serverResponse(
-            false,
-            "Recording upload API is disabled.",
-            "Use server-side socket recording events only (BE-start-recording / BE-stop-recording).",
-            res,
-            410,
-        );
-    } catch (error: any) {
-        serverResponse(false, "Error initializing recording upload", error.message, res);
-    }
-});
-
-groupRouter.post("/recordings/chunk", authMiddleware, async (req: any, res: any) => {
-    try {
-        serverResponse(
-            false,
-            "Recording upload API is disabled.",
-            "Use server-side socket recording events only (BE-start-recording / BE-stop-recording).",
-            res,
-            410,
-        );
-    } catch (error: any) {
-        serverResponse(false, "Error uploading recording chunk", error.message, res);
-    }
-});
-
-groupRouter.post("/recordings/complete", authMiddleware, async (req: any, res: any) => {
-    try {
-        serverResponse(
-            false,
-            "Recording upload API is disabled.",
-            "Use server-side socket recording events only (BE-start-recording / BE-stop-recording).",
-            res,
-            410,
-        );
-    } catch (error: any) {
-        serverResponse(false, "Error completing recording upload", error.message, res);
-    }
-});
-
-groupRouter.get("/recordings/ongoing", authMiddleware, async (req: any, res: any) => {
-    try {
-        serverResponse(true, "Recording ongoing status fetched successfully", await checkRecordingOngoing(req.query, req.user), res);
-    } catch (error: any) {
-        serverResponse(false, "Error checking recording status", error.message, res);
-    }
-});
-
-groupRouter.get("/recordings/status", authMiddleware, async (req: any, res: any) => {
-    try {
-        // eslint-disable-next-line no-console
-        console.log("[routes] GET /groups/recordings/status", {
-            roomId: req?.query?.roomId,
-            recordingId: req?.query?.recordingId,
-            userId: req?.user?._id?.toString?.(),
-        });
-        serverResponse(true, "Recording status fetched successfully", await getRecordingStatus(req.query, req.user), res);
-    } catch (error: any) {
-        serverResponse(false, "Error fetching recording status", error.message, res);
-    }
-});
-
 // ==============================
 // Screen recording endpoints
 // ==============================
@@ -373,6 +304,30 @@ groupRouter.get("/screen-recordings/status", authMiddleware, async (req: any, re
     }
 });
 
+// Legacy endpoint kept for the mobile app (late-joiner sync). Now backed by
+// ScreenRecording instead of the removed CallRecording. Returns the same
+// shape the mobile client already expects: { isRecording, recordingId, ... }.
+groupRouter.get("/recordings/ongoing", authMiddleware, async (req: any, res: any) => {
+    try {
+        const groupId = req.query?.groupId;
+        if (!groupId) {
+            return serverResponse(false, "Missing groupId", null, res);
+        }
+        const active = await ScreenRecording.findOne(
+            { groupId, status: "recording" },
+            { _id: 1, startedBy: 1, createdAt: 1 },
+        ).lean() as any;
+        serverResponse(true, "Recording ongoing status fetched successfully", {
+            isRecording: !!active,
+            recordingId: active?._id?.toString?.() || null,
+            startedBy: active?.startedBy?.toString?.() || null,
+            startedAt: active?.createdAt || null,
+        }, res);
+    } catch (error: any) {
+        serverResponse(false, "Error checking recording status", error.message, res);
+    }
+});
+
 groupRouter.get("/screen-recordings/list", authMiddleware, async (req: any, res: any) => {
     try {
         serverResponse(true, "Screen recordings fetched successfully", await getScreenRecordingsList(req.query, req.user), res);
@@ -415,6 +370,12 @@ groupRouter.post("/user-left-call", async (req: any, res: any) => {
             );
 
             if (remainingActive.length === 0) {
+                // Auto-stop any active recordings before ending the call
+                const io = getIoInstance();
+                if (io) {
+                    await autoStopRecordingsForRoom(roomId, io);
+                }
+
                 await VideoCall.updateOne(
                     { _id: activeCall._id },
                     { $set: { status: "ended", endedAt: new Date() } }
