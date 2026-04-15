@@ -91,7 +91,7 @@ async function runCleanup() {
             {
               $set: {
                 message: "expired",
-                fileName: `Screen Recording expired (was ${recording.durationSec || 0}s)`,
+                fileName: `Call Recording expired (was ${recording.durationSec || 0}s)`,
               },
             },
           );

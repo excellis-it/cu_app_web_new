@@ -14,6 +14,7 @@ import USERS from "../db/schemas/users.schema";
 import { emitMessageToRoom, emitMessageToUsers } from "../socket";
 import { recordingConfig } from "./recordingConfig";
 import logError from "./logError";
+import { formatDurationShort } from "./formatDuration";
 
 const ffmpegBinary = process.env.FFMPEG_PATH || "ffmpeg";
 const minScreenRecordingOutputBytes = Math.max(
@@ -369,7 +370,7 @@ async function emitRecordingMessage(recording: any, playbackUrl: string, duratio
   if (placeholderMsgId) {
     savedMessage = await Message.findByIdAndUpdate(
       placeholderMsgId,
-      { $set: { message: playbackUrl, fileName: `Screen Recording | ${durationSec}s` } },
+      { $set: { message: playbackUrl, fileName: `Call Recording | ${formatDurationShort(durationSec)}` } },
       { new: true },
     );
   }
@@ -381,7 +382,7 @@ async function emitRecordingMessage(recording: any, playbackUrl: string, duratio
       groupId: recording.groupId,
       senderName: (sender as any)?.name || "Admin",
       message: playbackUrl,
-      fileName: `Screen Recording | ${durationSec}s`,
+      fileName: `Call Recording | ${formatDurationShort(durationSec)}`,
       messageType: "screen_recording",
       createdAt: new Date(),
       allRecipients: recipients,
@@ -649,7 +650,7 @@ export async function processScreenRecordingInBackground(recordingId: string) {
       const placeholderMsgId = recording.uploadSessionId;
       if (placeholderMsgId) {
         await Message.findByIdAndUpdate(placeholderMsgId, {
-          $set: { message: "Recording failed", fileName: "Screen Recording | Failed" },
+          $set: { message: "Recording failed", fileName: "Call Recording | Failed" },
         });
       }
     } catch {

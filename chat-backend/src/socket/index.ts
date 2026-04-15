@@ -42,6 +42,7 @@ import {
   clearRoomRecordingStopPending,
 } from "../mediasoup/recordingManager";
 import { processScreenRecordingInBackground } from "../helpers/screenRecordingProcessor";
+import { formatDurationShort } from "../helpers/formatDuration";
 import type { types as MediasoupTypes } from "mediasoup";
 
 // Define a more comprehensive interface for GroupCall with all required fields
@@ -144,7 +145,7 @@ export async function autoStopRecordingsForRoom(roomId: string, io: Server) {
               groupId: roomId,
               senderName: senderDoc?.name || "Admin",
               message: "processing",
-              fileName: `Screen Recording | ${durationSec}s`,
+              fileName: `Call Recording | ${formatDurationShort(durationSec)}`,
               messageType: "screen_recording",
               createdAt: new Date(),
               allRecipients: recipients,
@@ -181,7 +182,7 @@ export async function autoStopRecordingsForRoom(roomId: string, io: Server) {
             });
             if (placeholderMsgId) {
               await Message.findByIdAndUpdate(placeholderMsgId, {
-                $set: { message: "Recording failed", fileName: "Screen Recording | Failed" },
+                $set: { message: "Recording failed", fileName: "Call Recording | Failed" },
               });
             }
           } catch { /* non-fatal */ }
@@ -365,7 +366,7 @@ export default function initializeSocket() {
       try {
         const effectiveUserId = userId || connectedUser?.userId || socketUserInfo?.userName;
         const effectiveRoomId = roomId || connectedUser?.roomId;
-        
+
         if (effectiveRoomId && effectiveUserId) {
           await removePeer(effectiveRoomId.toString(), effectiveUserId.toString());
         }
@@ -1451,7 +1452,7 @@ export default function initializeSocket() {
               groupId: roomId,
               senderName: senderDoc?.name || "Admin",
               message: "processing",
-              fileName: `Screen Recording | ${durationSec}s`,
+              fileName: `Call Recording | ${formatDurationShort(durationSec)}`,
               messageType: "screen_recording",
               createdAt: new Date(),
               allRecipients: recipients,
@@ -1499,7 +1500,7 @@ export default function initializeSocket() {
             try {
               if (placeholderMsgId) {
                 await Message.findByIdAndUpdate(placeholderMsgId, {
-                  $set: { message: "Recording failed", fileName: "Screen Recording | Failed" },
+                  $set: { message: "Recording failed", fileName: "Call Recording | Failed" },
                 });
               }
             } catch { /* non-fatal */ }
@@ -1937,10 +1938,10 @@ export default function initializeSocket() {
               kind,
               ...(kind === "video" && appData
                 ? {
-                    width: appData.width,
-                    height: appData.height,
-                    rotation: appData.rotation,
-                  }
+                  width: appData.width,
+                  height: appData.height,
+                  rotation: appData.rotation,
+                }
                 : {}),
             });
 
